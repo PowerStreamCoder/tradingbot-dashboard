@@ -1,0 +1,19 @@
+{
+  "bots": [
+    {
+      "name": "iwm_sma",
+      "symbol": "IWM",
+      "client_id": 3,
+      "script": "bots/UniversalSMABot.py",
+      "strategy": "sma_crossover",
+      "enabled": true,
+      "description": "IWM SMA 5/20 crossover trader with tick execution"
+    }
+  ],
+  "defaults": {
+    "python_path": "/usr/bin/python3",
+    "working_directory": "/home/i030983/tradingbots",
+    "restart_delay_seconds": 10,
+    "log_to_journal": true
+  }
+}

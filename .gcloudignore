@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Documentation and notes
+*.md
+docs/
+
+# Deployment scripts (don't deploy the deployment scripts themselves)
+deploy.sh
+deploy_*.sh
+
+# IDE and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Testing
+test_*.py
+*_test.py
+tests/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Cloud Build
+.gcloudignore
+.dockerignore

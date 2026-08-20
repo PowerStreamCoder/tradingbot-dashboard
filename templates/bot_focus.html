@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title id="pageTitle">Bot Focus - SMA Bot Dashboard</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>">
+    <link rel="stylesheet" href="/static/css/bot_focus.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="dashboard-container">
+        <!-- Header -->
+        <header class="bot-header">
+            <!-- Mode Indicator Badge (always visible) -->
+            <div class="mode-indicator">
+                <span id="modeBadge" class="mode-badge paper">📝 PAPER MODE</span>
+            </div>
+
+            <div class="header-left">
+                <h1>
+                    <span class="bot-icon">📈</span>
+                    <span class="symbol-placeholder">--</span> Trading Bot
+                </h1>
+                <div class="bot-metadata">
+                    <span class="metadata-item">
+                        <span class="label">Bot:</span>
+                        <select id="botSelector" class="bot-selector" title="Select bot to monitor">
+                            <option value="">Loading...</option>
+                        </select>
+                    </span>
+                    <span class="metadata-separator">|</span>
+                    <span class="metadata-item">
+                        <span class="label">Strategy:</span>
+                        <span class="value" id="botStrategy">Loading...</span>
+                    </span>
+                    <span class="metadata-separator">|</span>
+                    <span class="metadata-item">
+                        <span class="label">Port:</span>
+                        <span class="value" id="tradingPort">4002 (Gateway)</span>
+                    </span>
+                </div>
+            </div>
+            <div class="header-right">
+                <button id="pauseBotBtn" class="btn btn-danger">
+                    <span>⏸</span> Pause Bot
+                </button>
+                <button id="switchProfileBtn" class="btn btn-profile-switch">
+                    <span>🔄</span> Switch to LIVE
+                </button>
+            </div>
+        </header>
+
+        <!-- Navigation Bar -->
+        <nav class="nav-bar">
+            <a href="/bot-focus" class="nav-link active">
+                🎯 Bot Focus
+            </a>
+            <a href="/pnl-reporting" class="nav-link">
+                💰 P&L Reporting
+            </a>
+            <a href="/learning-review" class="nav-link">
+                🧠 Learning & Analysis
+            </a>
+            <a href="#" class="nav-link" onclick="showStockPickerTab(event)">
+                📊 Stock Picker
+            </a>
+        </nav>
+
+        <!-- Market Session Clock & Risk Controls Bar -->
+        <div class="market-clock">
+            <!-- Risk Controls (Left Side) - 2x3 Grid -->
+            <div class="risk-controls-bar">
+                <div class="risk-column">
+                    <div class="risk-bar-item">
+                        <span class="risk-bar-label">Daily Loss Limit</span>
+                        <span class="risk-bar-value" id="topDailyLossLimit">--</span>
+                    </div>
+                    <div class="risk-bar-item">
+                        <span class="risk-bar-label">Max Drawdown</span>
+                        <span class="risk-bar-value" id="topMaxDrawdown">--</span>
+                    </div>
+                </div>
+                <div class="risk-column">
+                    <div class="risk-bar-item">
+                        <span class="risk-bar-label">Exposure</span>
+                        <span class="risk-bar-value" id="topExposure">$0</span>
+                    </div>
+                    <div class="risk-bar-item">
+                        <span class="risk-bar-label">Margin Used</span>
+                        <span class="risk-bar-value" id="topMarginUsed">0%</span>
+                    </div>
+                </div>
+                <div class="risk-column">
+                    <div class="risk-bar-item">
+                        <span class="risk-bar-label">Kill Switch</span>
+                        <span class="risk-bar-value armed" id="topKillSwitch">
+                            <span class="status-dot"></span> --
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Clock (Right Side) -->
+            <div class="clock-section">
+                <span class="clock-label">MARKET SESSION CLOCK</span>
+                <span class="clock-time" id="marketClock">--:--:-- ET</span>
+                <span class="heartbeat-indicator">
+                    <span class="heartbeat-dot"></span>
+                    <span id="heartbeat">--</span>
+                </span>
+            </div>
+        </div>
+
+        <!-- Main Content Grid -->
+        <div class="main-grid">
+            <!-- LEFT COLUMN: Price Chart & Performance -->
+            <div class="left-column">
+                <!-- Price Chart -->
+                <section class="tile chart-tile">
+                    <div class="tile-header">
+                        <h2>Price Chart: <span id="chartSymbol">--</span> 1h</h2>
+                        <div class="chart-controls">
+                            <button class="chart-btn active">Indicators</button>
+                            <!-- Trades button removed - trade markers feature not implemented -->
+                        </div>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="priceChart"></canvas>
+                    </div>
+                    <div class="chart-info">
+                        <div class="chart-info-item">
+                            <span class="label">Last Price</span>
+                            <span class="value" id="lastPrice">--</span>
+                        </div>
+                        <div class="chart-info-item">
+                            <span class="label">Session Change</span>
+                            <span class="value" id="sessionChange">--</span>
+                        </div>
+                        <div class="chart-info-item">
+                            <span class="label">Bot Signal</span>
+                            <span class="value" id="botSignal">--</span>
+                        </div>
+                        <div class="chart-info-item">
+                            <span class="label">Regime</span>
+                            <span class="value" id="marketRegime">--</span>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Performance Summary -->
+                <section class="tile performance-tile">
+                    <h2>Performance Summary</h2>
+                    <div class="performance-grid">
+                        <div class="perf-card">
+                            <div class="perf-label">Today P&L</div>
+                            <div class="perf-value" id="todayPnl">$0.00</div>
+                        </div>
+                        <div class="perf-card">
+                            <div class="perf-label">Net P&L</div>
+                            <div class="perf-value" id="netPnl">$0.00</div>
+                        </div>
+                        <div class="perf-card">
+                            <div class="perf-label">Trades</div>
+                            <div class="perf-value" id="totalTrades">0</div>
+                        </div>
+                        <div class="perf-card">
+                            <div class="perf-label">Win Rate</div>
+                            <div class="perf-value" id="winRate">0%</div>
+                        </div>
+                        <div class="perf-card">
+                            <div class="perf-label">Sharpe Ratio</div>
+                            <div class="perf-value" id="sharpeRatio">--</div>
+                        </div>
+                        <div class="perf-card">
+                            <div class="perf-label">Max Drawdown</div>
+                            <div class="perf-value" id="maxDrawdown">--</div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- RIGHT COLUMN: Position & Health -->
+            <div class="right-column">
+                <!-- Current Position -->
+                <section class="tile position-tile">
+                    <div class="tile-header">
+                        <h2>Current Position</h2>
+                        <span class="position-status" id="positionStatus">No Position</span>
+                    </div>
+                    <div class="position-details">
+                        <div class="position-row">
+                            <div class="position-item">
+                                <span class="label">Symbol</span>
+                                <span class="value symbol-placeholder" id="posSymbol">--</span>
+                            </div>
+                            <div class="position-item">
+                                <span class="label">Quantity</span>
+                                <span class="value" id="posQuantity">--</span>
+                            </div>
+                        </div>
+                        <div class="position-row">
+                            <div class="position-item">
+                                <span class="label">Avg Price</span>
+                                <span class="value" id="posAvgPrice">--</span>
+                            </div>
+                            <div class="position-item">
+                                <span class="label">Mark Price</span>
+                                <span class="value" id="posMarkPrice">--</span>
+                            </div>
+                        </div>
+                        <div class="position-row">
+                            <div class="position-item">
+                                <span class="label">Stop Loss</span>
+                                <span class="value" id="posStopLoss">--</span>
+                            </div>
+                            <div class="position-item">
+                                <span class="label">Target</span>
+                                <span class="value" id="posTarget">--</span>
+                            </div>
+                        </div>
+                        <div class="position-row highlight">
+                            <div class="position-item">
+                                <span class="label">Unrealized P&L</span>
+                                <span class="value" id="posUnrealizedPnl">$0.00</span>
+                            </div>
+                            <div class="position-item">
+                                <span class="label">P&L %</span>
+                                <span class="value" id="posPnlPercent">0.00%</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Bot Health -->
+                <section class="tile health-tile">
+                    <h2>Bot Health</h2>
+                    <div class="health-grid">
+                        <div class="health-item">
+                            <span class="health-label">API Latency</span>
+                            <span class="health-value" id="apiLatency">-- ms</span>
+                        </div>
+                        <div class="health-item">
+                            <span class="health-label">Broker Connection</span>
+                            <span class="health-value" id="brokerConnection">
+                                <span class="status-dot"></span> Checking...
+                            </span>
+                        </div>
+                        <div class="health-item">
+                            <span class="health-label">Data Feed</span>
+                            <span class="health-value" id="dataFeed">--</span>
+                        </div>
+                        <div class="health-item">
+                            <span class="health-label">Heartbeat</span>
+                            <span class="health-value" id="heartbeatValue">-- ms</span>
+                        </div>
+                        <div class="health-item">
+                            <span class="health-label">Last Signal</span>
+                            <span class="health-value" id="lastSignal">--</span>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </div>
+
+        <!-- SMA Strategy Panel -->
+        <section class="tile strategy-tile">
+            <h2>SMA Crossover Status</h2>
+            <div class="strategy-grid">
+                <div class="strategy-item">
+                    <span class="strategy-label">SMA 5</span>
+                    <span class="strategy-value" id="sma5">--</span>
+                </div>
+                <div class="strategy-item">
+                    <span class="strategy-label">SMA 20</span>
+                    <span class="strategy-value" id="sma20">--</span>
+                </div>
+                <div class="strategy-item">
+                    <span class="strategy-label">SMA 200</span>
+                    <span class="strategy-value" id="sma200">--</span>
+                </div>
+                <div class="strategy-item">
+                    <span class="strategy-label">Spread</span>
+                    <span class="strategy-value" id="smaSpread">--</span>
+                </div>
+                <div class="strategy-item">
+                    <span class="strategy-label">Signal</span>
+                    <span class="strategy-value" id="strategySignal">--</span>
+                </div>
+                <div class="strategy-item">
+                    <span class="strategy-label">Confirmation</span>
+                    <span class="strategy-value" id="tickConfirmation">
+                        -- ticks
+                    </span>
+                </div>
+                <div class="strategy-item">
+                    <span class="strategy-label">Last Crossover</span>
+                    <span class="strategy-value" id="lastCrossover">--</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Orders Table -->
+        <section class="tile orders-tile">
+            <div class="tile-header">
+                <h2>Active Position & Orders</h2>
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <button id="createPositionBtn" class="btn btn-success">
+                        <span>+</span> Create Position
+                    </button>
+                    <button id="closePositionBtn" class="btn btn-danger" disabled>
+                        <span>✕</span> Close Position
+                    </button>
+                    <span class="active-count" id="positionOrdersStatus">No active position</span>
+                </div>
+            </div>
+            <div class="table-container">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 40px;">SELECT</th>
+                            <th>SYMBOL</th>
+                            <th>POSITION</th>
+                            <th>UNREALIZED P&L</th>
+                            <th>STOP LOSS</th>
+                            <th>PROFIT TARGET</th>
+                            <th>COVERED CALL</th>
+                            <th>STRATEGY</th>
+                        </tr>
+                    </thead>
+                    <tbody id="positionOrdersTableBody">
+                        <!-- Dynamically populated -->
+                        <tr>
+                            <td colspan="8" style="text-align: center; padding: 20px; color: #a0aec0;">
+                                No active position
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Trade History Table -->
+        <section class="tile trade-history-tile">
+            <div class="tile-header">
+                <h2>Trade History</h2>
+                <span class="trade-count" id="tradeCount">Last 25 trades</span>
+            </div>
+            <div class="table-container">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>SEQ #</th>
+                            <th>MODE</th>
+                            <th>SYMBOL</th>
+                            <th>ENTRY $</th>
+                            <th>ENTRY TIME</th>
+                            <th>EXIT $</th>
+                            <th>EXIT TIME</th>
+                            <th>STOCK P&L</th>
+                            <th>OPTION P&L</th>
+                            <th>TOTAL P&L</th>
+                            <th>OPTIONS</th>
+                            <th>SIDE</th>
+                            <th>QTY</th>
+                            <th>REASON</th>
+                            <th>DETAILS</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tradeHistoryBody">
+                        <!-- Dynamically populated -->
+                        <tr>
+                            <td colspan="12" style="text-align: center; padding: 20px; color: #a0aec0;">
+                                Loading trade history...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Stock Picker Section (Hidden by default) -->
+        <section class="tile" id="stock-picker-section" style="display: none;">
+            <div class="tile-header">
+                <h2>📊 Stock Picker - Top 5 Daily Picks</h2>
+                <div class="tile-actions">
+                    <button class="icon-btn" id="run-stockpicker-btn" onclick="runStockPickerNow()" title="Run StockPicker Now" style="padding: 8px 16px; background: #27ae60; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">
+                        ▶️ Run Now
+                    </button>
+                    <button class="icon-btn" onclick="loadStockPicks()" title="Refresh" style="margin-left: 8px;">
+                        🔄
+                    </button>
+                </div>
+            </div>
+
+            <!-- Metrics Row -->
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px;">
+                <div class="metric-card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 12px; color: white;">
+                    <div style="font-size: 0.85em; opacity: 0.9; margin-bottom: 5px;">Active Picks</div>
+                    <div style="font-size: 2em; font-weight: bold;" id="sp-pick-count">-</div>
+                </div>
+                <div class="metric-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); padding: 20px; border-radius: 12px; color: white;">
+                    <div style="font-size: 0.85em; opacity: 0.9; margin-bottom: 5px;">Avg Explosiveness</div>
+                    <div style="font-size: 2em; font-weight: bold;" id="sp-avg-explosive">-</div>
+                </div>
+                <div class="metric-card" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); padding: 20px; border-radius: 12px; color: white;">
+                    <div style="font-size: 0.85em; opacity: 0.9; margin-bottom: 5px;">Last Run</div>
+                    <div style="font-size: 1.2em; font-weight: bold;" id="sp-last-run">-</div>
+                </div>
+            </div>
+
+            <!-- Picks Table -->
+            <div class="table-container">
+                <table class="bot-table" id="stock-picks-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 50px; text-align: center; padding: 12px 8px;">#</th>
+                            <th style="width: 200px; padding: 12px 8px;">INDUSTRY</th>
+                            <th style="width: 90px; text-align: center; padding: 12px 8px;">TICKER</th>
+                            <th style="width: 85px; text-align: right; padding: 12px 12px;" title="Composite score (0-100)">SCORE</th>
+                            <th style="width: 100px; text-align: right; padding: 12px 12px;" title="News explosiveness (0-10)">EXPLOSIVE</th>
+                            <th style="width: 120px; text-align: right; padding: 12px 12px;" title="Fundamental score (0-100)">FUNDAMENTAL</th>
+                            <th style="width: auto; min-width: 350px; padding: 12px 12px;">CATALYST</th>
+                            <th style="width: auto; min-width: 280px; padding: 12px 12px;">KEY METRICS</th>
+                        </tr>
+                    </thead>
+                    <tbody id="stock-picks-tbody">
+                        <tr>
+                            <td colspan="8" style="text-align: center; padding: 20px; color: #95a5a6;">
+                                Loading stock picks...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Alerts & Logs -->
+        <section class="tile logs-tile">
+            <div class="tile-header">
+                <h2>Alerts & Logs</h2>
+                <div class="log-filter">
+                    <button class="filter-btn active" data-filter="all">All</button>
+                    <button class="filter-btn" data-filter="info">Info</button>
+                    <button class="filter-btn" data-filter="warn">Warn</button>
+                    <button class="filter-btn" data-filter="error">Error</button>
+                </div>
+            </div>
+            <div class="logs-container" id="logsContainer">
+                <!-- Dynamically populated -->
+            </div>
+        </section>
+    </div>
+
+    <!-- Shared Utilities -->
+    <script src="/static/js/utils.js"></script>
+
+    <!-- Configuration (must load before other scripts) -->
+    <script src="/static/js/config.js?v=2.6.0"></script>
+
+    <script src="/static/js/bot_focus.js?v=2.7.0"></script>
+    <script src="/static/js/stock_picker.js?v=2.6.0"></script>
+
+    <script>
+    // Toggle Stock Picker tab visibility
+    function showStockPickerTab(event) {
+        event.preventDefault();
+
+        // Hide all main sections
+        document.querySelectorAll('.main-content, section:not(#stock-picker-section)').forEach(el => {
+            if (!el.classList.contains('bot-header') && !el.classList.contains('nav-bar')) {
+                el.style.display = 'none';
+            }
+        });
+
+        // Show stock picker section
+        const stockPickerSection = document.getElementById('stock-picker-section');
+        if (stockPickerSection) {
+            stockPickerSection.style.display = 'block';
+
+            // Update nav active state
+            document.querySelectorAll('.nav-link').forEach(link => link.classList.remove('active'));
+            event.target.classList.add('active');
+
+            // Load stock picks
+            startStockPickerRefresh();
+        }
+    }
+    </script>
+
+    <style>
+    /* Stock Picker specific styles */
+    .badge-industry {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-size: 0.85em;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+
+    .catalyst-cell {
+        max-width: 500px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        padding: 8px 12px;
+    }
+
+    .metrics-cell {
+        font-size: 0.85em;
+        color: #95a5a6;
+        white-space: nowrap;
+        padding: 8px 12px;
+    }
+
+    #stock-picks-table tbody tr:hover {
+        background-color: rgba(52, 152, 219, 0.1);
+    }
+    </style>
+</body>
+</html>

@@ -1,0 +1,286 @@
+/* Trading Bot Dashboard Styles */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    background-color: #f5f5f5;
+    color: #333;
+    padding: 20px;
+    line-height: 1.6;
+}
+
+.container {
+    max-width: 1600px;
+    margin: 0 auto;
+    background: white;
+    padding: 30px;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+header {
+    margin-bottom: 30px;
+    padding-bottom: 20px;
+    border-bottom: 2px solid #e0e0e0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+h1 {
+    color: #2c3e50;
+    font-size: 2em;
+}
+
+.last-updated {
+    color: #666;
+    font-size: 0.9em;
+}
+
+.tile {
+    margin-bottom: 40px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 20px;
+    background: #fafafa;
+}
+
+.tile h2 {
+    color: #34495e;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid #3498db;
+    font-size: 1.5em;
+}
+
+.bot-section {
+    margin-bottom: 30px;
+}
+
+.bot-section h3 {
+    color: #2c3e50;
+    margin-bottom: 15px;
+    font-size: 1.2em;
+    background: #ecf0f1;
+    padding: 10px;
+    border-radius: 4px;
+}
+
+/* Table Styles */
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: white;
+    margin-bottom: 20px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.data-table thead {
+    background: #34495e;
+    color: white;
+}
+
+.data-table th {
+    padding: 12px;
+    text-align: left;
+    font-weight: 600;
+    border: 1px solid #2c3e50;
+}
+
+.data-table td {
+    padding: 12px;
+    border: 1px solid #ddd;
+}
+
+.data-table tbody tr:nth-child(even) {
+    background-color: #f8f9fa;
+}
+
+.data-table tbody tr:hover {
+    background-color: #e8f4f8;
+    transition: background-color 0.2s;
+}
+
+.data-table td.label {
+    font-weight: 600;
+    background-color: #ecf0f1;
+    min-width: 200px;
+}
+
+/* Trade History Specific Styles */
+#tile2 .data-table {
+    font-size: 0.95em;
+}
+
+.trade-info {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.trade-info-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 3px 0;
+}
+
+.trade-info-label {
+    font-weight: 600;
+    color: #666;
+    min-width: 180px;
+}
+
+.trade-info-value {
+    color: #2c3e50;
+}
+
+/* P&L Statement Styles */
+.pnl-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    gap: 20px;
+}
+
+.pnl-section {
+    background: white;
+    padding: 15px;
+    border-radius: 6px;
+    border: 1px solid #e0e0e0;
+}
+
+.pnl-section h3 {
+    color: #2c3e50;
+    margin-bottom: 15px;
+    padding: 10px;
+    background: #3498db;
+    color: white;
+    border-radius: 4px;
+    text-align: center;
+}
+
+.pnl-table {
+    font-size: 0.9em;
+}
+
+.pnl-value {
+    font-weight: 700;
+    font-size: 1.1em;
+}
+
+.pnl-value.positive {
+    color: #27ae60;
+}
+
+.pnl-value.negative {
+    color: #e74c3c;
+}
+
+/* Profit/Loss Cell Styling */
+.profit {
+    color: #27ae60;
+    font-weight: 600;
+}
+
+.loss {
+    color: #e74c3c;
+    font-weight: 600;
+}
+
+/* Responsive Design */
+@media (max-width: 1200px) {
+    .pnl-container {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 768px) {
+    body {
+        padding: 10px;
+    }
+
+    .container {
+        padding: 15px;
+    }
+
+    h1 {
+        font-size: 1.5em;
+    }
+
+    header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+
+    .data-table {
+        font-size: 0.85em;
+    }
+
+    .data-table th,
+    .data-table td {
+        padding: 8px;
+    }
+
+    .tile {
+        padding: 15px;
+    }
+
+    .pnl-container {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Loading State */
+.loading {
+    text-align: center;
+    padding: 20px;
+    color: #666;
+}
+
+.loading::after {
+    content: '...';
+    animation: loading 1.5s infinite;
+}
+
+@keyframes loading {
+    0%, 20% { content: '.'; }
+    40% { content: '..'; }
+    60%, 100% { content: '...'; }
+}
+
+/* Empty State */
+.empty-state {
+    text-align: center;
+    padding: 40px;
+    color: #999;
+    font-style: italic;
+}
+
+/* Status Badges */
+.status-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 0.85em;
+    font-weight: 600;
+}
+
+.status-active {
+    background: #d4edda;
+    color: #155724;
+}
+
+.status-inactive {
+    background: #f8d7da;
+    color: #721c24;
+}
+
+.status-pending {
+    background: #fff3cd;
+    color: #856404;
+}

@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+*.out
+
+# Secrets and credentials
+.env
+*.key
+*.pem
+service-account-key.json
+credentials.json
+
+# OS
+Thumbs.db
+
+# Node modules (if using npm for frontend dependencies)
+node_modules/
+
+# Build artifacts
+*.pyc
+.coverage
+htmlcov/
+
+# Development
+.pytest_cache/

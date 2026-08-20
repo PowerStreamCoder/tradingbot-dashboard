@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>P&L Reporting - Trading Bots</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💰</text></svg>">
+    <link rel="stylesheet" href="/static/css/bot_focus.css">
+</head>
+<body>
+    <div class="dashboard-container">
+        <!-- Header -->
+        <header class="bot-header">
+            <div class="header-left">
+                <h1>
+                    <span class="bot-icon">💰</span>
+                    P&L Reporting
+                </h1>
+                <div class="bot-metadata">
+                    <span class="metadata-item">
+                        <span class="label">Bots:</span>
+                        <span class="value" id="activeBots">--</span>
+                    </span>
+                    <span class="metadata-separator">|</span>
+                    <span class="metadata-item">
+                        <span class="label">Last Updated:</span>
+                        <span class="value" id="lastUpdate">--</span>
+                    </span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Navigation Bar -->
+        <nav class="nav-bar">
+            <a href="/bot-focus" class="nav-link">
+                🎯 Bot Focus
+            </a>
+            <a href="/pnl-reporting" class="nav-link active">
+                💰 P&L Reporting
+            </a>
+            <a href="/learning-review" class="nav-link">
+                🧠 Learning & Analysis
+            </a>
+        </nav>
+
+        <!-- P&L Statements Section -->
+        <div class="main-content">
+            <section class="section">
+                <div class="section-header">
+                    <h2>📊 Profit & Loss Statements</h2>
+                    <p class="section-subtitle">Real-time P&L tracking across all trading bots</p>
+                </div>
+
+                <div class="pnl-grid">
+                    <!-- Day Statement -->
+                    <div class="pnl-card">
+                        <div class="pnl-card-header">
+                            <h3>Day Statement</h3>
+                            <input type="date" id="day-selector" class="date-selector">
+                        </div>
+                        <table class="pnl-table">
+                            <thead>
+                                <tr>
+                                    <th>Metric</th>
+                                    <th id="day-bot1-header">--</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td class="metric-label">Number of Trades per day</td>
+                                    <td id="day-bot1-trades" class="metric-value">0</td>
+                                </tr>
+                                <tr>
+                                    <td class="metric-label">Profit Loss amount in USD per day</td>
+                                    <td id="day-bot1-pnl" class="pnl-value">+$0.00</td>
+                                </tr>
+                                <tr class="total-row">
+                                    <td class="metric-label">Total Number of Trades per day</td>
+                                    <td id="day-total-trades" class="metric-value">0</td>
+                                </tr>
+                                <tr class="total-row">
+                                    <td class="metric-label">Total Profit Loss amount in USD per day</td>
+                                    <td id="day-total-pnl" class="pnl-value">+$0.00</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Week Statement -->
+                    <div class="pnl-card">
+                        <div class="pnl-card-header">
+                            <h3>Week Statement</h3>
+                            <div class="date-selector-group">
+                                <select id="week-year-selector" class="date-selector">
+                                    <!-- Populated by JavaScript -->
+                                </select>
+                                <select id="week-selector" class="date-selector">
+                                    <!-- Populated by JavaScript -->
+                                </select>
+                            </div>
+                        </div>
+                        <table class="pnl-table">
+                            <thead>
+                                <tr>
+                                    <th>Metric</th>
+                                    <th id="week-bot1-header">--</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td class="metric-label">Number of Trades per week</td>
+                                    <td id="week-bot1-trades" class="metric-value">0</td>
+                                </tr>
+                                <tr>
+                                    <td class="metric-label">Profit Loss amount in USD per week</td>
+                                    <td id="week-bot1-pnl" class="pnl-value">+$0.00</td>
+                                </tr>
+                                <tr class="total-row">
+                                    <td class="metric-label">Total Number of Trades per week</td>
+                                    <td id="week-total-trades" class="metric-value">0</td>
+                                </tr>
+                                <tr class="total-row">
+                                    <td class="metric-label">Total Profit Loss amount in USD per week</td>
+                                    <td id="week-total-pnl" class="pnl-value">+$0.00</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Month Statement -->
+                    <div class="pnl-card">
+                        <div class="pnl-card-header">
+                            <h3>Month Statement</h3>
+                            <div class="date-selector-group">
+                                <select id="month-selector" class="date-selector">
+                                    <!-- Populated by JavaScript -->
+                                </select>
+                                <select id="month-year-selector" class="date-selector">
+                                    <!-- Populated by JavaScript -->
+                                </select>
+                            </div>
+                        </div>
+                        <table class="pnl-table">
+                            <thead>
+                                <tr>
+                                    <th>Metric</th>
+                                    <th id="month-bot1-header">--</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td class="metric-label">Number of Trades per month</td>
+                                    <td id="month-bot1-trades" class="metric-value">0</td>
+                                </tr>
+                                <tr>
+                                    <td class="metric-label">Profit Loss amount in USD per month</td>
+                                    <td id="month-bot1-pnl" class="pnl-value">+$0.00</td>
+                                </tr>
+                                <tr class="total-row">
+                                    <td class="metric-label">Total Number of Trades per Month</td>
+                                    <td id="month-total-trades" class="metric-value">0</td>
+                                </tr>
+                                <tr class="total-row">
+                                    <td class="metric-label">Total Profit Loss amount in USD per Month</td>
+                                    <td id="month-total-pnl" class="pnl-value">+$0.00</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <!-- Shared Utilities -->
+    <script src="/static/js/utils.js"></script>
+    <script src="/static/js/pnl-utils.js"></script>
+
+    <!-- Configuration (must load before other scripts) -->
+    <script src="/static/js/config.js?v=2.0.0"></script>
+
+    <!-- Dashboard Scripts -->
+    <script src="/static/js/dashboard.js?v=2.0.0"></script>
+    <script src="/static/js/trade-charts.js?v=2.0.0"></script>
+    <script src="/static/js/pnl-reporting.js?v=2.0.0"></script>
+</body>
+</html>

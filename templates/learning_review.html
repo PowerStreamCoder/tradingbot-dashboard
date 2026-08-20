@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Learning & Analysis - Trading Bot Dashboard</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>">
+    <link rel="stylesheet" href="/static/css/bot_focus.css">
+    <link rel="stylesheet" href="/static/css/learning_review.css">
+</head>
+<body>
+    <div class="learning-container">
+        <!-- Header -->
+        <header class="bot-header">
+            <div class="header-left">
+                <h1>
+                    <span class="bot-icon">🧠</span>
+                    Learning & Analysis Dashboard
+                </h1>
+                <div class="bot-metadata">
+                    <span class="metadata-item">
+                        <span class="label">Purpose:</span>
+                        <span class="value">Review and approve bot learning insights</span>
+                    </span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Navigation Bar -->
+        <nav class="nav-bar">
+            <a href="/bot-focus" class="nav-link">
+                🎯 Bot Focus
+            </a>
+            <a href="/pnl-reporting" class="nav-link">
+                💰 P&L Reporting
+            </a>
+            <a href="/learning-review" class="nav-link active">
+                🧠 Learning & Analysis
+            </a>
+        </nav>
+
+        <!-- Stats Bar -->
+        <div class="stats-bar" id="stats">
+            <div class="stat-card">
+                <h3>Pending Review</h3>
+                <div class="value" id="stat-pending">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>High Priority</h3>
+                <div class="value" id="stat-high">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Potential Savings</h3>
+                <div class="value" id="stat-savings">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Last Analysis</h3>
+                <div class="value" style="font-size: 1.2em;" id="stat-last-run">-</div>
+            </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="filters-section">
+            <label>Filter by:</label>
+            <select id="filter-priority">
+                <option value="all">All Priorities</option>
+                <option value="high">High Priority</option>
+                <option value="medium">Medium Priority</option>
+                <option value="low">Low Priority</option>
+            </select>
+            <select id="filter-type">
+                <option value="all">All Types</option>
+                <option value="eliminate">Eliminate</option>
+                <option value="amplify">Amplify</option>
+                <option value="new_rule">New Rule</option>
+            </select>
+            <button onclick="loadFindings()">Refresh</button>
+        </div>
+
+        <!-- Findings Container -->
+        <div id="findings-container">
+            <div class="loading">Loading findings...</div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <!-- Shared Utilities -->
+    <script src="/static/js/utils.js"></script>
+
+    <!-- Configuration (must load before other scripts) -->
+    <script src="/static/js/config.js?v=2.0.0"></script>
+
+    <script src="/static/js/learning_review.js"></script>
+</body>
+</html>
