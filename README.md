@@ -50,8 +50,7 @@ dashboard/
 │   ├── overview.html      # Multi-bot overview
 │   ├── nvda_focus.js      # NVDA dashboard logic
 │   └── styles.css         # Dark theme styles
-├── scripts/
-│   └── deploy.sh          # Google Cloud Run deployment script
+├── scripts/                # Utility scripts (pycache only)
 └── requirements.txt       # Python dependencies
 ```
 
@@ -80,10 +79,14 @@ python main.py
 ```
 
 ### Production (Google Cloud Run)
+
+**Primary Method:** GitHub Actions CI/CD (automatic on push to main)
 ```bash
-cd dashboard
-bash scripts/deploy.sh
+git push origin main
+# GitHub Actions automatically builds, tests, and deploys
 ```
+
+**Alternative:** Use `/deploy-dashboard` skill for manual deployment
 
 **Production URL:** https://trading-dashboard-w2n5czslna-uc.a.run.app
 
