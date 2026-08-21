@@ -1,58 +1,58 @@
 #!/bin/bash
 
-# Trading Bot Dashboard - Google Cloud Deployment Script (Simplified)
+# ⚠️  DEPRECATED: This script is no longer used for regular deployments
+#
+# Primary deployment method: GitHub Actions CI/CD
+# Push to 'main' branch triggers automatic deployment
+#
+# This script is kept only for emergency manual deployments
+# when GitHub Actions is unavailable
 
-set -e
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "⚠️  DEPRECATED DEPLOYMENT SCRIPT"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "This script is deprecated. Use GitHub Actions instead:"
+echo ""
+echo "  git push origin main"
+echo ""
+echo "GitHub Actions will automatically:"
+echo "  1. Run tests"
+echo "  2. Build container"
+echo "  3. Deploy to Cloud Run"
+echo "  4. Run smoke tests"
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+read -p "Continue with manual deployment anyway? (yes/no): " confirm
+
+if [ "$confirm" != "yes" ]; then
+    echo "Deployment cancelled"
+    exit 0
+fi
 
 # Configuration
 PROJECT_ID="project-dfe26779-9849-4c97-9b6"
 REGION="us-central1"
 SERVICE_NAME="trading-dashboard"
 
-echo "======================================"
-echo "Trading Bot Dashboard Deployment"
-echo "======================================"
-
-# Get the directory where this script is located and go to parent (dashboard root)
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-DASHBOARD_DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
-cd "$DASHBOARD_DIR"
-
-echo "Deploying from: $DASHBOARD_DIR"
+echo ""
+echo "Starting manual deployment..."
+echo "Project: $PROJECT_ID"
+echo "Service: $SERVICE_NAME"
+echo ""
 
 # Check if gcloud is installed
 if ! command -v gcloud &> /dev/null; then
-    echo "Error: gcloud CLI is not installed"
-    echo "Install from: https://cloud.google.com/sdk/docs/install"
+    echo "❌ Error: gcloud CLI is not installed"
     exit 1
 fi
 
-# Verify required files exist
-echo "Verifying deployment files..."
-REQUIRED_FILES=("main.py" "requirements.txt" "Dockerfile" "static" "templates")
-for file in "${REQUIRED_FILES[@]}"; do
-    if [ ! -e "$file" ]; then
-        echo "Error: Required file/directory '$file' not found in $SCRIPT_DIR"
-        exit 1
-    fi
-done
-echo "✓ All required files present"
-
 # Set project
-echo "Setting project to: $PROJECT_ID"
 gcloud config set project $PROJECT_ID
 
-# Enable required APIs
-echo "Enabling required Google Cloud APIs..."
-gcloud services enable run.googleapis.com
-gcloud services enable cloudbuild.googleapis.com
-gcloud services enable artifactregistry.googleapis.com
-
-# Deploy directly using gcloud run deploy with source
-echo "Deploying to Cloud Run from source..."
-echo "✓ Using IBKR data via Firestore (no external API keys required)"
-
-# Deploy without API key - now uses IBKR data from Firestore
+# Deploy
+echo "Deploying to Cloud Run..."
 gcloud run deploy $SERVICE_NAME \
     --source . \
     --platform managed \
@@ -64,29 +64,8 @@ gcloud run deploy $SERVICE_NAME \
     --min-instances 0 \
     --timeout 300
 
-# Get the service URL
-SERVICE_URL=$(gcloud run services describe $SERVICE_NAME \
-    --platform managed \
-    --region $REGION \
-    --format 'value(status.url)')
-
 echo ""
-echo "======================================"
-echo "Deployment Complete!"
-echo "======================================"
-echo "Service URL: $SERVICE_URL"
+echo "✅ Manual deployment complete"
 echo ""
-echo "Access your dashboard at: $SERVICE_URL"
-echo ""
-echo "📊 Data Source: IBKR (15-min delayed) via Firestore"
-echo "   - Historical bars: Last 100 from bot's recent_bars"
-echo "   - SMA indicators: Calculated by bot, stored in bot_status"
-echo "   - All data matches what the bot uses for trading"
-echo ""
-echo "📁 Deployed files:"
-echo "   - main.py (FastAPI application)"
-echo "   - templates/ (index.html, nvda_focus.html, learning_review.html)"
-echo "   - static/css/ (dashboard.css, nvda_focus.css)"
-echo "   - static/js/ (dashboard.js, nvda_focus.js, trade-charts.js)"
-echo "   - requirements.txt (dependencies)"
-echo ""
+echo "⚠️  Remember: Future deployments should use GitHub Actions"
+echo "    Just push to main branch: git push origin main"

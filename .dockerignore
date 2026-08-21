@@ -1,0 +1,44 @@
+# Exclude from Docker build context (not needed in container)
+
+# Tests
+tests/
+*.test.py
+.pytest_cache/
+
+# Documentation
+*.md
+docs/
+
+# Git
+.git/
+.gitignore
+.github/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+
+# Development
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+*.out
+
+# OS
+.DS_Store
+Thumbs.db
+
+# CI/CD configs
+.github/
+
+# Deployment scripts (not needed in container)
+scripts/deploy.sh
+deploy.sh
