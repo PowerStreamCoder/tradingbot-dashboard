@@ -61,6 +61,7 @@ jobs:
     permissions:
       contents: write  # Changed from 'read' to allow git tag push
       id-token: write
+      deployments: write  # Required for GitHub Deployments API
 
     steps:
       - name: Checkout code
