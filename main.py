@@ -127,7 +127,7 @@ def load_bot_configs():
         FileNotFoundError: If bots.json not found
         json.JSONDecodeError: If JSON is invalid
     """
-    global _bot_config_cache
+    # Note: _bot_config_cache is a module-level dict, no 'global' needed for dict modification
 
     # Try multiple config paths (local first, then parent directory for development)
     config_paths = [
@@ -689,7 +689,7 @@ sessions_ref = dashboard_data.db.collection('dashboard_sessions')
 # Load existing sessions from Firestore on startup
 def load_sessions_from_firestore():
     """Load valid sessions from Firestore on startup"""
-    global authenticated_sessions
+    # Note: authenticated_sessions is a module-level dict, no 'global' needed for dict modification
     try:
         now = datetime.now()
         for doc in sessions_ref.stream():
@@ -944,7 +944,7 @@ async def get_metrics(request: Request):
 
     Performance: Cached for 30 seconds to avoid expensive recalculation
     """
-    global _metrics_cache
+    # Note: _metrics_cache is a module-level dict, no 'global' needed for dict modification
 
     with _metrics_cache['lock']:
         now_time = datetime.now().timestamp()
