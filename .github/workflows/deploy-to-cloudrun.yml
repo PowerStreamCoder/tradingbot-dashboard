@@ -59,7 +59,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     permissions:
-      contents: read
+      contents: write  # Changed from 'read' to allow git tag push
       id-token: write
 
     steps:
