@@ -1,239 +1,204 @@
 // P&L Reporting Dashboard JavaScript
 // Simplified version - only P&L statement functionality
-// Version: 2.0.0 - Code review fixes applied
+// Version: 2.4.0 - Fixed duplicate variable declarations
 
 // Configuration
-const API_BASE_URL = '/api';
-const REFRESH_INTERVAL = 30000; // 30 seconds auto-refresh
+// Note: API_BASE_URL is declared in dashboard.js (loaded before this script)
+// Note: BOT_NAMES is declared in dashboard.js (loaded before this script)
+// Note: API_ENDPOINTS is declared in config.js (loaded before this script)
+// Note: REFRESH_INTERVAL is declared in dashboard.js (loaded before this script)
 
-// Bot ID to name mapping (loaded dynamically from /api/bot-configs)
-let BOT_NAMES = {};
-let configReady = false;
+// Config ready flag is managed by dashboard.js (loaded before this script)
+// We'll use the shared BOT_NAMES populated by dashboard.js
+
+// State for multi-select bot filter
+let selectedBots = new Set(); // Empty set means "all bots"
+let allBotsSelected = true;
 
 /**
- * Load bot configurations from API
- *
- * @returns {Promise<boolean>} True if successful, false on error
- * @throws Never throws - handles errors internally
+ * Setup multi-select bot filter with checkboxes
+ * Called after bot configs are loaded
  */
-async function loadBotConfigs() {
-    try {
-        const response = await fetch(API_ENDPOINTS.BOT_CONFIGS);
+function setupBotFilter() {
+    const allBotsCheckbox = document.getElementById('allBotsCheckbox');
+    const botCheckboxContainer = document.getElementById('botCheckboxContainer');
+    const filterButton = document.getElementById('botFilterButton');
+    const filterDropdown = document.getElementById('botFilterDropdown');
 
-        if (!response.ok) {
-            throw new Error(`API returned ${response.status}: ${response.statusText}`);
-        }
-
-        const data = await response.json();
-
-        if (data.error) {
-            Logger.error('PnLReporting', 'Failed to load bot configs', data.error);
-            BOT_NAMES = {1: '⚠️ CONFIG ERROR'};
-            configReady = false;
-            return false;
-        }
-
-        // Validate data structure
-        if (!data.bots || !Array.isArray(data.bots)) {
-            Logger.error('PnLReporting', 'Invalid API response structure', data);
-            BOT_NAMES = {1: '⚠️ CONFIG ERROR'};
-            configReady = false;
-            return false;
-        }
-
-        // Build BOT_NAMES mapping: index+1 -> symbol
-        data.bots.forEach((bot, index) => {
-            const botId = index + 1;
-            BOT_NAMES[botId] = bot.symbol || `Bot ${botId}`;
+    if (!allBotsCheckbox || !botCheckboxContainer || !filterButton || !filterDropdown) {
+        Logger.warn('PnLReporting', 'Bot filter elements not found', {
+            allBotsCheckbox: !!allBotsCheckbox,
+            botCheckboxContainer: !!botCheckboxContainer,
+            filterButton: !!filterButton,
+            filterDropdown: !!filterDropdown
         });
+        return;
+    }
 
-        configReady = true;
+    // Populate individual bot checkboxes
+    botCheckboxContainer.innerHTML = '';
+    Object.entries(BOT_NAMES).forEach(([botId, symbol]) => {
+        const div = document.createElement('div');
+        div.className = 'filter-option';
 
-        Logger.info('PnLReporting', 'Bot configurations loaded', BOT_NAMES);
+        const label = document.createElement('label');
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = botId;
+        checkbox.className = 'bot-checkbox';
+        checkbox.disabled = true; // Disabled when "All Bots" is checked
 
-        return true;
+        const span = document.createElement('span');
+        span.textContent = symbol;
 
-    } catch (error) {
-        Logger.error('PnLReporting', 'Error loading bot configs', error);
-        BOT_NAMES = {1: '⚠️ CONFIG ERROR'};
-        configReady = false;
-        return false;
+        label.appendChild(checkbox);
+        label.appendChild(span);
+        div.appendChild(label);
+        botCheckboxContainer.appendChild(div);
+
+        // Listen for individual bot checkbox changes
+        checkbox.addEventListener('change', handleBotCheckboxChange);
+    });
+
+    // Toggle dropdown on button click
+    filterButton.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        const isVisible = filterDropdown.style.display === 'block';
+        filterDropdown.style.display = isVisible ? 'none' : 'block';
+        Logger.info('PnLReporting', `Filter dropdown ${isVisible ? 'closed' : 'opened'}`);
+    });
+
+    // Prevent dropdown from closing when clicking inside it
+    filterDropdown.addEventListener('click', (e) => {
+        e.stopPropagation();
+    });
+
+    // Close dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+        if (!filterButton.contains(e.target) && !filterDropdown.contains(e.target)) {
+            filterDropdown.style.display = 'none';
+        }
+    });
+
+    // Handle "All Bots" checkbox
+    allBotsCheckbox.addEventListener('change', handleAllBotsCheckboxChange);
+
+    Logger.info('PnLReporting', `Bot filter setup with ${Object.keys(BOT_NAMES).length} bots`);
+}
+
+/**
+ * Handle "All Bots" checkbox change
+ */
+function handleAllBotsCheckboxChange(e) {
+    allBotsSelected = e.target.checked;
+    const botCheckboxes = document.querySelectorAll('.bot-checkbox');
+
+    if (allBotsSelected) {
+        // Disable and uncheck individual bot checkboxes
+        botCheckboxes.forEach(cb => {
+            cb.disabled = true;
+            cb.checked = false;
+        });
+        selectedBots.clear();
+        updateFilterButtonText();
+        loadPnLStatement();
+    } else {
+        // Enable individual bot checkboxes
+        botCheckboxes.forEach(cb => {
+            cb.disabled = false;
+        });
     }
 }
 
-// Add custom styles for P&L tables
-const style = document.createElement('style');
-style.textContent = `
-    .pnl-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-        gap: 24px;
-        margin-top: 24px;
+/**
+ * Handle individual bot checkbox change
+ */
+function handleBotCheckboxChange(e) {
+    const botId = e.target.value;
+
+    if (e.target.checked) {
+        selectedBots.add(botId);
+    } else {
+        selectedBots.delete(botId);
     }
 
-    .pnl-card {
-        background: white;
-        border-radius: 12px;
-        padding: 24px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-        border: 1px solid #e2e8f0;
+    updateFilterButtonText();
+
+    // Only reload if at least one bot is selected
+    if (selectedBots.size > 0) {
+        loadPnLStatement();
+    }
+}
+
+/**
+ * Update filter button text based on selection
+ */
+function updateFilterButtonText() {
+    const filterText = document.getElementById('botFilterText');
+    if (!filterText) return;
+
+    if (allBotsSelected || selectedBots.size === 0) {
+        filterText.textContent = 'All Bots';
+    } else if (selectedBots.size === 1) {
+        const botId = Array.from(selectedBots)[0];
+        filterText.textContent = BOT_NAMES[botId] || `Bot ${botId}`;
+    } else {
+        const botNames = Array.from(selectedBots)
+            .map(id => BOT_NAMES[id] || `Bot ${id}`)
+            .join(', ');
+        filterText.textContent = botNames.length > 30
+            ? `${selectedBots.size} Bots Selected`
+            : botNames;
+    }
+}
+
+/**
+ * Update P&L table column headers based on selected bots
+ */
+function updatePnLHeaders() {
+    let headerText;
+
+    if (allBotsSelected || selectedBots.size === 0) {
+        headerText = 'All Bots';
+    } else if (selectedBots.size === 1) {
+        const botId = Array.from(selectedBots)[0];
+        headerText = BOT_NAMES[botId] || `Bot ${botId}`;
+    } else {
+        const botNames = Array.from(selectedBots)
+            .map(id => BOT_NAMES[id] || `Bot ${id}`)
+            .join(', ');
+        headerText = botNames.length > 20
+            ? `${selectedBots.size} Bots`
+            : botNames;
     }
 
-    .pnl-card-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 20px;
-        padding-bottom: 16px;
-        border-bottom: 2px solid #e2e8f0;
-    }
+    // Update headers for all three periods
+    ['day', 'week', 'month'].forEach(period => {
+        const headerElement = document.getElementById(`${period}-bot1-header`);
+        if (headerElement) {
+            headerElement.textContent = headerText;
+        }
+    });
 
-    .pnl-card-header h3 {
-        margin: 0;
-        font-size: 1.3em;
-        font-weight: 700;
-        color: #1a202c;
-    }
-
-    .date-selector {
-        padding: 8px 12px;
-        border: 1px solid #cbd5e0;
-        border-radius: 6px;
-        font-size: 0.9em;
-        background: white;
-        cursor: pointer;
-        transition: all 0.2s;
-    }
-
-    .date-selector:hover {
-        border-color: #4299e1;
-    }
-
-    .date-selector:focus {
-        outline: none;
-        border-color: #4299e1;
-        box-shadow: 0 0 0 3px rgba(66, 153, 225, 0.1);
-    }
-
-    .date-selector-group {
-        display: flex;
-        gap: 8px;
-    }
-
-    .pnl-table {
-        width: 100%;
-        border-collapse: collapse;
-    }
-
-    .pnl-table thead th {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 12px;
-        text-align: left;
-        font-weight: 600;
-        font-size: 0.9em;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-
-    .pnl-table thead th:first-child {
-        border-radius: 8px 0 0 0;
-    }
-
-    .pnl-table thead th:last-child {
-        border-radius: 0 8px 0 0;
-    }
-
-    .pnl-table tbody tr {
-        border-bottom: 1px solid #e2e8f0;
-        transition: background-color 0.2s;
-    }
-
-    .pnl-table tbody tr:hover {
-        background-color: #f7fafc;
-    }
-
-    .pnl-table tbody tr.total-row {
-        background-color: #edf2f7;
-        font-weight: 600;
-    }
-
-    .pnl-table tbody tr.total-row:hover {
-        background-color: #e2e8f0;
-    }
-
-    .pnl-table td {
-        padding: 14px 12px;
-        font-size: 0.95em;
-    }
-
-    .metric-label {
-        color: #4a5568;
-        font-weight: 500;
-    }
-
-    .metric-value {
-        text-align: center;
-        color: #2d3748;
-        font-weight: 600;
-        font-size: 1.05em;
-    }
-
-    .pnl-value {
-        text-align: center;
-        font-weight: 700;
-        font-size: 1.1em;
-        font-family: 'Courier New', monospace;
-    }
-
-    .pnl-value.positive {
-        color: #38a169;
-    }
-
-    .pnl-value.negative {
-        color: #e53e3e;
-    }
-
-    .section {
-        margin: 24px 0;
-    }
-
-    .section-header {
-        margin-bottom: 24px;
-    }
-
-    .section-header h2 {
-        margin: 0 0 8px 0;
-        font-size: 1.8em;
-        font-weight: 700;
-        color: #1a202c;
-    }
-
-    .section-subtitle {
-        margin: 0;
-        color: #718096;
-        font-size: 1em;
-    }
-`;
-document.head.appendChild(style);
+    Logger.info('PnLReporting', `Updated headers to: ${headerText}`);
+}
 
 // Initialize dashboard on page load
 document.addEventListener('DOMContentLoaded', async function() {
     Logger.info('PnLReporting', 'P&L Reporting Dashboard initializing...');
 
-    // Load bot configurations first
-    await loadBotConfigs();
+    // Note: Bot configs are already loaded by dashboard.js
+    // Wait a moment for dashboard.js to finish loading config
+    await new Promise(resolve => setTimeout(resolve, 100));
 
-    // Wait for config readiness
-    if (!configReady) {
-        Logger.warn('PnLReporting', 'Config not ready, waiting...');
-        await new Promise(resolve => setTimeout(resolve, 100));
+    // Setup multi-select bot filter
+    setupBotFilter();
 
-        if (!configReady) {
-            Logger.error('PnLReporting', 'Config still not ready after wait');
-            alert('⚠️ Configuration Error\n\nFailed to load bot configuration. Dashboard may not display correctly.');
-        }
-    }
+    // Set initial headers to "All Bots" (override dashboard.js hardcoded values)
+    updatePnLHeaders();
+
+    Logger.info('PnLReporting', 'Filter setup and headers updated');
 
     updateLastUpdateTime();
     initializeDateSelectors(loadPnLStatement);
@@ -269,7 +234,21 @@ async function loadPnLStatement() {
             credentials: 'include'
         });
         const data = await response.json();
-        const trades = data.trades || [];
+        const allTrades = data.trades || [];
+
+        // Filter trades by selected bots
+        let filteredTrades;
+        if (allBotsSelected || selectedBots.size === 0) {
+            // Show all bots
+            filteredTrades = allTrades;
+        } else {
+            // Filter to selected bots only
+            filteredTrades = allTrades.filter(trade =>
+                selectedBots.has(String(trade.botId))
+            );
+        }
+
+        Logger.info('PnLReporting', `Filtered ${allTrades.length} trades to ${filteredTrades.length} for ${selectedBots.size || 'all'} bot(s)`);
 
         // Get selected dates
         const daySelector = document.getElementById('day-selector');
@@ -278,14 +257,17 @@ async function loadPnLStatement() {
         const monthSelector = document.getElementById('month-selector');
         const monthYearSelector = document.getElementById('month-year-selector');
 
-        // Calculate P&L for each period
-        const dayPnL = calculatePnLForDay(trades, new Date(daySelector.value));
+        // Calculate P&L for each period using filtered trades
+        const dayPnL = calculatePnLForDay(filteredTrades, new Date(daySelector.value));
 
         const weekValue = `${weekYearSelector.value}-W${weekSelector.value.toString().padStart(2, '0')}`;
-        const weekPnL = calculatePnLForWeek(trades, weekValue);
+        const weekPnL = calculatePnLForWeek(filteredTrades, weekValue);
 
         const monthValue = `${monthYearSelector.value}-${monthSelector.value.toString().padStart(2, '0')}`;
-        const monthPnL = calculatePnLForMonth(trades, monthValue);
+        const monthPnL = calculatePnLForMonth(filteredTrades, monthValue);
+
+        // Update column headers with selected bot names
+        updatePnLHeaders();
 
         // Update UI
         updatePnLPeriod('day', dayPnL);

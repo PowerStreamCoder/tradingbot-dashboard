@@ -1,0 +1,396 @@
+/* P&L Reporting Page - Dark Theme Styles */
+/* Extracted from inline JavaScript and enhanced for better UX */
+
+/* Use CSS variables from bot_focus.css for consistency */
+:root {
+    /* These are inherited from bot_focus.css but defined here for reference */
+    --bg-primary: #0a0e27;
+    --bg-secondary: #131832;
+    --bg-tertiary: #1a1f3a;
+    --bg-tile: #1e2442;
+    --accent-primary: #667eea;
+    --accent-secondary: #764ba2;
+    --text-primary: #e2e8f0;
+    --text-secondary: #a0aec0;
+    --text-muted: #718096;
+    --color-positive: #48bb78;
+    --color-negative: #f56565;
+    --border-color: #2d3748;
+    --border-radius: 8px;
+}
+
+/* P&L Grid Layout - Improved spacing */
+.pnl-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+    gap: 32px; /* Increased from 24px for better breathing room */
+    margin-top: 28px;
+}
+
+/* P&L Cards - Dark theme with better padding */
+.pnl-card {
+    background: var(--bg-tile);
+    border-radius: 12px;
+    padding: 28px; /* Increased from 24px */
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--border-color);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.pnl-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+/* Card Header - Better spacing and typography */
+.pnl-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px; /* Increased from 20px */
+    padding-bottom: 18px; /* Increased from 16px */
+    border-bottom: 2px solid var(--border-color);
+}
+
+.pnl-card-header h3 {
+    margin: 0;
+    font-size: 1.4em; /* Increased from 1.3em */
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+/* Date Selectors - Dark theme styling */
+.date-selector {
+    padding: 10px 14px; /* Increased from 8px 12px */
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-size: 0.95em; /* Slightly increased from 0.9em */
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.date-selector:hover {
+    border-color: var(--accent-primary);
+    background: var(--bg-tertiary);
+}
+
+.date-selector:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
+}
+
+.date-selector option {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    padding: 8px;
+}
+
+.date-selector-group {
+    display: flex;
+    gap: 10px; /* Increased from 8px */
+}
+
+/* P&L Tables - Dark theme with better spacing */
+.pnl-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.pnl-table thead th {
+    background: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary) 100%);
+    color: white;
+    padding: 14px 16px; /* Increased from 12px */
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.9em;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.pnl-table thead th:first-child {
+    border-radius: 8px 0 0 0;
+}
+
+.pnl-table thead th:last-child {
+    border-radius: 0 8px 0 0;
+    text-align: center;
+}
+
+.pnl-table tbody tr {
+    border-bottom: 1px solid var(--border-color);
+    transition: background-color 0.2s ease;
+}
+
+.pnl-table tbody tr:hover {
+    background-color: rgba(102, 126, 234, 0.08);
+}
+
+.pnl-table tbody tr.total-row {
+    background-color: rgba(102, 126, 234, 0.12);
+    font-weight: 600;
+}
+
+.pnl-table tbody tr.total-row:hover {
+    background-color: rgba(102, 126, 234, 0.18);
+}
+
+.pnl-table td {
+    padding: 16px 18px; /* Increased from 14px 12px */
+    font-size: 0.98em; /* Slightly increased from 0.95em */
+}
+
+/* Metric Labels - Improved typography */
+.metric-label {
+    color: var(--text-secondary);
+    font-weight: 500;
+    font-size: 0.95em;
+}
+
+/* Metric Values - Better readability */
+.metric-value {
+    text-align: center;
+    color: var(--text-primary);
+    font-weight: 600;
+    font-size: 1.1em; /* Increased from 1.05em */
+}
+
+/* P&L Values - Enhanced styling */
+.pnl-value {
+    text-align: center;
+    font-weight: 700;
+    font-size: 1.15em; /* Increased from 1.1em */
+    font-family: 'Courier New', Consolas, monospace;
+}
+
+.pnl-value.positive {
+    color: var(--color-positive);
+}
+
+.pnl-value.negative {
+    color: var(--color-negative);
+}
+
+/* Section Styling */
+.section {
+    margin: 28px 0; /* Increased from 24px */
+}
+
+.section-header {
+    margin-bottom: 24px;
+}
+
+.section-header h2 {
+    color: var(--text-primary);
+    font-size: 1.6em;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+
+.section-subtitle {
+    color: var(--text-secondary);
+    font-size: 0.95em;
+    margin: 0;
+}
+
+/* Responsive Design */
+@media (max-width: 1400px) {
+    .pnl-grid {
+        grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+        gap: 24px;
+    }
+}
+
+@media (max-width: 768px) {
+    .pnl-grid {
+        grid-template-columns: 1fr;
+        gap: 20px;
+    }
+
+    .pnl-card {
+        padding: 20px;
+    }
+
+    .pnl-card-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+    }
+
+    .date-selector-group {
+        width: 100%;
+    }
+
+    .date-selector {
+        flex: 1;
+        font-size: 0.9em;
+    }
+
+    .pnl-table thead th,
+    .pnl-table td {
+        padding: 10px 8px;
+        font-size: 0.85em;
+    }
+
+    .metric-label {
+        font-size: 0.85em;
+    }
+}
+
+/* Main Content Area */
+.main-content {
+    padding: 0;
+}
+
+/* Bot Multi-Select Filter Bar */
+.pnl-filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 24px;
+    padding: 16px 24px;
+    background: var(--bg-tile);
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}
+
+.filter-label {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 0.95em;
+    white-space: nowrap;
+}
+
+/* Multi-select filter container */
+.bot-filter-container {
+    position: relative;
+    min-width: 250px;
+}
+
+/* Filter button (shows selected bots) */
+.bot-filter-button {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 10px 14px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-size: 0.95em;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.bot-filter-button:hover {
+    border-color: var(--accent-primary);
+    background: var(--bg-tertiary);
+}
+
+.bot-filter-button:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
+}
+
+.dropdown-arrow {
+    font-size: 0.8em;
+    margin-left: 8px;
+    color: var(--text-secondary);
+}
+
+/* Dropdown menu */
+.bot-filter-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    background: var(--bg-tile);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    max-height: 300px;
+    overflow-y: auto;
+    z-index: 100;
+    padding: 8px 0;
+}
+
+/* Filter option (checkbox item) */
+.filter-option {
+    padding: 0;
+}
+
+.filter-option label {
+    display: flex;
+    align-items: center;
+    padding: 10px 16px;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+    user-select: none;
+}
+
+.filter-option label:hover {
+    background-color: rgba(102, 126, 234, 0.1);
+}
+
+.filter-option input[type="checkbox"] {
+    margin: 0;
+    margin-right: 10px;
+    cursor: pointer;
+    width: 16px;
+    height: 16px;
+}
+
+.filter-option input[type="checkbox"]:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.filter-option span {
+    color: var(--text-primary);
+    font-size: 0.95em;
+}
+
+/* Separator between "All Bots" and individual bots */
+.filter-separator {
+    height: 1px;
+    background: var(--border-color);
+    margin: 4px 12px;
+}
+
+/* Scrollbar styling for dropdown */
+.bot-filter-dropdown::-webkit-scrollbar {
+    width: 8px;
+}
+
+.bot-filter-dropdown::-webkit-scrollbar-track {
+    background: var(--bg-secondary);
+    border-radius: 4px;
+}
+
+.bot-filter-dropdown::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 4px;
+}
+
+.bot-filter-dropdown::-webkit-scrollbar-thumb:hover {
+    background: var(--accent-primary);
+}
+
+/* Responsive: Stack filter bar on mobile */
+@media (max-width: 768px) {
+    .pnl-filter-bar {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 14px 18px;
+    }
+
+    .bot-filter-container {
+        width: 100%;
+    }
+}
+

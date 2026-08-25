@@ -486,6 +486,36 @@
             startStockPickerRefresh();
         }
     }
+
+    // Check URL parameters on page load
+    window.addEventListener('DOMContentLoaded', function() {
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('show') === 'stockpicker') {
+            // Simulate click on Stock Picker tab
+            const stockPickerSection = document.getElementById('stock-picker-section');
+            if (stockPickerSection) {
+                // Hide all main sections
+                document.querySelectorAll('.main-content, section:not(#stock-picker-section)').forEach(el => {
+                    if (!el.classList.contains('bot-header') && !el.classList.contains('nav-bar')) {
+                        el.style.display = 'none';
+                    }
+                });
+
+                // Show stock picker section
+                stockPickerSection.style.display = 'block';
+
+                // Update nav active state
+                document.querySelectorAll('.nav-link').forEach(link => link.classList.remove('active'));
+                const stockPickerLink = document.querySelector('.nav-link[onclick*="showStockPickerTab"]');
+                if (stockPickerLink) {
+                    stockPickerLink.classList.add('active');
+                }
+
+                // Load stock picks
+                startStockPickerRefresh();
+            }
+        }
+    });
     </script>
 
     <style>

@@ -87,17 +87,23 @@ document.addEventListener('DOMContentLoaded', async function() {
     }
 
     updateLastUpdateTime();
-    updatePnLHeaders();  // Set bot names in P&L headers
-    initializeDateSelectors(loadPnLStatement);  // Set up date selectors
-    initializeExportModal();  // Set up export functionality
-    initializeBotControls();  // Set up bot control buttons
-    loadDashboardData();
-    updateBotStatus();  // Check bot status on load
 
-    // Set up auto-refresh
-    setInterval(loadDashboardData, REFRESH_INTERVAL);
+    // Only initialize dashboard-specific features if NOT on the P&L reporting page
+    if (window.location.pathname !== '/pnl-reporting') {
+        updatePnLHeaders();  // Set bot names in P&L headers
+        initializeDateSelectors(loadPnLStatement);  // Set up date selectors
+        initializeExportModal();  // Set up export functionality
+        initializeBotControls();  // Set up bot control buttons
+        loadDashboardData();
+        updateBotStatus();  // Check bot status on load
+
+        // Set up auto-refresh
+        setInterval(loadDashboardData, REFRESH_INTERVAL);
+        setInterval(updateBotStatus, 30000);  // Update bot status every 30 seconds
+    }
+
+    // Update timestamp on all pages
     setInterval(updateLastUpdateTime, 1000);
-    setInterval(updateBotStatus, 30000);  // Update bot status every 30 seconds
 });
 
 /**

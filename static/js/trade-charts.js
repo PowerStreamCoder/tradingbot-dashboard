@@ -15,9 +15,8 @@
 // Chart instances storage (one per bot)
 const tradeCharts = {};
 
-// Bot names (loaded dynamically from /api/bot-configs)
-let BOT_NAMES = {};
-let configReady = false;
+// Note: BOT_NAMES is declared in dashboard.js (loaded before this script)
+// Note: configReady is declared in dashboard.js (loaded before this script)
 
 /**
  * Load bot configurations from API
