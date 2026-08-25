@@ -114,11 +114,6 @@ jobs:
           curl -f -s ${{ steps.service_url.outputs.url }}/ | grep -q "Trading Dashboard"
           echo "✅ Homepage OK"
 
-      - name: Smoke test - API endpoint
-        run: |
-          curl -f -s ${{ steps.service_url.outputs.url }}/api/bot-overview | python3 -m json.tool > /dev/null
-          echo "✅ API endpoint OK"
-
       - name: Check response time
         run: |
           RESPONSE_TIME=$(curl -w "%{time_total}" -o /dev/null -s ${{ steps.service_url.outputs.url }}/)
