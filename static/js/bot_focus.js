@@ -2640,6 +2640,9 @@ async function showTradeDetails(tradeId, entryOrderId) {
 
         const optionEvents = optionEventsData.events || [];
 
+        // Compute option P&L from live events (more reliable than trade.option_pnl which may be stale/missing)
+        const optionPnlFromEvents = optionEvents.reduce((sum, e) => sum + (e.premium || 0), 0);
+
         // v5.0.0: Get trading mode for badge display
         const tradingMode = trade.trading_mode || 'paper';
         const modeBadge = `<span class="mode-badge mode-${tradingMode}" style="margin-left: 10px; padding: 4px 10px; border-radius: 4px; font-size: 0.8em;">${tradingMode.toUpperCase()}</span>`;
@@ -2686,15 +2689,15 @@ async function showTradeDetails(tradeId, entryOrderId) {
                                     <span class="label">Stock P&L:</span>
                                     <span class="value">${(trade.stock_pnl || 0) >= 0 ? '+' : ''}$${Math.abs(trade.stock_pnl || 0).toFixed(2)}</span>
                                 </div>
-                                ${(trade.option_pnl || 0) !== 0 ? `
+                                ${optionPnlFromEvents !== 0 ? `
                                     <div class="summary-row">
                                         <span class="label">Option P&L:</span>
-                                        <span class="value">${(trade.option_pnl || 0) >= 0 ? '+' : ''}$${Math.abs(trade.option_pnl || 0).toFixed(2)} (${getUniqueOptionCount(optionEvents)} ${getUniqueOptionCount(optionEvents) === 1 ? 'call' : 'calls'})</span>
+                                        <span class="value">${optionPnlFromEvents >= 0 ? '+' : ''}$${Math.abs(optionPnlFromEvents).toFixed(2)} (${getUniqueOptionCount(optionEvents)} ${getUniqueOptionCount(optionEvents) === 1 ? 'call' : 'calls'})</span>
                                     </div>
                                 ` : ''}
                                 <div class="summary-row total">
                                     <span class="label">Total P&L:</span>
-                                    ${(() => { const totalPnl = (trade.stock_pnl || trade.profitLoss || 0) + (trade.option_pnl || 0); return `<span class="value ${totalPnl >= 0 ? 'profit' : 'loss'}">${totalPnl >= 0 ? '+' : ''}$${Math.abs(totalPnl).toFixed(2)}</span>`; })()}
+                                    ${(() => { const totalPnl = (trade.stock_pnl || trade.profitLoss || 0) + optionPnlFromEvents; return `<span class="value ${totalPnl >= 0 ? 'profit' : 'loss'}">${totalPnl >= 0 ? '+' : ''}$${Math.abs(totalPnl).toFixed(2)}</span>`; })()}
                                 </div>
                             </div>
                         </div>
