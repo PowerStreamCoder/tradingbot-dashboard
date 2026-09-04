@@ -2694,9 +2694,7 @@ async function showTradeDetails(tradeId, entryOrderId) {
                                 ` : ''}
                                 <div class="summary-row total">
                                     <span class="label">Total P&L:</span>
-                                    <span class="value ${(trade.profitLoss || 0) >= 0 ? 'profit' : 'loss'}">
-                                        ${(trade.profitLoss || 0) >= 0 ? '+' : ''}$${Math.abs(trade.profitLoss || 0).toFixed(2)}
-                                    </span>
+                                    ${(() => { const totalPnl = (trade.stock_pnl || trade.profitLoss || 0) + (trade.option_pnl || 0); return `<span class="value ${totalPnl >= 0 ? 'profit' : 'loss'}">${totalPnl >= 0 ? '+' : ''}$${Math.abs(totalPnl).toFixed(2)}</span>`; })()}
                                 </div>
                             </div>
                         </div>
