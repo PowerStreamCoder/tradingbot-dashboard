@@ -2059,7 +2059,7 @@ function calculateSharpeRatio(trades) {
     if (!trades || trades.length < 2) return null;
 
     // Calculate returns
-    const returns = trades.map(t => t.profitLoss || 0);
+    const returns = trades.map(t => (t.stock_pnl !== undefined ? (t.stock_pnl + (t.option_pnl || 0)) : (t.profitLoss || 0)));
 
     // Calculate average return
     const avgReturn = returns.reduce((sum, r) => sum + r, 0) / returns.length;
@@ -2091,7 +2091,7 @@ function calculateMaxDrawdown(trades) {
     let maxDrawdown = 0;
 
     sortedTrades.forEach(trade => {
-        cumulativePnL += trade.profitLoss || 0;
+        cumulativePnL += (trade.stock_pnl !== undefined ? (trade.stock_pnl + (trade.option_pnl || 0)) : (trade.profitLoss || 0));
 
         // Update peak if we've reached a new high
         if (cumulativePnL > peak) {
@@ -2194,7 +2194,7 @@ async function updateTradeHistory() {
             // Extract option data (with backward compatibility)
             const stockPnl = trade.stock_pnl !== undefined ? trade.stock_pnl : trade.profitLoss;
             const optionPnl = trade.option_pnl || 0;
-            const totalPnl = trade.profitLoss || 0;
+            const totalPnl = (trade.stock_pnl !== undefined) ? (stockPnl + optionPnl) : (trade.profitLoss || 0);
             const optionEventCount = trade.option_event_count || 0;
 
             // Format P&L values

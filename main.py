@@ -1368,21 +1368,26 @@ async def get_bot_metrics(bot_id: int, days: int = 90, response: Response = None
         else:
             # Today's P&L
             today = datetime.now().date()
+            def trade_total_pnl(t):
+                if 'stock_pnl' in t:
+                    return t.get('stock_pnl', 0) + t.get('option_pnl', 0)
+                return t.get('profitLoss', 0)
+
             today_pnl = sum(
-                t.get('profitLoss', 0)
+                trade_total_pnl(t)
                 for t in trades
                 if datetime.fromisoformat(t['timestamp']).date() == today
             )
 
             # Net P&L
-            net_pnl = sum(t.get('profitLoss', 0) for t in trades)
+            net_pnl = sum(trade_total_pnl(t) for t in trades)
 
             # Win rate
-            profitable = sum(1 for t in trades if t.get('profitLoss', 0) > 0)
+            profitable = sum(1 for t in trades if trade_total_pnl(t) > 0)
             win_rate = (profitable / len(trades) * 100) if trades else 0
 
             # Sharpe ratio
-            returns = [t.get('profitLoss', 0) for t in trades]
+            returns = [trade_total_pnl(t) for t in trades]
             mean_return = sum(returns) / len(returns) if returns else 0
             variance = sum((r - mean_return) ** 2 for r in returns) / len(returns) if len(returns) > 1 else 0
             std_dev = variance ** 0.5
@@ -1392,7 +1397,7 @@ async def get_bot_metrics(bot_id: int, days: int = 90, response: Response = None
             cumulative_pnl = []
             running_total = 0
             for t in sorted(trades, key=lambda x: x['timestamp']):
-                running_total += t.get('profitLoss', 0)
+                running_total += trade_total_pnl(t)
                 cumulative_pnl.append(running_total)
 
             max_drawdown = 0
