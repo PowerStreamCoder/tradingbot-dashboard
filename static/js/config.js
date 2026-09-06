@@ -43,12 +43,12 @@ const API_ENDPOINTS = {
  * Update intervals (milliseconds)
  */
 const UPDATE_INTERVALS = {
-    BOT_OVERVIEW: 5000,      // Bot position data
-    BOT_STATUS: 5000,        // Health metrics
+    BOT_OVERVIEW: 15000,     // Bot position data
+    BOT_STATUS: 15000,       // Health metrics
     CHART: 60000,            // Price chart (Alpha Vantage rate limit)
-    TABLES: 10000,           // Trade history, positions
-    LOGS: 10000,             // Bot logs
-    PROFILE_CHECK: 10000     // Profile indicator
+    TABLES: 30000,           // Trade history, positions
+    LOGS: 30000,             // Bot logs
+    PROFILE_CHECK: 30000     // Profile indicator
 };
 
 /**
