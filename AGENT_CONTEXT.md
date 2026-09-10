@@ -1,3 +1,4 @@
+<!-- Auto-generated from AGENT_CONTEXT.md — do not edit manually -->
 # Dashboard — AI Agent Context
 
 ## Main entry points
@@ -110,3 +111,46 @@
 - Dashboard deployment: `../tradingbot-documentation/deployment/DASHBOARD_DEPLOYMENT.md`
 - Operator runbook: `../tradingbot-documentation/guides/OPERATOR_RUNBOOK.md`
 - Changelog: `../tradingbot-documentation/CHANGELOG.md`
+
+## Code Knowledge Graph
+_Auto-updated 2026-09-10. Full graph: `tradingbot-tools/knowledge-graph/output/`_
+
+### Key Classes
+| Class | File | Role |
+|---|---|---|
+| `AsyncFillMonitor` | `execution_manager.py` | Tracks orders that timed out but may fill asynchronously. |
+| `BasePaperTrader` | `base.py` | Base class for IBKR paper trading bots. |
+| `BotConfig` | `services/bot_manager.py` | Configuration for a single bot. |
+| `BotData` | `main.py` |  |
+| `BotManager` | `services/bot_manager.py` | Manages multiple trading bot processes. |
+| `BotProcess` | `services/bot_manager.py` | Running bot process information. |
+| `Bucket` | `base.py` | A position slot with allocated capital. |
+| `BucketData` | `main.py` | Bucket status data model for active trading positions. |
+| `CircuitBreakerState` | `exit_handler.py` | Circuit breaker state for retry loop rate limiting. |
+| `CoveredCallManager` | `options_manager.py` | Manages covered call strategy decisions. |
+| `DashboardClient` | `dashboard.py` | Client for communicating with the trading dashboard API. |
+| `DashboardConfig` | `dashboard.py` | Configuration for dashboard integration. |
+| `DashboardData` | `main.py` |  |
+| `EntryFilterChain` | `entry_filters.py` | Orchestrates multiple entry filters in sequence. |
+| `EntryHandlerConfig` | `entry_handler.py` | Configuration for UnifiedEntryHandler behaviour. |
+
+### Trade Entry Lifecycle
+SMACrossoverTrader detects SMA5/SMA20 crossover on 1-hour bar → EntryFilterChain validates: RegimeFilter, MultiTimeframeFilter, volatility guards → UnifiedEntryHandler.execute_entry() → ExecutionManager.execute() → BasePaperTrader.on_entry_fill()
+
+### Trade Exit Lifecycle
+UnifiedExitHandler monitors per price tick: ATR profit target (2.0x ATR), trailing stop (0.5x ATR from peak), hard stop (-5%) → Exit condition met → ExecutionManager.execute() → BasePaperTrader.on_exit_fill() → DashboardClient.log_trade()
+
+### Covered Call Lifecycle
+SMACrossoverTrader checks covered call eligibility on each bar when in long position → CoveredCallManager.check_and_sell_call() → ExecutionManager.execute() → on_call_fill() → DashboardClient.log_option_event(type='sold')
+
+### SMA Signal Pipeline
+BasePaperTrader.reqHistoricalData() → SMACrossoverTrader._compute_sma() → SMACrossoverTrader detects crossover signal (LONG_ENTRY | LONG_EXIT | NEUTRAL) → BasePaperTrader._store_historical_bars_to_firestore() → SMACrossoverTrader._send_heartbeat()
+
+### Bot Heartbeat
+BasePaperTrader._heartbeat_loop() → Writes last_heartbeat timestamp, connection status, and SMA values to Firestore bot_status/{bot_id}
+
+### For deeper questions
+Read `tradingbot-tools/knowledge-graph/output/bots_graph.md` for code structure
+or `output/flows.md` for detailed data flow narratives.
+
+<!-- END CODE KNOWLEDGE GRAPH -->
