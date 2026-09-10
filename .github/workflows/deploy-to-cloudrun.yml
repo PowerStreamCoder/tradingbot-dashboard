@@ -173,3 +173,12 @@ jobs:
               environment_url: '${{ steps.service_url.outputs.url }}',
               description: 'Dashboard deployed successfully'
             });
+
+      - name: Trigger knowledge graph rebuild
+        if: success()
+        run: |
+          curl -s -X POST \
+            -H "Authorization: token ${{ secrets.PAT_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/PowerStreamCoder/tradingbot-tools/dispatches \
+            -d '{"event_type":"code-changed"}'
