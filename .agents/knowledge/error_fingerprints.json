@@ -92,6 +92,57 @@
       "verification_cmd": "python3 -m pytest tradingbot-bots/tests"
     },
     {
+      "id": "ERR_BOT_SELECTOR_UNDEFINED_FUNCTION",
+      "patterns": [
+        "stopUpdates is not defined",
+        "startUpdates is not defined",
+        "ReferenceError.*handleBotSelectorChange"
+      ],
+      "symptom": "Bot selector change fires but dashboard does not switch — console shows ReferenceError, bot data stays on previous bot.",
+      "affected_files": ["static/js/bot_focus.js"],
+      "root_cause": "handleBotSelectorChange called stopUpdates()/startUpdates() which were never defined. The handler aborts on the ReferenceError before loadBotConfig() is reached.",
+      "resolution": "Use stopAllTimers() and startPeriodicTimers() instead. Verify all function names called in handleBotSelectorChange exist before deploying.",
+      "verification_cmd": "grep -n 'stopUpdates\\|startUpdates' static/js/bot_focus.js"
+    },
+    {
+      "id": "ERR_LEAKED_SETINTERVAL_ON_BOT_SWITCH",
+      "patterns": [
+        "duplicate API calls after bot switch",
+        "stale symbol in polling after switch",
+        "chart still showing old bot after switch"
+      ],
+      "symptom": "After switching bots, multiple overlapping polling loops run simultaneously — some fetch the new bot, others still fetch the old bot.",
+      "affected_files": ["static/js/bot_focus.js"],
+      "root_cause": "setInterval handles for chart/tables/logs timers were not stored in variables, so clearInterval could not be called on them during bot switch. Each switch adds new intervals without removing old ones.",
+      "resolution": "Declare chartTimer, tablesTimer, logsTimer at module level. Assign all setInterval return values. Call clearInterval on all four timers in stopAllTimers() before each switch.",
+      "verification_cmd": "grep -n 'setInterval' static/js/bot_focus.js"
+    },
+    {
+      "id": "ERR_TRADE_HISTORY_CROSS_BOT_BLEED",
+      "patterns": [
+        "trade history shows wrong symbol after bot switch",
+        "NVDA trades visible when IWM selected"
+      ],
+      "symptom": "Trade history table shows trades from a different bot after switching the bot selector.",
+      "affected_files": ["static/js/bot_focus.js"],
+      "root_cause": "updateTradeHistory fetches /api/trade-history/all (all bots) and only filtered by trading_mode (paper/live), not by CONFIG.symbol.",
+      "resolution": "Add symbol filter: trade.symbol === CONFIG.symbol (also check trade.analysis_metadata?.symbol for backward compat).",
+      "verification_cmd": "grep -n 'filteredTrades' static/js/bot_focus.js"
+    },
+    {
+      "id": "ERR_BOT_CONFIG_STALE_LOCAL_COPY",
+      "patterns": [
+        "bot not appearing in selector",
+        "new bot missing from dropdown",
+        "selector only shows one bot"
+      ],
+      "symptom": "A bot exists in tradingbot-config/bots.json but does not appear in the dashboard bot selector.",
+      "affected_files": ["tradingbot-dashboard/config/bots.json", "tradingbot-dashboard/main.py"],
+      "root_cause": "Dashboard has its own bundled config/bots.json that diverged from the canonical tradingbot-config/bots.json. load_bot_configs() was checking the local copy first.",
+      "resolution": "load_bot_configs() now checks ../tradingbot-config/bots.json first (canonical), falling back to local config/bots.json for Cloud Run. Keep both in sync when adding/removing bots.",
+      "verification_cmd": "curl http://localhost:8080/api/bot-configs | python3 -m json.tool"
+    },
+    {
       "id": "ERR_EXTENDED_HOURS_MARKET_ORDER",
       "patterns": [
         "Order market timeout: PendingCancel",
