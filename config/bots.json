@@ -8,6 +8,15 @@
       "strategy": "sma_crossover",
       "enabled": true,
       "description": "IWM SMA 5/20 crossover trader with tick execution"
+    },
+    {
+      "name": "nvda_sma",
+      "symbol": "NVDA",
+      "client_id": 4,
+      "script": "bots/UniversalSMABot.py",
+      "strategy": "sma_crossover",
+      "enabled": true,
+      "description": "NVDA SMA 5/20 crossover trader with covered calls"
     }
   ],
   "defaults": {

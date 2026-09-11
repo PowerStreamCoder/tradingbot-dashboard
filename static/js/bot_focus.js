@@ -227,7 +227,10 @@ async function handleBotSelectorChange(event) {
     Logger.info('BotFocus', `Bot selector changed to client_id: ${selectedBotId}`);
 
     // Stop updates first to prevent race conditions
-    stopUpdates();
+    if (updateTimer) {
+        clearInterval(updateTimer);
+        updateTimer = null;
+    }
 
     try {
         // Save preference
@@ -237,8 +240,18 @@ async function handleBotSelectorChange(event) {
         const success = await loadBotConfig();
 
         if (success) {
-            // Only restart if config loaded successfully
-            startUpdates();
+            // Clear cached content so debounce guards don't suppress the fresh data
+            document.querySelectorAll('[data-last-content]').forEach(el => {
+                delete el.dataset.lastContent;
+            });
+
+            // Immediate refresh of all data sections for the new bot
+            await updateBotOverview();
+            await updateBotStatus();
+            updateMarketClock();
+
+            // Restart periodic polling
+            startPeriodicUpdates();
             showNotification(`Switched to ${CONFIG.symbol} bot`, 'success');
         } else {
             showError('Failed to switch bot', 'Could not load bot configuration');

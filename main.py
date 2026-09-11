@@ -129,10 +129,10 @@ def load_bot_configs():
     """
     # Note: _bot_config_cache is a module-level dict, no 'global' needed for dict modification
 
-    # Try multiple config paths (local first, then parent directory for development)
+    # Try multiple config paths (canonical config repo first, then production bundled copy)
     config_paths = [
-        os.path.join(os.path.dirname(__file__), "config", "bots.json"),  # Production: dashboard/config/bots.json
-        os.path.join(os.path.dirname(__file__), "..", "tradingbots", "config", "bots.json")  # Development: ../tradingbots/config/bots.json
+        os.path.join(os.path.dirname(__file__), "..", "tradingbot-config", "bots.json"),  # Canonical: sibling config repo
+        os.path.join(os.path.dirname(__file__), "config", "bots.json"),  # Production fallback: bundled copy in Cloud Run image
     ]
 
     bots_config_path = None
