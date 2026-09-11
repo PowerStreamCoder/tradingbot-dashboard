@@ -1,0 +1,107 @@
+{
+  "version": "1.0.0",
+  "description": "Error fingerprint database mapping stack traces, error messages, and symptoms to root causes and quick resolutions.",
+  "fingerprints": [
+    {
+      "id": "ERR_NAIVE_DATETIME",
+      "patterns": [
+        "can't subtract offset-naive and offset-aware datetimes",
+        "TypeError: can't subtract offset-naive",
+        "offset-naive"
+      ],
+      "symptom": "Trade timestamps mismatched or offset datetime error in Firestore/calculations",
+      "affected_files": ["trading/base.py", "trading/strategies/sma_crossover_trader.py", "trading/dashboard.py"],
+      "root_cause": "datetime.now() without tzinfo parameter used instead of UTC aware datetime.",
+      "resolution": "Use datetime.now(timezone.utc) or utcnow() helper. All Firestore timestamps must be offset-aware UTC.",
+      "verification_cmd": "pytest tests/ -v"
+    },
+    {
+      "id": "ERR_PHANTOM_EXIT",
+      "patterns": [
+        "phantom exit",
+        "position no longer open",
+        "IBKR execution report for closed position"
+      ],
+      "symptom": "Bot triggers exit callback for position no longer held or duplicate trade record.",
+      "affected_files": ["trading/base.py", "trading/dashboard.py"],
+      "root_cause": "_on_exec_details processed IBKR execution reports without verifying live position status or deduplicating execution IDs.",
+      "resolution": "Check ib.positions() before processing fill and enforce exec_id deduplication set in log_trade().",
+      "verification_cmd": "pytest tests/ -v"
+    },
+    {
+      "id": "ERR_IBKR_HMDS_162",
+      "patterns": [
+        "Error 162",
+        "HMDS query returned no data",
+        "0 historical bars"
+      ],
+      "symptom": "Bot receives 0 historical bars on startup and remains inactive.",
+      "affected_files": ["trading/base.py", "trading/config.py"],
+      "root_cause": "Requesting bar_size '1 hour' at open before enough bars exist or using whatToShow='MIDPOINT' instead of 'TRADES'.",
+      "resolution": "Use bar_size '5 mins' and whatToShow='TRADES'.",
+      "verification_cmd": "pytest tests/ -v"
+    },
+    {
+      "id": "ERR_OPTION_PNL_ZERO",
+      "patterns": [
+        "option_pnl = 0.0",
+        "covered call pnl missing in tick exit"
+      ],
+      "symptom": "Tick-based exit calculations evaluate covered call P&L as 0.0.",
+      "affected_files": ["trading/strategies/sma_crossover_trader.py", "trading/pnl_calculator.py"],
+      "root_cause": "on_tick_update_entries did not pass resolved Bucket object to _check_exit_conditions.",
+      "resolution": "Pass bucket parameter explicitly to _check_exit_conditions to pull bucket.option_pnl.",
+      "verification_cmd": "pytest tests/ -v"
+    },
+    {
+      "id": "ERR_PENDING_SUBMIT_TIMEOUT",
+      "patterns": [
+        "PendingSubmit timeout",
+        "IBKR connection unhealthy"
+      ],
+      "symptom": "Bot classified as unhealthy on latency spike or thrashing exit attempts.",
+      "affected_files": ["trading/base.py", "trading/exit_handler.py"],
+      "root_cause": "Unhealthy threshold set too low (3 timeouts) or profit floor exit lacked cooldown.",
+      "resolution": "Set unhealthy threshold to 7 timeouts and add 60-second cooldown on exit retries.",
+      "verification_cmd": "pytest tests/ -v"
+    },
+    {
+      "id": "ERR_ASYNC_FILL_ORPHAN",
+      "patterns": [
+        "orphaned fill",
+        "order fill post timeout"
+      ],
+      "symptom": "IBKR fills order after bot gave up waiting, causing untracked position.",
+      "affected_files": ["trading/execution_manager.py"],
+      "root_cause": "Timeout logic in execution_manager did not retain order_id for post-timeout fill callbacks.",
+      "resolution": "Use AsyncFillMonitor to track timed-out order IDs for 60 seconds.",
+      "verification_cmd": "pytest tests/ -v"
+    },
+    {
+      "id": "ERR_EXIT_TIMEOUT_TRUTHINESS",
+      "patterns": [
+        "PHANTOM EXIT DETECTED",
+        "duplicate entry_order_id",
+        "Stock position mismatch detected!",
+        "IBKR has orphaned position"
+      ],
+      "symptom": "Realized P/L is duplicated/inflated in logs or IBKR position mismatch reported on startup after exit timeout.",
+      "affected_files": ["trading/exit_handler.py", "trading/strategies/sma_crossover_trader.py", "trading/base.py"],
+      "root_cause": "exit_handler checked 'if order_result:' which evaluates to True for (None, order_id) 2-tuples on timeout. Strategy on_exit_fill lacked 'if self.active_position is None: return' guard.",
+      "resolution": "Check 'if order_result and order_result[0] is not None:' before setting success=True. Add active_position is None guard in on_exit_fill. Allow manual/orphaned exit orders with bucket_id=None.",
+      "verification_cmd": "python3 -m pytest tradingbot-bots/tests"
+    },
+    {
+      "id": "ERR_EXTENDED_HOURS_MARKET_ORDER",
+      "patterns": [
+        "Order market timeout: PendingCancel",
+        "PendingSubmit after 10s outside RTH"
+      ],
+      "symptom": "Emergency or manual market exit orders stall in PendingSubmit and timeout during extended hours trading.",
+      "affected_files": ["trading/execution_manager.py"],
+      "root_cause": "US stock exchanges prohibit Market orders outside Regular Trading Hours (9:30 AM - 4:00 PM ET), causing IBKR to hold MarketOrders until market open.",
+      "resolution": "Route all orders outside RTH to limit_escalation (LimitOrder with outsideRth=True).",
+      "verification_cmd": "python3 -m pytest tradingbot-bots/tests"
+    }
+  ]
+}

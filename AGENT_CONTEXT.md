@@ -40,6 +40,9 @@
 - Authentication: `POST /authenticate` (access code = today's date in ddmmyy format)
 
 ## Debugging rules
+- Follow adaptation guidelines in `.agents/rules/agent_adaptation_rules.md` for fast diagnostics and incident logging
+- Before exploratory debugging, check `.agents/knowledge/error_fingerprints.json` or run `python3 ../tradingbot-tools/scripts/diagnose_incident.py -q "<error>"`
+- Automatically log fixed bugs to `../tradingbot-documentation/bug-resolution/BUG_RESOLUTION_LOG.md` without prompting the user
 - For API errors: inspect `main.py` route handler and Firestore collection access first
 - For UI changes that seem invisible: check `dataset.lastContent` on DOM elements — it suppresses duplicate updates; clear it or set a force-update flag
 - For chart rendering issues: check SMA array length — must match chart data length exactly; extend when adding padding
