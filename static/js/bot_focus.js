@@ -25,6 +25,9 @@ const DEFAULT_CONFIG = {
 // State
 let priceChart = null;
 let updateTimer = null;
+let chartTimer = null;
+let tablesTimer = null;
+let logsTimer = null;
 let lastUpdateTimestamps = {
     positions: 0,
     orders: 0,
@@ -226,11 +229,8 @@ async function handleBotSelectorChange(event) {
 
     Logger.info('BotFocus', `Bot selector changed to client_id: ${selectedBotId}`);
 
-    // Stop updates first to prevent race conditions
-    if (updateTimer) {
-        clearInterval(updateTimer);
-        updateTimer = null;
-    }
+    // Stop all update timers to prevent race conditions
+    stopAllTimers();
 
     try {
         // Save preference
@@ -245,13 +245,16 @@ async function handleBotSelectorChange(event) {
                 delete el.dataset.lastContent;
             });
 
-            // Immediate refresh of all data sections for the new bot
-            await updateBotOverview();
-            await updateBotStatus();
-            updateMarketClock();
+            // Reset timestamps so table/log throttles don't block the first fetch
+            lastUpdateTimestamps.positions = 0;
+            lastUpdateTimestamps.orders = 0;
+            lastUpdateTimestamps.logs = 0;
 
-            // Restart periodic polling
-            startPeriodicUpdates();
+            // Immediate refresh of all sections for the new bot
+            await fetchInitialData();
+
+            // Restart periodic timers (fetchInitialData above already did the first fetch)
+            startPeriodicTimers();
             showNotification(`Switched to ${CONFIG.symbol} bot`, 'success');
         } else {
             showError('Failed to switch bot', 'Could not load bot configuration');
@@ -450,7 +453,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     initializeChart();
     fetchInitialData();
-    startPeriodicUpdates();
+    startPeriodicTimers();
     attachEventListeners();
 
     // Start config update polling
@@ -1280,6 +1283,14 @@ async function fetchInitialData() {
 }
 
 /**
+ * Stop all periodic update timers
+ */
+function stopAllTimers() {
+    [updateTimer, chartTimer, tablesTimer, logsTimer].forEach(t => { if (t) clearInterval(t); });
+    updateTimer = chartTimer = tablesTimer = logsTimer = null;
+}
+
+/**
  * Start periodic updates
  */
 function startPeriodicUpdates() {
@@ -1291,16 +1302,16 @@ function startPeriodicUpdates() {
     }, CONFIG.updateInterval);
 
     // Update chart less frequently (Alpha Vantage rate limits)
-    setInterval(async () => {
+    chartTimer = setInterval(async () => {
         await updateChartData();
     }, CONFIG.chartUpdateInterval);
 
     // Update tables less frequently to reduce flickering
-    setInterval(async () => {
+    tablesTimer = setInterval(async () => {
         const now = Date.now();
         if (now - lastUpdateTimestamps.positions > CONFIG.tablesUpdateInterval) {
             await updateTradesData();
-            await updateTradeHistory();  // NEW: Update trade history
+            await updateTradeHistory();
             lastUpdateTimestamps.positions = now;
         }
         if (now - lastUpdateTimestamps.orders > CONFIG.tablesUpdateInterval) {
@@ -1309,11 +1320,11 @@ function startPeriodicUpdates() {
         }
     }, CONFIG.tablesUpdateInterval);
 
-    // Update profile indicator every 10 seconds
+    // Update profile indicator every 10 seconds (not bot-specific, no need to track)
     setInterval(updateSwitchButtonText, 10000);
 
     // Update logs less frequently to reduce flickering
-    setInterval(async () => {
+    logsTimer = setInterval(async () => {
         const now = Date.now();
         if (now - lastUpdateTimestamps.logs > CONFIG.logsUpdateInterval) {
             await updateLogsData();
@@ -1321,13 +1332,50 @@ function startPeriodicUpdates() {
         }
     }, CONFIG.logsUpdateInterval);
 
-    // Initial fetch for chart
+    // Initial fetch for chart, trades, and logs
     updateChartData();
-
-    // Initial fetch for trades and logs
     updateTradesData();
-    updateTradeHistory();  // NEW: Initial trade history load
+    updateTradeHistory();
     updateLogsData();
+}
+
+/**
+ * Start periodic update timers only (no initial fetch).
+ * Call fetchInitialData() separately before this on bot switch.
+ */
+function startPeriodicTimers() {
+    updateTimer = setInterval(async () => {
+        await updateBotOverview();
+        await updateBotStatus();
+        updateMarketClock();
+    }, CONFIG.updateInterval);
+
+    chartTimer = setInterval(async () => {
+        await updateChartData();
+    }, CONFIG.chartUpdateInterval);
+
+    tablesTimer = setInterval(async () => {
+        const now = Date.now();
+        if (now - lastUpdateTimestamps.positions > CONFIG.tablesUpdateInterval) {
+            await updateTradesData();
+            await updateTradeHistory();
+            lastUpdateTimestamps.positions = now;
+        }
+        if (now - lastUpdateTimestamps.orders > CONFIG.tablesUpdateInterval) {
+            updateOrdersTableDebounced();
+            lastUpdateTimestamps.orders = now;
+        }
+    }, CONFIG.tablesUpdateInterval);
+
+    setInterval(updateSwitchButtonText, 10000);
+
+    logsTimer = setInterval(async () => {
+        const now = Date.now();
+        if (now - lastUpdateTimestamps.logs > CONFIG.logsUpdateInterval) {
+            await updateLogsData();
+            lastUpdateTimestamps.logs = now;
+        }
+    }, CONFIG.logsUpdateInterval);
 }
 
 /**
@@ -2157,13 +2205,13 @@ async function updateTradeHistory() {
         const trades = Array.isArray(data) ? data : (data.trades || []);
         console.log(`[TRADE HISTORY] Total trades fetched: ${trades.length}`);
 
-        // v5.0.0: Filter trades by current profile mode (paper vs live)
-        // Trades without trading_mode field default to "paper" for backward compatibility
+        // Filter by current profile mode AND current bot's symbol
         const filteredTrades = trades.filter(trade => {
             const tradeMode = trade.trading_mode || 'paper';
-            return tradeMode === currentProfile;
+            const tradeSymbol = (trade.symbol || trade.analysis_metadata?.symbol || '').toUpperCase();
+            return tradeMode === currentProfile && tradeSymbol === CONFIG.symbol;
         });
-        console.log(`[TRADE HISTORY] Filtered to ${filteredTrades.length} ${currentProfile.toUpperCase()} trades`);
+        console.log(`[TRADE HISTORY] Filtered to ${filteredTrades.length} ${currentProfile.toUpperCase()} trades for ${CONFIG.symbol}`);
 
         // Display filtered trades (last 25)
         const allTrades = filteredTrades.slice(0, 25);
