@@ -1718,6 +1718,25 @@ async function updateBotStatus() {
                 : '<span class="status-dot" style="background-color: #f56565;"></span> Triggered';
         }
 
+        // Update Macro State & VIX Level
+        const topMacroStateEl = document.getElementById('topMacroState');
+        if (topMacroStateEl) {
+            const macroState = data.macro_state || 'NORMAL';
+            const macroIcons = {
+                'NORMAL': '🌐 NORMAL',
+                'MODERATE_STRESS': '⚡ MODERATE',
+                'HIGH_STRESS': '🔥 HIGH STRESS',
+                'EVENT_FREEZE': '🚨 FREEZE'
+            };
+            topMacroStateEl.textContent = macroIcons[macroState] || `🌐 ${macroState}`;
+        }
+        const topVixLevelEl = document.getElementById('topVixLevel');
+        if (topVixLevelEl) {
+            const vix = (data.vix_level !== undefined && data.vix_level !== null) ? data.vix_level : 14.0;
+            topVixLevelEl.textContent = vix.toFixed(1);
+        }
+
+
         // Update SMA Crossover Status (new data from bot)
         if (data.sma5 !== null && data.sma5 !== undefined) {
             updateElement('sma5', `$${data.sma5.toFixed(2)}`);
@@ -1887,8 +1906,12 @@ function updatePositionData(botData) {
         // Use actual stop loss and target from bot (if available)
         const stopLoss = activeBucket.stopLossPrice || (activeBucket.entryPrice * 0.95); // Fallback to 5%
         const target = activeBucket.profitTargetPrice || (activeBucket.entryPrice * 1.025); // Fallback to 2.5%
-        updateElement('posStopLoss', `$${stopLoss.toFixed(2)}`);
+
+        const isBreakEvenLocked = activeBucket.break_even_locked || (stopLoss >= activeBucket.entryPrice);
+        const slLabel = isBreakEvenLocked ? `🔒 $${stopLoss.toFixed(2)} (Break-Even)` : `$${stopLoss.toFixed(2)}`;
+        updateElement('posStopLoss', slLabel);
         updateElement('posTarget', `$${target.toFixed(2)}`);
+
 
         // Update quantity display (if element exists)
         if (document.getElementById('posQuantity')) {
@@ -2319,6 +2342,10 @@ function formatExitReason(reason) {
         'profit_target': 'Profit Target',
         'stop_loss': 'Stop Loss',
         'trailing_stop': 'Trailing Stop',
+        'break_even_lock': '🔒 Break-Even Lock',
+        'time_decay_stagnation': '⌛ Time Decay Stagnation',
+        'scale_out_target': '💰 Tier 1 Scale-Out',
+        'pyramid_add': '📈 Pyramid Scale-In Add',
         'sma_reversal': 'SMA Reversal',
         'market_close': 'Market Close',
         'manual': 'Manual Exit',
@@ -2326,6 +2353,7 @@ function formatExitReason(reason) {
     };
     return reasonMap[reason] || reason.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
 }
+
 
 /**
  * Format trade timestamp for display
