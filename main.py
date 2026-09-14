@@ -2764,6 +2764,42 @@ async def run_stock_picker(request: Request):
             _stockpicker_running = False
 
 
+@app.get("/api/entry-decisions")
+async def get_entry_decisions(limit: int = 50, symbol: Optional[str] = None):
+    """
+    Get latest entry decisions (ALLOWED vs BLOCKED) from Firestore entry_decisions collection.
+
+    Query params:
+        limit: Number of records to return (default: 50, max: 200)
+        symbol: Optional filter by ticker symbol (e.g. "IWM")
+
+    Returns:
+        {"decisions": [...]}
+    """
+    try:
+        db = firestore.Client()
+        query = db.collection("entry_decisions")
+
+        if symbol:
+            query = query.where(filter=firestore.FieldFilter("symbol", "==", symbol.upper()))
+
+        docs = query.limit(min(limit, 200)).stream()
+        decisions = []
+
+        for doc in docs:
+            d = doc.to_dict()
+            d["id"] = doc.id
+            if "timestamp" in d and hasattr(d["timestamp"], "isoformat"):
+                d["timestamp"] = d["timestamp"].isoformat()
+            decisions.append(d)
+
+        return {"status": "success", "count": len(decisions), "decisions": decisions}
+
+    except Exception as e:
+        logger.error(f"Error fetching entry decisions: {e}")
+        return {"status": "error", "message": str(e), "decisions": []}
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8080))
