@@ -1903,11 +1903,12 @@ function updatePositionData(botData) {
             totalUnrealizedPnl >= 0 ? 'positive' : 'negative');
         updateElement('posPnlPercent', formatPercent(pnlPercent), pnlPercent >= 0 ? 'positive' : 'negative');
 
-        // Use actual stop loss and target from bot (if available)
-        const stopLoss = activeBucket.stopLossPrice || (activeBucket.entryPrice * 0.95); // Fallback to 5%
-        const target = activeBucket.profitTargetPrice || (activeBucket.entryPrice * 1.025); // Fallback to 2.5%
+        // Use actual stop loss and target from bot (if available), handling side (long vs short)
+        const isShort = activeBucket.side && activeBucket.side.toLowerCase() === 'short';
+        const stopLoss = activeBucket.stopLossPrice || (isShort ? activeBucket.entryPrice * 1.05 : activeBucket.entryPrice * 0.95);
+        const target = activeBucket.profitTargetPrice || (isShort ? activeBucket.entryPrice * 0.975 : activeBucket.entryPrice * 1.025);
 
-        const isBreakEvenLocked = activeBucket.break_even_locked || (stopLoss >= activeBucket.entryPrice);
+        const isBreakEvenLocked = activeBucket.break_even_locked || (isShort ? stopLoss <= activeBucket.entryPrice : stopLoss >= activeBucket.entryPrice);
         const slLabel = isBreakEvenLocked ? `🔒 $${stopLoss.toFixed(2)} (Break-Even)` : `$${stopLoss.toFixed(2)}`;
         updateElement('posStopLoss', slLabel);
         updateElement('posTarget', `$${target.toFixed(2)}`);
