@@ -35,6 +35,36 @@ jobs:
         run: |
           flake8 . --count --exit-zero --max-complexity=15 --max-line-length=120 --statistics
 
+  dependency-checks:
+    name: Dependency Compatibility & Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies & Audit Tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Check Package Compatibility
+        run: |
+          echo "Checking installed packages for version conflicts..."
+          pip check
+
+      - name: Audit Dependencies for Known Vulnerabilities (CVE Scan)
+        run: |
+          if [ -f requirements.txt ]; then
+            echo "Auditing requirements.txt for security vulnerabilities..."
+            pip-audit -r requirements.txt --local --desc || true
+          fi
+
   unit-and-integration-tests:
     name: Unit & Integration Tests
     runs-on: ubuntu-latest
