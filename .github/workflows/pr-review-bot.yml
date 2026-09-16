@@ -49,66 +49,66 @@ jobs:
           COMMENTS_AND_LOGGING_REPORT=""
           if [ -n "$CHANGED_FILES" ]; then
             COMMENTS_AND_LOGGING_REPORT=$(python3 - << 'PYEOF'
-import os, sys, re, ast
+          import os, sys, re, ast
 
-changed_files = """$CHANGED_FILES""".splitlines()
-report_lines = []
+          changed_files = """$CHANGED_FILES""".splitlines()
+          report_lines = []
 
-for filepath in changed_files:
-    filepath = filepath.strip()
-    if not filepath or not os.path.exists(filepath):
-        continue
-    try:
-        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
-            lines = content.splitlines()
-    except Exception:
-        continue
+          for filepath in changed_files:
+              filepath = filepath.strip()
+              if not filepath or not os.path.exists(filepath):
+                  continue
+              try:
+                  with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                      content = f.read()
+                      lines = content.splitlines()
+              except Exception:
+                  continue
 
-    file_issues = []
+              file_issues = []
 
-    if "tests/" not in filepath and "scripts/" not in filepath:
-        prints = []
-        for idx, line in enumerate(lines, 1):
-            stripped = line.strip()
-            if not stripped.startswith("#") and re.search(r"\bprint\s*\(", stripped):
-                prints.append("Line " + str(idx))
-        if prints:
-            file_issues.append("⚠️ **Raw print() statements found**: " + ", ".join(prints[:5]) + " (Use structured logger instead)")
+              if "tests/" not in filepath and "scripts/" not in filepath:
+                  prints = []
+                  for idx, line in enumerate(lines, 1):
+                      stripped = line.strip()
+                      if not stripped.startswith("#") and re.search(r"\bprint\s*\(", stripped):
+                          prints.append("Line " + str(idx))
+                  if prints:
+                      file_issues.append("⚠️ **Raw print() statements found**: " + ", ".join(prints[:5]) + " (Use structured logger instead)")
 
-    try:
-        tree = ast.parse(content, filename=filepath)
-        missing_docs = []
-        unlogged_excepts = []
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                if not node.name.startswith("_") and not ast.get_docstring(node):
-                    missing_docs.append("`" + str(node.name) + "` (Line " + str(node.lineno) + ")")
-            elif isinstance(node, ast.ExceptHandler):
-                has_log = any(
-                    isinstance(sub, ast.Call) and (
-                        (isinstance(sub.func, ast.Attribute) and sub.func.attr in ("error","exception","warning","info","log")) or
-                        (isinstance(sub.func, ast.Name) and sub.func.id in ("error","exception","warning","info","log"))
-                    ) for sub in ast.walk(node)
-                )
-                if not has_log:
-                    unlogged_excepts.append("Line " + str(node.lineno))
+              try:
+                  tree = ast.parse(content, filename=filepath)
+                  missing_docs = []
+                  unlogged_excepts = []
+                  for node in ast.walk(tree):
+                      if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                          if not node.name.startswith("_") and not ast.get_docstring(node):
+                              missing_docs.append("`" + str(node.name) + "` (Line " + str(node.lineno) + ")")
+                      elif isinstance(node, ast.ExceptHandler):
+                          has_log = any(
+                              isinstance(sub, ast.Call) and (
+                                  (isinstance(sub.func, ast.Attribute) and sub.func.attr in ("error","exception","warning","info","log")) or
+                                  (isinstance(sub.func, ast.Name) and sub.func.id in ("error","exception","warning","info","log"))
+                              ) for sub in ast.walk(node)
+                          )
+                          if not has_log:
+                              unlogged_excepts.append("Line " + str(node.lineno))
 
-        if missing_docs:
-            file_issues.append("📝 **Missing Docstrings/Comments**: " + ", ".join(missing_docs[:5]))
-        if unlogged_excepts:
-            file_issues.append("🚨 **Unlogged except block**: Lines " + ", ".join(unlogged_excepts[:3]))
-    except Exception:
-        pass
+                  if missing_docs:
+                      file_issues.append("📝 **Missing Docstrings/Comments**: " + ", ".join(missing_docs[:5]))
+                  if unlogged_excepts:
+                      file_issues.append("🚨 **Unlogged except block**: Lines " + ", ".join(unlogged_excepts[:3]))
+              except Exception:
+                  pass
 
-    if file_issues:
-        report_lines.append("**`" + filepath + "`**:\n" + "\n".join("  - " + issue for issue in file_issues))
+              if file_issues:
+                  report_lines.append("**`" + filepath + "`**:\n" + "\n".join("  - " + issue for issue in file_issues))
 
-if report_lines:
-    print("\n".join(report_lines))
-else:
-    print("✅ Code comments, docstrings, logger usage, and exception logging are properly implemented.")
-PYEOF
+          if report_lines:
+              print("\n".join(report_lines))
+          else:
+              print("✅ Code comments, docstrings, logger usage, and exception logging are properly implemented.")
+          PYEOF
             )
           fi
 
