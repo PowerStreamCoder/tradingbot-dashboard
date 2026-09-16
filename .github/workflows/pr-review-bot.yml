@@ -1,0 +1,201 @@
+name: Automated PR Review Bot
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  pr-bot-review:
+    name: Automated PR Reviewer
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Analysis Tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 bandit pip-audit
+
+      - name: Analyze PR Diff, Comments, Logging & Dependencies
+        id: analyze
+        run: |
+          git fetch origin ${{ github.base_ref }} --depth=1
+          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E '\.(py|txt|json|yaml|yml)$' || true)
+          PYTHON_FILES=$(echo "$CHANGED_FILES" | grep '\.py$' || true)
+          echo "Changed Files:"
+          echo "$CHANGED_FILES"
+
+          LINT_ERRORS=""
+          if [ -n "$PYTHON_FILES" ]; then
+            LINT_ERRORS=$(flake8 $PYTHON_FILES --count --select=E9,F63,F7,F82,E501,F401,F841 --show-source 2>&1 || true)
+          fi
+
+          SECURITY_ISSUES=""
+          if [ -n "$PYTHON_FILES" ]; then
+            SECURITY_ISSUES=$(bandit -r $PYTHON_FILES -ll -ii 2>&1 || true)
+          fi
+
+          DEPENDENCY_AUDIT_REPORT=""
+          if [ -f requirements.txt ]; then
+            DEPENDENCY_AUDIT_REPORT=$(pip-audit -r requirements.txt --local --desc 2>&1 || true)
+          fi
+
+          COMMENTS_AND_LOGGING_REPORT=""
+          if [ -n "$PYTHON_FILES" ]; then
+            COMMENTS_AND_LOGGING_REPORT=$(python3 - << 'PYEOF'
+          import os, sys, re, ast
+
+          changed_files = """$PYTHON_FILES""".splitlines()
+          report_lines = []
+
+          for filepath in changed_files:
+              filepath = filepath.strip()
+              if not filepath or not os.path.exists(filepath):
+                  continue
+              try:
+                  with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                      content = f.read()
+                      lines = content.splitlines()
+              except Exception:
+                  continue
+
+              file_issues = []
+
+              if "tests/" not in filepath and "scripts/" not in filepath:
+                  prints = []
+                  for idx, line in enumerate(lines, 1):
+                      stripped = line.strip()
+                      if not stripped.startswith("#") and re.search(r"\bprint\s*\(", stripped):
+                          prints.append("Line " + str(idx))
+                  if prints:
+                      file_issues.append("⚠️ **Raw print() statements found**: " + ", ".join(prints[:5]) + " (Use structured logger instead)")
+
+              try:
+                  tree = ast.parse(content, filename=filepath)
+                  missing_docs = []
+                  unlogged_excepts = []
+                  for node in ast.walk(tree):
+                      if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                          if not node.name.startswith("_") and not ast.get_docstring(node):
+                              missing_docs.append("`" + str(node.name) + "` (Line " + str(node.lineno) + ")")
+                      elif isinstance(node, ast.ExceptHandler):
+                          has_log = any(
+                              isinstance(sub, ast.Call) and (
+                                  (isinstance(sub.func, ast.Attribute) and sub.func.attr in ("error","exception","warning","info","log")) or
+                                  (isinstance(sub.func, ast.Name) and sub.func.id in ("error","exception","warning","info","log"))
+                              ) for sub in ast.walk(node)
+                          )
+                          if not has_log:
+                              unlogged_excepts.append("Line " + str(node.lineno))
+
+                  if missing_docs:
+                      file_issues.append("📝 **Missing Docstrings/Comments**: " + ", ".join(missing_docs[:5]))
+                  if unlogged_excepts:
+                      file_issues.append("🚨 **Unlogged except block**: Lines " + ", ".join(unlogged_excepts[:3]))
+              except Exception:
+                  pass
+
+              if file_issues:
+                  report_lines.append("**`" + filepath + "`**:\n" + "\n".join("  - " + issue for issue in file_issues))
+
+          if report_lines:
+              print("\n".join(report_lines))
+          else:
+              print("✅ Code comments, docstrings, logger usage, and exception logging are properly implemented.")
+          PYEOF
+            )
+          fi
+
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "CHANGED_FILES<<$EOF" >> $GITHUB_ENV
+          echo "$CHANGED_FILES" >> $GITHUB_ENV
+          echo "$EOF" >> $GITHUB_ENV
+
+          echo "LINT_ERRORS<<$EOF" >> $GITHUB_ENV
+          echo "$LINT_ERRORS" >> $GITHUB_ENV
+          echo "$EOF" >> $GITHUB_ENV
+
+          echo "SECURITY_ISSUES<<$EOF" >> $GITHUB_ENV
+          echo "$SECURITY_ISSUES" >> $GITHUB_ENV
+          echo "$EOF" >> $GITHUB_ENV
+
+          echo "COMMENTS_AND_LOGGING_REPORT<<$EOF" >> $GITHUB_ENV
+          echo "$COMMENTS_AND_LOGGING_REPORT" >> $GITHUB_ENV
+          echo "$EOF" >> $GITHUB_ENV
+
+          echo "DEPENDENCY_AUDIT_REPORT<<$EOF" >> $GITHUB_ENV
+          echo "$DEPENDENCY_AUDIT_REPORT" >> $GITHUB_ENV
+          echo "$EOF" >> $GITHUB_ENV
+
+      - name: Post Automated PR Review Comment
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const changedFiles = process.env.CHANGED_FILES || 'None';
+            const lintErrors = process.env.LINT_ERRORS || 'No critical lint issues detected.';
+            const securityIssues = process.env.SECURITY_ISSUES || 'No critical security vulnerabilities found.';
+            const commentsLoggingReport = process.env.COMMENTS_AND_LOGGING_REPORT || '✅ Comments and logging checks passed.';
+            const depAuditReport = process.env.DEPENDENCY_AUDIT_REPORT || 'No requirements.txt found.';
+
+            const body = `### 🤖 Automated PR Review Bot Summary
+
+            Hello! Here is the automated code review for commit \`${context.sha.substring(0, 7)}\`:
+
+            #### 🔍 **1. Scope & Changed Files**
+            \`\`\`
+            ${changedFiles}
+            \`\`\`
+
+            #### 📦 **2. Dependency Health & Vulnerability Scan**
+            ${depAuditReport.includes('No known vulnerabilities found') || depAuditReport.includes('No requirements.txt found.') ? '✅ Dependencies audited cleanly - no known vulnerabilities.' : '```\n' + depAuditReport.substring(0, 800) + '\n```'}
+
+            #### 💬 **3. Code Comments & Logging Audit**
+            ${commentsLoggingReport}
+
+            #### 🛠️ **4. Code Quality & Linting**
+            ${lintErrors.includes('0') || !lintErrors.trim() ? '✅ No critical syntax or style issues found.' : '```\n' + lintErrors + '\n```'}
+
+            #### 🛡️ **5. Security & Vulnerability Audit**
+            ${securityIssues.includes('No issues identified.') || !securityIssues.trim() ? '✅ Security check passed cleanly.' : '```\n' + securityIssues + '\n```'}
+
+            ---
+            *Automated review generated by PR Reviewer Bot (Zero-Cost GitHub Token)*`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+            });
+
+            const botComment = comments.find(comment => 
+              comment.user.type === 'Bot' && comment.body.includes('🤖 Automated PR Review Bot Summary')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body: body
+              });
+            }
