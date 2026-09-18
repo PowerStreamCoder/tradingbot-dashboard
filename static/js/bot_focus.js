@@ -584,7 +584,8 @@ async function handlePauseResumeBot() {
             // Show success message
             showNotification(`Bot ${actionText.toLowerCase()}ed successfully`, 'success');
         } else {
-            throw new Error(data.message || `Failed to ${action} bot`);
+            const errDetail = data.message || data.detail || `Failed to ${action} bot`;
+            throw new Error(errDetail);
         }
     } catch (error) {
         console.error(`Error ${action}ing bot:`, error);
@@ -1716,6 +1717,20 @@ async function updateBotStatus() {
             topKillSwitchEl.innerHTML = isArmed
                 ? '<span class="status-dot" style="background-color: #48bb78;"></span> Armed'
                 : '<span class="status-dot" style="background-color: #f56565;"></span> Triggered';
+        }
+
+        // Sync Pause/Resume button state based on active trading status
+        const pauseBotBtn = document.getElementById('pauseBotBtn');
+        if (pauseBotBtn && !pauseBotBtn.disabled && data.is_trading !== undefined) {
+            if (data.is_trading) {
+                pauseBotBtn.classList.remove('paused');
+                pauseBotBtn.classList.add('btn-danger');
+                pauseBotBtn.innerHTML = '<span>⏸</span> Pause Bot';
+            } else {
+                pauseBotBtn.classList.add('paused');
+                pauseBotBtn.classList.remove('btn-danger');
+                pauseBotBtn.innerHTML = '<span>▶</span> Resume Bot';
+            }
         }
 
         // Update Macro State & VIX Level

@@ -30,6 +30,11 @@ class TestBotControl(unittest.TestCase):
         # Mock FastAPI app and dependencies
         self.mock_subprocess = patch('subprocess.run')
         self.subprocess_mock = self.mock_subprocess.start()
+        default_res = Mock()
+        default_res.returncode = 0
+        default_res.stdout = "token\n"
+        default_res.stderr = ""
+        self.subprocess_mock.return_value = default_res
 
     def tearDown(self):
         """Clean up after tests"""
@@ -159,87 +164,45 @@ class TestBotControl(unittest.TestCase):
             self.assertEqual(cmd[1], 'is-active')
             self.assertIn('bot.service', cmd[2])
 
-    def test_get_bot_status_one_inactive(self):
-        """Test bot status when one bot is inactive"""
-        mock_nvda = Mock()
-        mock_nvda.returncode = 3
-        mock_nvda.stdout = "inactive\n"
-        mock_nvda.stderr = ""
-
-        mock_msft = Mock()
-        mock_msft.returncode = 0
-        mock_msft.stdout = "active\n"
-        mock_msft.stderr = ""
-
-        self.subprocess_mock.side_effect = [mock_nvda, mock_msft]
-
-        from main import get_bot_status
-        import asyncio
-
-        result = asyncio.run(get_bot_status())
-
-        self.assertEqual(result['nvda'], 'inactive')
-        self.assertEqual(result['msft'], 'active')
-        self.assertFalse(result['both_running'])
-
-    def test_get_bot_status_both_inactive(self):
-        """Test bot status when both bots are inactive"""
-        mock_nvda = Mock()
-        mock_nvda.returncode = 3
-        mock_nvda.stdout = "inactive\n"
-        mock_nvda.stderr = ""
-
-        mock_msft = Mock()
-        mock_msft.returncode = 3
-        mock_msft.stdout = "inactive\n"
-        mock_msft.stderr = ""
-
-        self.subprocess_mock.side_effect = [mock_nvda, mock_msft]
+    @patch('main.dashboard_data')
+    def test_get_bot_status_success(self, mock_dashboard_data):
+        """Test get_bot_status endpoint for a symbol"""
+        mock_doc = MagicMock()
+        mock_doc.exists = True
+        mock_doc.to_dict.return_value = {
+            'symbol': 'NVDA',
+            'is_trading': True,
+            'active_buckets': 1,
+            'realized_pnl': 150.0,
+            'market_status': 'open',
+            'last_heartbeat': None,
+            'updated_at': None
+        }
+        mock_dashboard_data.db.collection.return_value.document.return_value.get.return_value = mock_doc
 
         from main import get_bot_status
         import asyncio
 
-        result = asyncio.run(get_bot_status())
+        result = asyncio.run(get_bot_status(symbol="nvda"))
 
-        self.assertEqual(result['nvda'], 'inactive')
-        self.assertEqual(result['msft'], 'inactive')
-        self.assertFalse(result['both_running'])
+        self.assertEqual(result['symbol'], 'NVDA')
+        self.assertTrue(result['is_trading'])
+        self.assertEqual(result['active_buckets'], 1)
 
-    def test_get_bot_status_failed_state(self):
-        """Test bot status when service is in failed state"""
-        mock_nvda = Mock()
-        mock_nvda.returncode = 0
-        mock_nvda.stdout = "failed\n"
-        mock_nvda.stderr = ""
-
-        mock_msft = Mock()
-        mock_msft.returncode = 0
-        mock_msft.stdout = "active\n"
-        mock_msft.stderr = ""
-
-        self.subprocess_mock.side_effect = [mock_nvda, mock_msft]
+    @patch('main.dashboard_data')
+    def test_get_bot_status_not_found(self, mock_dashboard_data):
+        """Test get_bot_status endpoint when symbol document doesn't exist"""
+        mock_doc = MagicMock()
+        mock_doc.exists = False
+        mock_dashboard_data.db.collection.return_value.document.return_value.get.return_value = mock_doc
 
         from main import get_bot_status
         import asyncio
 
-        result = asyncio.run(get_bot_status())
-
-        self.assertEqual(result['nvda'], 'failed')
-        self.assertEqual(result['msft'], 'active')
-        self.assertFalse(result['both_running'])
-
-    def test_get_bot_status_error(self):
-        """Test bot status endpoint error handling"""
-        # Mock exception
-        self.subprocess_mock.side_effect = Exception("Command not found")
-
-        from main import get_bot_status
-        import asyncio
-
-        result = asyncio.run(get_bot_status())
+        result = asyncio.run(get_bot_status(symbol="unknown"))
 
         self.assertIn('error', result)
-        self.assertIn('Command not found', result['error'])
+        self.assertFalse(result['is_trading'])
 
     def test_systemctl_command_structure(self):
         """Test that systemctl commands have correct structure"""
