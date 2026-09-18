@@ -2825,4 +2825,5 @@ async def get_entry_decisions(limit: int = 50, symbol: Optional[str] = None):
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8080))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    host = os.environ.get("HOST", "0.0.0.0")  # nosec B104
+    uvicorn.run(app, host=host, port=port)
