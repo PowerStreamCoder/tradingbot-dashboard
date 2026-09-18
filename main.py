@@ -56,6 +56,10 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# Bot Control API endpoint URL (default to VM IP)
+BOT_CONTROL_API_URL = os.environ.get("BOT_CONTROL_API_URL", "http://136.115.134.1:8080")
+
+
 # Session storage for authenticated users (Firestore-backed for persistence)
 # This ensures sessions survive Cloud Run container restarts
 authenticated_sessions = {}  # Local cache
@@ -1739,18 +1743,27 @@ async def stop_bots():
     """
     Stop both trading bots via Bot Control API on VM.
 
-    Sends HTTP request to Flask API running on VM (port 8080).
+    Sends HTTP request to Flask API running on VM.
     """
     try:
         import httpx
         # Call VM API to stop bots
         async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.post('http://136.115.134.1:8080/stop-bots')
-            response.raise_for_status()
-            data = response.json()
-            return {"status": data.get("status"), "message": data.get("message")}
+            response = await client.post(f'{BOT_CONTROL_API_URL}/stop-bots')
+            if response.is_success:
+                data = response.json()
+                return {"status": data.get("status", "success"), "message": data.get("message", "Bots stopped")}
+            else:
+                try:
+                    err_data = response.json()
+                    detail_msg = err_data.get("message") or err_data.get("detail") or response.text
+                except Exception:
+                    detail_msg = response.text
+                raise HTTPException(status_code=response.status_code, detail=f"Bot control API error: {detail_msg}")
     except httpx.HTTPError as e:
         raise HTTPException(status_code=500, detail=f"Failed to communicate with bot control API: {str(e)}")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1759,19 +1772,28 @@ async def restart_bots():
     """
     Restart both trading bots via Bot Control API on VM.
 
-    Sends HTTP request to Flask API running on VM (port 8080).
+    Sends HTTP request to Flask API running on VM.
     Bots will reload latest code and configuration on restart.
     """
     try:
         import httpx
         # Call VM API to restart bots
         async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.post('http://136.115.134.1:8080/restart-bots')
-            response.raise_for_status()
-            data = response.json()
-            return {"status": data.get("status"), "message": data.get("message")}
+            response = await client.post(f'{BOT_CONTROL_API_URL}/restart-bots')
+            if response.is_success:
+                data = response.json()
+                return {"status": data.get("status", "success"), "message": data.get("message", "Bots restarted")}
+            else:
+                try:
+                    err_data = response.json()
+                    detail_msg = err_data.get("message") or err_data.get("detail") or response.text
+                except Exception:
+                    detail_msg = response.text
+                raise HTTPException(status_code=response.status_code, detail=f"Bot control API error: {detail_msg}")
     except httpx.HTTPError as e:
         raise HTTPException(status_code=500, detail=f"Failed to communicate with bot control API: {str(e)}")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1797,7 +1819,7 @@ async def reset_bot(bot_name: str):
         import httpx
         # Call VM API to reset bot
         async with httpx.AsyncClient(timeout=120.0) as client:  # 2 minute timeout for reset
-            response = await client.post(f'http://136.115.134.1:8080/reset-bot/{bot_name}')
+            response = await client.post(f'{BOT_CONTROL_API_URL}/reset-bot/{bot_name}')
             response.raise_for_status()
             data = response.json()
             return data
@@ -1967,7 +1989,7 @@ async def get_current_profile():
         logger.info("[PROFILE] Fetching current profile from VM")
 
         async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get('http://136.115.134.1:8080/current-profile')
+            response = await client.get(f'{BOT_CONTROL_API_URL}/current-profile')
             response.raise_for_status()
             data = response.json()
 
@@ -2049,7 +2071,7 @@ async def switch_profile(request: Request):
         try:
             import httpx
             async with httpx.AsyncClient(timeout=5.0) as client:
-                current_response = await client.get('http://136.115.134.1:8080/current-profile')
+                current_response = await client.get(f'{BOT_CONTROL_API_URL}/current-profile')
                 if current_response.status_code == 200:
                     current_data = current_response.json()
                     switch_attempt['from_profile'] = current_data.get('profile', 'unknown')
@@ -2124,7 +2146,7 @@ async def switch_profile(request: Request):
         import httpx
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
-                'http://136.115.134.1:8080/switch-profile',
+                f'{BOT_CONTROL_API_URL}/switch-profile',
                 json={'profile': profile}
             )
 
@@ -2803,4 +2825,5 @@ async def get_entry_decisions(limit: int = 50, symbol: Optional[str] = None):
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8080))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    host = os.environ.get("HOST", "0.0.0.0")  # nosec B104
+    uvicorn.run(app, host=host, port=port)

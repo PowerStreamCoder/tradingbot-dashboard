@@ -1110,31 +1110,29 @@ async function restartBots() {
 
 async function updateBotStatus() {
     try {
-        const response = await fetch(`${API_BASE_URL}/bot-control/status`, {
+        const response = await fetch(`${API_BASE_URL}/bot-status/nvda`, {
             credentials: 'include'
         });
 
+        if (!response.ok) return;
         const status = await response.json();
 
         const statusIcon = document.getElementById('botStatusIcon');
         const statusText = document.getElementById('botStatusText');
         const statusContainer = document.getElementById('botStatus');
 
-        if (status.both_running) {
+        if (!statusIcon || !statusText || !statusContainer) return;
+
+        if (status.is_trading) {
             statusIcon.textContent = '✅';
-            statusText.textContent = 'Both bots running';
+            statusText.textContent = 'Bot active';
             statusContainer.style.backgroundColor = '#d4edda';
             statusContainer.style.color = '#155724';
-        } else if (status.nvda === 'active' || status.msft === 'active') {
-            statusIcon.textContent = '⚠️';
-            statusText.textContent = 'One bot running';
+        } else {
+            statusIcon.textContent = '⏸️';
+            statusText.textContent = 'Bot paused/stopped';
             statusContainer.style.backgroundColor = '#fff3cd';
             statusContainer.style.color = '#856404';
-        } else {
-            statusIcon.textContent = '❌';
-            statusText.textContent = 'Bots stopped';
-            statusContainer.style.backgroundColor = '#f8d7da';
-            statusContainer.style.color = '#721c24';
         }
     } catch (error) {
         console.error('Error fetching bot status:', error);
