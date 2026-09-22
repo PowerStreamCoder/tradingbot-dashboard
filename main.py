@@ -399,7 +399,7 @@ async def check_access_code(request: Request, call_next):
         print(f"No valid session for path: {request.url.path}, cookie: {session_id[:10]}...")
 
     # If trying to access main page or dashboard without auth, show login
-    if request.url.path in ["/", "/dashboard", "/bot-focus", "/pnl-reporting", "/learning-review"]:
+    if request.url.path in ["/", "/dashboard", "/bot-focus", "/pnl-reporting", "/learning-review", "/governance-review"]:
         return HTMLResponse(content=get_login_page(), status_code=200)
 
     # For API GET/DELETE endpoints without auth, return 401
@@ -2441,6 +2441,151 @@ async def get_learning_stats():
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch learning stats: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# Governance review: exit-governance mirror, applied-changes ledger, adaptive
+# engine actions, and the per-session exit-telemetry archive (Phase 6/7/9).
+# ---------------------------------------------------------------------------
+
+@app.get("/governance-review", response_class=HTMLResponse)
+async def governance_review_page():
+    """Serve the governance review dashboard page."""
+    governance_path = os.path.join(TEMPLATES_DIR, "governance_review.html")
+    try:
+        return FileResponse(governance_path)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Governance review page not found")
+
+
+@app.get("/api/exit-governance")
+async def get_exit_governance():
+    """
+    Get the latest exit-governance mirror payload per symbol (Phase 7 live
+    surfacing writes the strategy's decoded ExitDiff to the ``exit_governance``
+    collection; this exposes it for the operator's review UI).
+
+    Returns:
+        {"governance": [{"symbol": "...", "data": {...}}]}
+    """
+    try:
+        db = firestore.Client()
+        docs = db.collection("exit_governance").stream()
+        entries = []
+        for doc in docs:
+            data = doc.to_dict() or {}
+            data.setdefault("doc_id", doc.id)
+            entries.append(data)
+        return {"governance": entries}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch exit governance: {str(e)}")
+
+
+@app.get("/api/applied-changes")
+async def get_applied_changes(symbol: str = "", limit: int = 100):
+    """
+    Get applied-changes ledger records (Phase 9 M1 unified audit trail).
+
+    Args:
+        symbol: optional per-symbol filter
+        limit: max records returned (newest first)
+
+    Returns:
+        {"changes": [{"engine": "...", "field": "...", "old_value": ...,
+                      "new_value": ..., "status": ..., "applied_at": ...}]}
+    """
+    try:
+        limit = max(1, min(limit, 500))
+        db = firestore.Client()
+        docs = db.collection("applied_changes").stream()
+        changes = []
+        for doc in docs:
+            data = doc.to_dict() or {}
+            data.setdefault("doc_id", doc.id)
+            if symbol and data.get("symbol") != symbol:
+                continue
+            changes.append(data)
+        changes.sort(key=lambda c: c.get("applied_at", ""), reverse=True)
+        return {"changes": changes[:limit]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch applied changes: {str(e)}")
+
+
+@app.get("/api/adaptive-actions")
+async def get_adaptive_actions(limit: int = 100):
+    """
+    Get adaptive feedback engine actions (``adaptive_action_log``) with
+    per-action resolution stats.
+
+    Returns:
+        {
+            "actions": [ {...}, ... ],
+            "stats": [ {"action_type": ..., "resolved": n, "unresolved": n,
+                        "fired": n, "win_rate": 0.62} ]
+        }
+    """
+    try:
+        limit = max(1, min(limit, 500))
+        db = firestore.Client()
+        docs = db.collection("adaptive_action_log").stream()
+        actions = []
+        per_type = {}
+        for doc in docs:
+            data = doc.to_dict() or {}
+            data.setdefault("doc_id", doc.id)
+            actions.append(data)
+            a_type = data.get("action_type", "unknown")
+            bucket = per_type.setdefault(a_type, {"resolved": 0, "unresolved": 0, "wins": 0})
+            if (data.get("outcome") or {}).get("resolved"):
+                bucket["resolved"] += 1
+                if (data.get("outcome") or {}).get("final_pnl", 0) > 0:
+                    bucket["wins"] += 1
+            else:
+                bucket["unresolved"] += 1
+        actions.sort(key=lambda a: a.get("created_at", ""), reverse=True)
+        stats = []
+        for a_type, bucket in sorted(per_type.items()):
+            fired = bucket["resolved"] + bucket["unresolved"]
+            stats.append({
+                "action_type": a_type,
+                "fired": fired,
+                "resolved": bucket["resolved"],
+                "unresolved": bucket["unresolved"],
+                "win_rate": round(bucket["wins"] / bucket["resolved"], 3) if bucket["resolved"] else None,
+            })
+        return {"actions": actions[:limit], "stats": stats}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch adaptive actions: {str(e)}")
+
+
+@app.get("/api/exit-telemetry/snapshots")
+async def get_exit_telemetry_snapshots(symbol: str = "", limit: int = 50):
+    """
+    Get the per-session exit-telemetry snapshot archive (Phase 6/7 follow-up).
+
+    Args:
+        symbol: optional per-symbol filter
+        limit: max sessions returned (newest first)
+
+    Returns:
+        {"sessions": [{"symbol": ..., "session_id": ..., "archived_at": ...,
+                       "inventory": {...}}]}
+    """
+    try:
+        limit = max(1, min(limit, 500))
+        db = firestore.Client()
+        docs = db.collection("exit_telemetry_snapshots").order_by(
+            "archived_at", direction="DESCENDING").limit(limit).stream()
+        sessions = []
+        for doc in docs:
+            data = doc.to_dict() or {}
+            data.setdefault("doc_id", doc.id)
+            if symbol and data.get("symbol") != symbol:
+                continue
+            sessions.append(data)
+        return {"sessions": sessions}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch exit telemetry sessions: {str(e)}")
 
 
 @app.get("/api/historical-bars/{symbol}")

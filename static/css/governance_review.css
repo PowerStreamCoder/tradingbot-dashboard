@@ -1,0 +1,180 @@
+/**
+ * Governance Review Dashboard Styles
+ * Exit governance mirror, applied-changes ledger, adaptive engine,
+ * and the per-session exit-telemetry archive.
+ */
+
+/* Section Headers */
+.section-title {
+    margin: var(--spacing-lg) 0 var(--spacing-sm);
+}
+
+.section-title h2 {
+    color: var(--accent-primary);
+    font-size: 18px;
+    margin-bottom: 2px;
+}
+
+.section-title p {
+    color: var(--text-muted);
+    font-size: 13px;
+    margin: 0;
+}
+
+/* Table Card */
+.table-card {
+    background: var(--bg-tile);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    padding: var(--spacing-md);
+    margin-bottom: var(--spacing-xl);
+}
+
+.table-scroll {
+    overflow-x: auto;
+}
+
+/* Data Table */
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.data-table th {
+    text-align: left;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border-color);
+    white-space: nowrap;
+}
+
+.data-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-primary);
+    vertical-align: top;
+    white-space: nowrap;
+}
+
+.data-table tr:hover td {
+    background: var(--bg-secondary);
+}
+
+/* Status / decision chips */
+.chip {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.chip-applied, .chip-approved, .chip-keep {
+    background: rgba(40, 167, 69, 0.15);
+    color: #2ecc71;
+}
+
+.chip-reverted, .chip-rollback, .chip-rejected {
+    background: rgba(231, 76, 60, 0.15);
+    color: #e74c3c;
+}
+
+.chip-watch, .chip-pending_review, .chip-pending {
+    background: rgba(241, 196, 15, 0.15);
+    color: #f1c40f;
+}
+
+.chip-dead {
+    background: rgba(231, 76, 60, 0.15);
+    color: #e74c3c;
+}
+
+.chip-shadowed, .chip-untouched {
+    background: rgba(241, 196, 15, 0.15);
+    color: #f1c40f;
+}
+
+.chip-fired, .chip-eligible {
+    background: rgba(40, 167, 69, 0.15);
+    color: #2ecc71;
+}
+
+.chip-ineligible {
+    background: rgba(155, 89, 182, 0.15);
+    color: #9b59b6;
+}
+
+/* Governance proposal cards */
+.governance-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: var(--spacing-md);
+}
+
+.gov-card {
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    padding: var(--spacing-md);
+    background: var(--bg-secondary);
+}
+
+.gov-card .gov-symbol {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--accent-primary);
+}
+
+.gov-card .gov-intent {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.gov-card pre {
+    margin-top: var(--spacing-sm);
+    font-size: 11px;
+    color: var(--text-secondary);
+    overflow-x: auto;
+}
+
+/* Adaptive stats grid */
+.adaptive-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-md);
+}
+
+.adaptive-stat {
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    padding: 10px 12px;
+    background: var(--bg-secondary);
+}
+
+.adaptive-stat .a-type {
+    font-weight: 700;
+    font-size: 13px;
+}
+
+.adaptive-stat .a-meta {
+    color: var(--text-muted);
+    font-size: 12px;
+    margin-top: 4px;
+}
+
+/* Empty / loading states */
+.empty-state {
+    text-align: center;
+    padding: 40px;
+    color: var(--text-muted);
+}
+
+.loading {
+    color: var(--text-muted);
+    padding: 12px 0;
+}

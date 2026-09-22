@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Governance Review - Trading Bot Dashboard</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚖️</text></svg>">
+    <link rel="stylesheet" href="/static/css/bot_focus.css">
+    <link rel="stylesheet" href="/static/css/learning_review.css">
+    <link rel="stylesheet" href="/static/css/governance_review.css">
+</head>
+<body>
+    <div class="learning-container">
+        <!-- Header -->
+        <header class="bot-header">
+            <div class="header-left">
+                <h1>
+                    <span class="bot-icon">⚖️</span>
+                    Governance Review
+                </h1>
+                <div class="bot-metadata">
+                    <span class="metadata-item">
+                        <span class="label">Purpose:</span>
+                        <span class="value">Exit governance, applied-changes ledger, adaptive engine &amp; telemetry archive</span>
+                    </span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Navigation Bar -->
+        <nav class="nav-bar">
+            <a href="/bot-focus" class="nav-link">
+                🎯 Bot Focus
+            </a>
+            <a href="/pnl-reporting" class="nav-link">
+                💰 P&L Reporting
+            </a>
+            <a href="/learning-review" class="nav-link">
+                🧠 Learning &amp; Analysis
+            </a>
+            <a href="/governance-review" class="nav-link active">
+                ⚖️ Governance Review
+            </a>
+        </nav>
+
+        <!-- Stats Bar -->
+        <div class="stats-bar">
+            <div class="stat-card">
+                <h3>Pending Governance</h3>
+                <div class="value" id="stat-governance">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Ledger Records</h3>
+                <div class="value" id="stat-ledger">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Adaptive Actions</h3>
+                <div class="value" id="stat-adaptive">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Archived Sessions</h3>
+                <div class="value" style="font-size: 1.6em;" id="stat-sessions">-</div>
+            </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="filters-section">
+            <label>Refresh:</label>
+            <select id="refresh-interval">
+                <option value="30000">30s</option>
+                <option value="60000" selected>60s</option>
+                <option value="300000">5m</option>
+            </select>
+            <button onclick="loadAll()">Refresh Now</button>
+        </div>
+
+        <!-- Exit Governance -->
+        <section class="section-title">
+            <h2>Exit Governance Proposals</h2>
+            <p>Latest decoded ExitDiff mirror per symbol (Phase 7 live surfacing).</p>
+        </section>
+        <div class="table-card">
+            <div id="governance-container">
+                <div class="loading">Loading governance...</div>
+            </div>
+        </div>
+
+        <!-- Applied Changes Ledger -->
+        <section class="section-title">
+            <h2>Applied Changes Ledger</h2>
+            <p>Unified audit trail of every correction (adaptive / decoder / learning).</p>
+        </section>
+        <div class="table-card">
+            <div class="table-scroll">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Applied</th>
+                            <th>Symbol</th>
+                            <th>Engine</th>
+                            <th>Field</th>
+                            <th>Old</th>
+                            <th>New</th>
+                            <th>Decision</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ledger-body">
+                        <tr><td colspan="8" class="loading">Loading ledger...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Adaptive Engine Actions -->
+        <section class="section-title">
+            <h2>Adaptive Engine Actions</h2>
+            <p>adaptive_action_log resolution stats plus the latest records.</p>
+        </section>
+        <div class="table-card">
+            <div id="adaptive-stats" class="adaptive-stats"></div>
+            <div class="table-scroll">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Created</th>
+                            <th>Symbol</th>
+                            <th>Action</th>
+                            <th>Threshold</th>
+                            <th>Resolved</th>
+                            <th>P&amp;L</th>
+                        </tr>
+                    </thead>
+                    <tbody id="adaptive-body">
+                        <tr><td colspan="6" class="loading">Loading actions...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Exit Telemetry Archive -->
+        <section class="section-title">
+            <h2>Exit Telemetry Session Archive</h2>
+            <p>Per-session reachability inventory (dead / shadowed / fired) feeds the nightly re-analysis.</p>
+        </section>
+        <div class="table-card">
+            <div class="table-scroll">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Archived</th>
+                            <th>Symbol</th>
+                            <th>Branch</th>
+                            <th>Status</th>
+                            <th>Evaluated</th>
+                            <th>Fired</th>
+                            <th>Proximity</th>
+                        </tr>
+                    </thead>
+                    <tbody id="telemetry-body">
+                        <tr><td colspan="7" class="loading">Loading sessions...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script src="/static/js/utils.js"></script>
+    <script src="/static/js/config.js?v=2.0.0"></script>
+    <script src="/static/js/governance_review.js?v=1.0.0"></script>
+</body>
+</html>
