@@ -41,6 +41,9 @@
             <a href="/governance-review" class="nav-link active">
                 ⚖️ Governance Review
             </a>
+            <a href="/bot-focus?show=stockpicker" class="nav-link">
+                📊 Stock Picker
+            </a>
         </nav>
 
         <!-- Stats Bar -->
@@ -79,6 +82,9 @@
             <h2>Exit Governance Proposals</h2>
             <p>Latest decoded ExitDiff mirror per symbol (Phase 7 live surfacing).</p>
         </section>
+        <div class="gov-hint-banner">
+            ℹ️ <strong>Audit &amp; Live Mirror Mode:</strong> Fresh exit proposals are automatically evaluated and applied by the bot engine (<code>auto_apply_governance</code>) and monitored by the Live Profit Factor Gate. Interactive manual approvals live on the <a href="/learning-review" style="color: var(--accent-primary); font-weight: 600;">Learning &amp; Analysis</a> page.
+        </div>
         <div class="table-card">
             <div id="governance-container">
                 <div class="loading">Loading governance...</div>
@@ -143,25 +149,11 @@
             <h2>Exit Telemetry Session Archive</h2>
             <p>Per-session reachability inventory (dead / shadowed / fired) feeds the nightly re-analysis.</p>
         </section>
-        <div class="table-card">
-            <div class="table-scroll">
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>Archived</th>
-                            <th>Symbol</th>
-                            <th>Branch</th>
-                            <th>Status</th>
-                            <th>Evaluated</th>
-                            <th>Fired</th>
-                            <th>Proximity</th>
-                        </tr>
-                    </thead>
-                    <tbody id="telemetry-body">
-                        <tr><td colspan="7" class="loading">Loading sessions...</td></tr>
-                    </tbody>
-                </table>
-            </div>
+        <div class="gov-hint-banner">
+            ℹ️ <strong>Read-Only Diagnostics:</strong> Per-session exit branch reachability metrics (evaluated, fired, proximity) recorded at session archive. This diagnostic data feeds nightly learning re-analysis.
+        </div>
+        <div id="telemetry-container">
+            <div class="loading">Loading sessions...</div>
         </div>
     </div>
 
