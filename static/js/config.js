@@ -31,6 +31,12 @@ const API_ENDPOINTS = {
         CREATE: '/api/create-position',
         CLOSE: '/api/close-position'
     },
+    GOVERNANCE: {
+        EXIT: '/api/exit-governance',
+        APPLIED_CHANGES: (symbol = '', limit = 100) => `/api/applied-changes?symbol=${symbol}&limit=${limit}`,
+        ADAPTIVE_ACTIONS: (limit = 100) => `/api/adaptive-actions?limit=${limit}`,
+        EXIT_TELEMETRY_SNAPSHOTS: (symbol = '', limit = 50) => `/api/exit-telemetry/snapshots?symbol=${symbol}&limit=${limit}`
+    },
     // Lowercase aliases for backward compatibility
     botOverview: '/api/bot-overview',
     botStatus: (symbol) => `/api/bot-status/${symbol}`,
