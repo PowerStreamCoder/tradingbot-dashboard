@@ -76,17 +76,18 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install pytest pytest-cov
+          pip install pytest pytest-cov pytest-xdist
 
       - name: Run Full Test Suite (Unit + Integration)
         run: |
           if [ -d "tests" ]; then
-            pytest tests/ -v || true
+            pytest tests/ -n auto -v || true
           else
             echo "No tests directory in this repository, check passed."
           fi
