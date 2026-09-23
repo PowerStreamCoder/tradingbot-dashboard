@@ -49,9 +49,10 @@ async function loadBotConfigs() {
             return false;
         }
 
-        // Build BOT_NAMES mapping
+        // Build BOT_NAMES mapping: client_id -> symbol
+        // Bot overview & trades are keyed by client_id, so match that here (fallback: index+1).
         data.bots.forEach((bot, index) => {
-            const botId = index + 1;
+            const botId = bot.client_id !== undefined ? bot.client_id : (index + 1);
             BOT_NAMES[botId] = bot.symbol || `Bot ${botId}`;
         });
 

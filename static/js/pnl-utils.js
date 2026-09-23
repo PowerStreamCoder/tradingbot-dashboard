@@ -92,28 +92,37 @@ function calculatePnLForRange(trades, startDate, endDate) {
         total: { trades: 0, pnl: 0.0 }
     };
 
+    // Aggregate per actual bot (keyed by client_id from Firestore trades, e.g. 3/4)
+    const bots = {};
+
     trades.forEach(trade => {
         try {
             const tradeDate = new Date(trade.timestamp);
             if (tradeDate >= startDate && tradeDate <= endDate) {
                 const botId = trade.botId || 1;
-                const botKey = `bot${botId}`;
-                const pnlValue = trade.profitLoss || 0;
-
-                pnl[botKey].trades += 1;
-                pnl[botKey].pnl += pnlValue;
-                pnl.total.trades += 1;
-                pnl.total.pnl += pnlValue;
+                if (!bots[botId]) {
+                    bots[botId] = { trades: 0, pnl: 0.0 };
+                }
+                bots[botId].trades += 1;
+                bots[botId].pnl += trade.profitLoss || 0;
             }
         } catch (e) {
             console.error('Error processing trade:', e, trade);
         }
     });
 
+    // Roll up: bot1 column shows the selected/filtered aggregate (matching its header text)
+    let totalTrades = 0;
+    let totalPnl = 0.0;
+    Object.values(bots).forEach(b => {
+        totalTrades += b.trades;
+        totalPnl += b.pnl;
+    });
+
     // Round P&L values
-    pnl.bot1.pnl = Math.round(pnl.bot1.pnl * 100) / 100;
-    pnl.bot2.pnl = Math.round(pnl.bot2.pnl * 100) / 100;
-    pnl.total.pnl = Math.round(pnl.total.pnl * 100) / 100;
+    pnl.bot1 = { trades: totalTrades, pnl: Math.round(totalPnl * 100) / 100 };
+    pnl.bot2 = { trades: 0, pnl: 0.0 };
+    pnl.total = { trades: totalTrades, pnl: pnl.bot1.pnl };
 
     return pnl;
 }
