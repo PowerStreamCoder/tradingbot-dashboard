@@ -27,16 +27,17 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest pytest-cov
+          pip install pytest pytest-cov pytest-xdist
 
       - name: Run unit tests
         run: |
-          pytest tests/ -v --cov --cov-report=term-missing || echo "⚠️  No tests found - skipping"
+          pytest tests/ -n auto -v --cov --cov-report=term-missing || echo "⚠️  No tests found - skipping"
 
       - name: Lint code
         run: |
