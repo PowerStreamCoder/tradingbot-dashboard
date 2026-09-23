@@ -47,10 +47,12 @@ async function loadBotConfigs() {
         // Store full config for reference
         BOT_CONFIGS = data;
 
-        // Build BOT_NAMES mapping: index+1 -> symbol
+        // Build BOT_NAMES mapping: client_id -> symbol
+        // Bots write bot_overview/trades/bot_status keyed by client_id (e.g. bot3, bot4).
+        // For consistency, key every bot by its real client_id (fallback: index+1 for legacy configs).
         BOT_NAMES = {};
         data.bots.forEach((bot, index) => {
-            const botId = index + 1;
+            const botId = bot.client_id !== undefined ? bot.client_id : (index + 1);
             BOT_NAMES[botId] = bot.symbol || `Bot ${botId}`;
         });
 
@@ -162,18 +164,20 @@ function initializeExportModal() {
 
 // Update P&L table headers with bot names
 function updatePnLHeaders() {
+    // BOT_NAMES is keyed by client_id; fall back to positional for legacy configs
+    const botNames = Object.values(BOT_NAMES).filter(n => typeof n === 'string' && n !== '⚠️ CONFIG ERROR');
+
     // Update all periods (day, week, month)
     ['day', 'week', 'month'].forEach(period => {
-        // Bot 1
+        // Column 1 (+ column 2 if present)
         const bot1Header = document.getElementById(`${period}-bot1-header`);
         if (bot1Header) {
-            bot1Header.textContent = BOT_NAMES[1] || 'Bot 1';
+            bot1Header.textContent = botNames[0] || 'Bot 1';
         }
 
-        // Bot 2
         const bot2Header = document.getElementById(`${period}-bot2-header`);
         if (bot2Header) {
-            bot2Header.textContent = BOT_NAMES[2] || 'Bot 2';
+            bot2Header.textContent = botNames[1] || 'Bot 2';
         }
     });
 }
