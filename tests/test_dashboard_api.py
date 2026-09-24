@@ -177,6 +177,28 @@ class TestDashboardAPI(unittest.TestCase):
         self.assertIn("last_update", filtered)
         self.assertIn("regime", filtered)
 
+    def test_load_bot_parameters(self):
+        """Test loading bot parameters for IWM and NVDA"""
+        from main import load_bot_parameters
+        
+        iwm_params = load_bot_parameters("IWM")
+        self.assertIsNotNone(iwm_params)
+        self.assertEqual(iwm_params.get("symbol"), "IWM")
+        self.assertIn("capital", iwm_params)
+        self.assertIn("risk_management", iwm_params)
+        self.assertIn("covered_calls", iwm_params)
+        self.assertEqual(iwm_params["capital"]["capital_per_bucket_long"], 30000.0)
+
+        nvda_params = load_bot_parameters("NVDA")
+        self.assertIsNotNone(nvda_params)
+        self.assertEqual(nvda_params.get("symbol"), "NVDA")
+        self.assertIn("capital", nvda_params)
+        self.assertEqual(nvda_params["capital"]["capital_per_bucket_long"], 35000.0)
+
+        # Test non-existent symbol returns None
+        bad_params = load_bot_parameters("NONEXISTENT")
+        self.assertIsNone(bad_params)
+
 
 if __name__ == '__main__':
     import argparse

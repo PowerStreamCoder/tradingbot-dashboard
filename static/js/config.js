@@ -13,6 +13,8 @@ const DEBUG = window.location.hostname === 'localhost' || window.location.hostna
  */
 const API_ENDPOINTS = {
     BOT_CONFIGS: '/api/bot-configs',
+    BOT_PARAMS: (symbol) => `/api/bot-params/${symbol}`,
+    ALL_BOT_PARAMS: '/api/bot-params',
     BOT_OVERVIEW: '/api/bot-overview',
     BOT_STATUS: (symbol) => `/api/bot-status/${symbol}`,
     BOT_METRICS: (botId, days = 90) => `/api/bot-metrics/${botId}?days=${days}`,

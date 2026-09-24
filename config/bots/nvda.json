@@ -1,0 +1,154 @@
+{
+  "symbol": "NVDA",
+  "description": "NVDA-specific parameters - aggressive growth strategy with covered calls",
+  "capital": {
+    "capital_per_bucket_long": 35000.0,
+    "capital_per_bucket_short": 2000.0,
+    "buckets_per_group": 2
+  },
+  "atr_parameters": {
+    "atr_period": 14,
+    "trailing_stop_atr_multiplier": 2.0,
+    "activation_floor_atr_multiplier": 1.0,
+    "max_atr_ratio_for_trailing": 2.0,
+    "trailing_stop_pct": 0.055,
+    "activation_floor_pct": 0.01,
+    "use_atr_position_sizing": false,
+    "position_risk_per_trade_pct": 0.01,
+    "position_stop_loss_atr_multiplier": 2.5,
+    "position_min_shares": 100,
+    "position_max_capital": 28000
+  },
+  "covered_calls": {
+    "use_covered_calls": true,
+    "call_enabled_regimes": [
+      "BULL",
+      "NEUTRAL"
+    ],
+    "call_expiration_days": 7,
+    "call_min_premium_pct": 0.004,
+    "call_confirmation_bars": 0,
+    "use_delta_filter": false,
+    "min_delta": 0.25,
+    "max_delta": 0.35
+  },
+  "exit_logic": {
+    "use_atr_targets": false,
+    "use_atr_stop": true,
+    "atr_stop_multiplier": 2.0,
+    "use_sma_slope_exit": false,
+    "sma_slope_threshold": -0.001
+  },
+  "regime": {
+    "use_regime_filter": true,
+    "max_atr_for_trend": 10.0,
+    "use_adx_regime": true,
+    "adx_period": 14,
+    "adx_trend_threshold": 22.0,
+    "adx_exit_threshold": 18.0,
+    "di_spread_min": 3.0,
+    "adx_regime_sma200_anchor": true
+  },
+  "risk_management": {
+    "profit_target_net": 0.025,
+    "stop_loss_threshold": 0.9
+  },
+  "entry_filters": {
+    "mtf_lookback_bars": 2,
+    "mtf_bullish_threshold": 0.65,
+    "confirmation_ticks_required": 15,
+    "confirmation_min_seconds": 45,
+    "confirmation_mode": "atr_max_floor",
+    "confirmation_min_pct_floor": 0.001,
+    "confirmation_atr_multiplier": 0.4
+  },
+  "trading_behavior": {
+    "allow_extended_hours": false,
+    "skip_market_hours_check": false,
+    "allow_short_entries": false
+  },
+  "neutral_regime": {
+    "use_neutral_regime_entries": true,
+    "neutral_entry_mode": "conservatve"
+  },
+  "threshold_coordination": {
+    "min_move_for_call_atr": 1.0,
+    "take_profit_with_call_atr": 2.5,
+    "take_profit_without_call_atr": 4.0,
+    "min_move_for_call_absolute_pct": 0.003,
+    "take_profit_absolute_pct": 0.012,
+    "max_hold_hours": 0.0
+  },
+  "adaptive_pnl": {
+    "enable_adaptive_pnl": true,
+    "streak_dampener_enabled": true,
+    "max_consecutive_losses": 3,
+    "streak_reduction_factor": 0.5,
+    "break_even_lock_r_multiple": 1.0,
+    "time_decay_enabled": true,
+    "time_decay_max_days": 10.0,
+    "time_decay_tighten_pct": 0.5,
+    "scale_out_enabled": true,
+    "scale_out_target_r": 1.5,
+    "scale_out_pct": 0.5,
+    "enable_pyramiding": true,
+    "pyramid_trigger_r_multiple": 1.2,
+    "pyramid_add_pct": 0.5,
+    "peak_giveback_shield_enabled": true,
+    "peak_giveback_protect_pct": 0.75,
+    "peak_giveback_min_r": 2.0,
+    "re_entry_suppression_enabled": true,
+    "re_entry_cooldown_bars": 4
+  },
+  "adaptive_entry": {
+    "enable_adaptive_entry": true,
+    "base_neutral_mtf_threshold": 0.55,
+    "min_neutral_mtf_threshold": 0.45,
+    "max_neutral_mtf_threshold": 0.65,
+    "lookback_bars_normal": 4,
+    "lookback_bars_breakout": 2,
+    "adx_breakout_threshold": 25.0,
+    "atr_expansion_ratio": 1.25
+  },
+  "adaptive_covered_call": {
+    "enable_adaptive_covered_call": true,
+    "base_min_premium_pct": 0.006,
+    "min_allowed_premium_pct": 0.003,
+    "max_allowed_premium_pct": 0.015,
+    "base_profit_cushion_atr": 1.0,
+    "neutral_regime_profit_cushion_atr": 0.3,
+    "bull_regime_profit_cushion_atr": 1.0,
+    "adx_trend_breakout_threshold": 25.0
+  },
+  "security_profile": {
+    "asset_archetype": "HIGH_GROWTH_EQUITY",
+    "enable_earnings_freeze": true,
+    "enable_ex_dividend_shield": true
+  },
+  "orchestrator": {
+    "enable_orchestrator": true,
+    "strategy_intent": "SURFACE_ALL",
+    "income_mode_mtf_relaxation": 0.15,
+    "_comment": "Valid options: SURFACE_ALL, AUTO, COVERED_CALL_INCOME, TREND_MOMENTUM_GROWTH, VOLATILITY_DEFENSIVE, NEUTRAL_RANGE_HARVEST"
+  },
+  "macro_signals": {
+    "enable_macro_signals": true,
+    "vix_threshold_moderate": 15.0,
+    "vix_threshold_high": 25.0,
+    "benchmark_symbol": "SPY",
+    "pre_event_freeze_minutes": 120
+  },
+  "fundamentals": {
+    "enable_fundamentals": true,
+    "score_source": "auto",
+    "refresh_interval_hours": 24.0,
+    "enable_live_fetch": true,
+    "enable_sec_fetch": false,
+    "fetch_timeout_seconds": 15.0,
+    "firestore_collection": "fundamental_scores",
+    "allow_cache_writebacks": true,
+    "enable_defensive_adaptation": true,
+    "enable_fundamentals_full_adaptivity": true,
+    "metrics": {}
+  }
+}

@@ -107,6 +107,13 @@ _bot_config_cache = {
     'lock': Lock()
 }
 
+# Parameters cache for per-symbol bot configurations
+_bot_params_cache = {
+    'params': {},
+    'mtimes': {},
+    'lock': Lock()
+}
+
 # Metrics cache (to avoid expensive recalculation)
 # Code review fix: Added caching for /api/metrics performance
 _metrics_cache = {
@@ -182,6 +189,46 @@ def load_bot_configs():
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in bots.json: {e}")
             raise
+
+def load_bot_parameters(symbol: str) -> Optional[dict]:
+    """
+    Load bot parameters for a given symbol (e.g. 'IWM' or 'NVDA') from bots/{symbol.lower()}.json.
+    Tries canonical config repo first, then production bundled copy.
+    """
+    if not symbol:
+        return None
+    symbol_clean = symbol.lower().strip()
+    config_paths = [
+        os.path.join(os.path.dirname(__file__), "..", "tradingbot-config", "bots", f"{symbol_clean}.json"),
+        os.path.join(os.path.dirname(__file__), "config", "bots", f"{symbol_clean}.json"),
+    ]
+
+    file_path = None
+    for p in config_paths:
+        if os.path.exists(p):
+            file_path = p
+            break
+
+    if not file_path:
+        return None
+
+    with _bot_params_cache['lock']:
+        try:
+            mtime = os.stat(file_path).st_mtime
+            if (symbol_clean in _bot_params_cache['params'] and
+                _bot_params_cache['mtimes'].get(symbol_clean) == mtime):
+                return _bot_params_cache['params'][symbol_clean]
+
+            with open(file_path, 'r') as f:
+                data = json.load(f)
+
+            _bot_params_cache['params'][symbol_clean] = data
+            _bot_params_cache['mtimes'][symbol_clean] = mtime
+            logger.info(f"Loaded bot parameters for {symbol_clean.upper()} from {file_path}")
+            return data
+        except Exception as e:
+            logger.error(f"Error loading bot parameters from {file_path}: {e}")
+            return None
 
 def get_client_id_for_bot(bot_id: int) -> int:
     """
@@ -351,6 +398,7 @@ async def check_access_code(request: Request, call_next):
         request.url.path == "/authenticate" or
         request.url.path == "/api/health" or
         request.url.path == "/api/bot-configs" or  # Allow bot configs for dashboard initialization
+        request.url.path.startswith("/api/bot-params") or  # Allow bot parameter inspection
         request.url.path.startswith("/api/historical-bars/") or  # Allow historical bars for charts
         request.url.path == "/api/logs" or  # Allow logs API for frontend
         request.url.path.startswith("/api/learning-candidates") or  # Allow learning endpoints
@@ -851,6 +899,45 @@ async def get_bot_configs():
             "error": f"Unexpected error loading configuration: {str(e)}",
             "version": 0
         }
+
+@app.get("/api/bot-params/{symbol}")
+async def get_bot_params(symbol: str):
+    """
+    Get detailed strategy and execution parameters for a bot by symbol (e.g., IWM, NVDA).
+    Returns the parsed JSON parameter profile.
+    """
+    params = load_bot_parameters(symbol)
+    if not params:
+        raise HTTPException(status_code=404, detail=f"Bot parameters for symbol '{symbol}' not found")
+    return {
+        "status": "success",
+        "symbol": symbol.upper(),
+        "parameters": params
+    }
+
+@app.get("/api/bot-params")
+async def get_all_bot_params():
+    """
+    Get all available bot parameter profiles.
+    """
+    result = {}
+    try:
+        cfg = load_bot_configs()
+        bots = cfg.get("bots", [])
+        for b in bots:
+            sym = b.get("symbol")
+            if sym:
+                p = load_bot_parameters(sym)
+                if p:
+                    result[sym.upper()] = p
+        return {"status": "success", "bots": result}
+    except Exception as e:
+        logger.error(f"Error fetching all bot parameters: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
 
 @app.get("/api/health")
 @limiter.limit("60/minute")
