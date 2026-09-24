@@ -7,7 +7,7 @@
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚖️</text></svg>">
     <link rel="stylesheet" href="/static/css/bot_focus.css">
     <link rel="stylesheet" href="/static/css/learning_review.css">
-    <link rel="stylesheet" href="/static/css/governance_review.css?v=2.2.0">
+    <link rel="stylesheet" href="/static/css/governance_review.css?v=2.3.0">
 </head>
 <body>
     <div class="learning-container">
@@ -161,25 +161,83 @@
 
         <!-- Adaptive Engine Actions -->
         <section class="section-title">
-            <h2>Adaptive Engine Actions</h2>
-            <p>adaptive_action_log resolution stats plus the latest records.</p>
+            <div class="section-header-flex">
+                <div>
+                    <h2>Adaptive Engine Actions</h2>
+                    <p>Real-time intraday risk, profit-protection, and scale-out actions executed by the Adaptive PnL Agent.</p>
+                </div>
+                <div class="ledger-header-badges">
+                    <span class="badge-count" id="adaptive-count-badge">0 actions</span>
+                </div>
+            </div>
         </section>
+
+        <!-- Informative Diagnostic Hint Banner -->
+        <div class="gov-hint-banner adaptive-hint-banner">
+            <div class="hint-header">
+                <strong>⚡ Intraday Adaptive Actions &amp; Feedback Lifecycle:</strong>
+            </div>
+            <div class="telemetry-legend">
+                <span class="legend-item"><span class="chip chip-pending">⏳ In-Flight</span> Action triggered on open trade; awaiting position exit</span>
+                <span class="legend-item"><span class="chip chip-applied">✅ Resolved</span> Position closed; outcome linked for threshold evaluation</span>
+                <span class="legend-item"><span class="chip chip-fired">🛡️ Shield</span> Protects capital against adverse intraday patterns &amp; reversals</span>
+                <span class="legend-item"><span class="chip chip-win">💰 Scale-Out</span> Locks in profit at target R-multiples</span>
+            </div>
+            <div class="hint-subtext">
+                <strong>Closed-Loop Tuning:</strong> When a position closes, the Adaptive Feedback Engine evaluates final P&amp;L and win rate against threshold history to optimize future triggers. Click any row or stat card for diagnostics.
+            </div>
+        </div>
+
         <div class="table-card">
+            <!-- Top Summary Stat Cards Grid -->
             <div id="adaptive-stats" class="adaptive-stats"></div>
+
+            <!-- Search and Filter Toolbar -->
+            <div class="ledger-toolbar adaptive-toolbar">
+                <div class="ledger-search-box">
+                    <span class="search-icon">🔍</span>
+                    <input type="text" id="adaptive-search" placeholder="Search action, trigger reason, symbol, position ID..." oninput="filterAdaptiveActions()">
+                </div>
+                <div class="ledger-filter-group">
+                    <label for="adaptive-action-filter">Action:</label>
+                    <select id="adaptive-action-filter" onchange="filterAdaptiveActions()">
+                        <option value="">All Actions</option>
+                    </select>
+                </div>
+                <div class="ledger-filter-group">
+                    <label for="adaptive-symbol-filter">Symbol:</label>
+                    <select id="adaptive-symbol-filter" onchange="filterAdaptiveActions()">
+                        <option value="">All Symbols</option>
+                    </select>
+                </div>
+                <div class="ledger-filter-group">
+                    <label for="adaptive-status-filter">Status:</label>
+                    <select id="adaptive-status-filter" onchange="filterAdaptiveActions()">
+                        <option value="">All Statuses</option>
+                        <option value="pending">⏳ Pending Close</option>
+                        <option value="resolved">✅ Resolved</option>
+                    </select>
+                </div>
+                <button class="btn-reset-filter" onclick="resetAdaptiveFilters()">Reset</button>
+            </div>
+
+            <!-- Table of Actions -->
             <div class="table-scroll">
-                <table class="data-table">
+                <table class="data-table adaptive-table">
                     <thead>
                         <tr>
+                            <th style="width: 32px;"></th>
                             <th>Created</th>
                             <th>Symbol</th>
-                            <th>Action</th>
+                            <th>Action &amp; Trigger Reason</th>
                             <th>Threshold</th>
-                            <th>Resolved</th>
-                            <th>P&amp;L</th>
+                            <th>Regime</th>
+                            <th>Status</th>
+                            <th>Outcome P&amp;L</th>
                         </tr>
                     </thead>
                     <tbody id="adaptive-body">
-                        <tr><td colspan="6" class="loading">Loading actions...</td></tr>
+                        <tr><td colspan="8" class="loading">Loading actions...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -238,6 +296,6 @@
 
     <script src="/static/js/utils.js"></script>
     <script src="/static/js/config.js?v=2.0.0"></script>
-    <script src="/static/js/governance_review.js?v=2.2.0"></script>
+    <script src="/static/js/governance_review.js?v=2.3.0"></script>
 </body>
 </html>
