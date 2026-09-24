@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title id="pageTitle">Bot Focus - SMA Bot Dashboard</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>">
-    <link rel="stylesheet" href="/static/css/bot_focus.css">
+    <link rel="stylesheet" href="/static/css/bot_focus.css?v=2.9.0">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -23,22 +23,39 @@
                     <span class="symbol-placeholder">--</span> Trading Bot
                 </h1>
                 <div class="bot-metadata">
-                    <span class="metadata-item">
-                        <span class="label">Bot:</span>
-                        <select id="botSelector" class="bot-selector" title="Select bot to monitor">
+                    <div class="bot-selector-custom-wrapper" id="customBotSelectorWrapper">
+                        <span class="metadata-label">Bot:</span>
+                        <div class="custom-bot-select" id="customBotSelect" tabindex="0" role="combobox" aria-haspopup="listbox" aria-expanded="false" title="Switch active trading bot">
+                            <span class="custom-bot-pill" id="customBotPill">--</span>
+                            <div class="custom-bot-meta">
+                                <span class="custom-bot-title" id="customBotTitle">Loading...</span>
+                                <span class="custom-bot-indicator" title="Active"></span>
+                            </div>
+                            <span class="custom-bot-chevron">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+                            </span>
+                        </div>
+                        <div class="custom-bot-menu" id="customBotMenu" role="listbox" style="display: none;">
+                            <!-- Dynamically populated options -->
+                        </div>
+                        <!-- Native select element kept synchronized for backwards compatibility and automated testing -->
+                        <select id="botSelector" class="bot-selector-native-hidden" title="Select bot to monitor" aria-hidden="true" tabindex="-1">
                             <option value="">Loading...</option>
                         </select>
-                    </span>
+                    </div>
+
                     <span class="metadata-separator">|</span>
-                    <span class="metadata-item">
+                    <div class="metadata-pill-badge strategy-badge">
+                        <span class="badge-icon">⚡</span>
                         <span class="label">Strategy:</span>
                         <span class="value" id="botStrategy">Loading...</span>
-                    </span>
+                    </div>
                     <span class="metadata-separator">|</span>
-                    <span class="metadata-item">
+                    <div class="metadata-pill-badge port-badge">
+                        <span class="badge-icon">🔌</span>
                         <span class="label">Port:</span>
                         <span class="value" id="tradingPort">4002 (Gateway)</span>
-                    </span>
+                    </div>
                 </div>
             </div>
             <div class="header-right">
@@ -314,6 +331,44 @@
             </div>
         </section>
 
+        <!-- Bot Configuration & Strategy Parameters Section -->
+        <section class="tile bot-params-tile" id="botParamsSection">
+            <div class="tile-header params-tile-header">
+                <div class="params-header-left">
+                    <div class="params-title-line">
+                        <h2>⚙️ Strategy Parameters & Bot Configuration</h2>
+                        <span class="param-symbol-badge" id="paramSymbolBadge">--</span>
+                        <span class="param-status-badge active" id="paramStatusBadge">ACTIVE PARAMS</span>
+                    </div>
+                    <p class="params-desc" id="paramBotDesc">Loading active trading bot parameters...</p>
+                </div>
+                <div class="params-header-right">
+                    <div class="params-tabs" id="paramsTabs">
+                        <button type="button" class="param-tab active" data-category="all">All</button>
+                        <button type="button" class="param-tab" data-category="capital">💰 Capital</button>
+                        <button type="button" class="param-tab" data-category="risk">🛑 Risk & Stops</button>
+                        <button type="button" class="param-tab" data-category="entry">🎯 Entry</button>
+                        <button type="button" class="param-tab" data-category="calls">📜 Covered Calls</button>
+                        <button type="button" class="param-tab" data-category="regime">🧭 Regime</button>
+                        <button type="button" class="param-tab" data-category="adaptive">⚡ Adaptive</button>
+                        <button type="button" class="param-tab" data-category="coordination">🔄 Coordination</button>
+                    </div>
+                    <button type="button" class="btn-toggle-params" id="toggleParamsBtn" title="Collapse or expand configuration section">
+                        <span id="toggleParamsIcon">▲</span> <span id="toggleParamsText">Collapse</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="params-body" id="paramsBody">
+                <div class="params-grid" id="paramsCardsGrid">
+                    <!-- Populated dynamically by bot_focus.js -->
+                    <div class="params-loading-placeholder">
+                        <span class="params-spinner"></span> Loading bot parameters...
+                    </div>
+                </div>
+            </div>
+        </section>
+
         <!-- Orders Table -->
         <section class="tile orders-tile">
             <div class="tile-header">
@@ -470,9 +525,9 @@
     <script src="/static/js/utils.js"></script>
 
     <!-- Configuration (must load before other scripts) -->
-    <script src="/static/js/config.js?v=2.6.0"></script>
+    <script src="/static/js/config.js?v=2.7.0"></script>
 
-    <script src="/static/js/bot_focus.js?v=2.8.6"></script>
+    <script src="/static/js/bot_focus.js?v=2.9.0"></script>
     <script src="/static/js/stock_picker.js?v=2.6.0"></script>
 
     <script>

@@ -165,8 +165,16 @@ async function loadBotConfig() {
  * @param {Array} activeBots - Enabled bots
  * @param {Array} allBots - All bots (enabled and disabled)
  */
+/**
+ * Populate bot selector dropdown with all bots (both native and custom styled dropdown)
+ * @param {Array} activeBots - Enabled bots
+ * @param {Array} allBots - All bots (enabled and disabled)
+ */
 function populateBotSelector(activeBots, allBots) {
     const selector = document.getElementById('botSelector');
+    const customMenu = document.getElementById('customBotMenu');
+    const customTrigger = document.getElementById('customBotSelect');
+
     if (!selector) {
         Logger.warn('BotFocus', 'Bot selector element not found');
         return;
@@ -174,10 +182,17 @@ function populateBotSelector(activeBots, allBots) {
 
     // Clear existing options
     selector.innerHTML = '';
+    if (customMenu) {
+        customMenu.innerHTML = '';
+    }
+
+    const savedBotId = localStorage.getItem('selectedBotId');
+    const currentSelectedId = savedBotId ? parseInt(savedBotId) : (activeBots[0]?.client_id || 1);
 
     // Add enabled bots
     if (activeBots.length > 0) {
         activeBots.forEach(bot => {
+            // 1. Native option (for fallback and test compatibility)
             const option = document.createElement('option');
             option.value = bot.client_id;
             option.textContent = `${bot.symbol} - ${bot.name}`;
@@ -185,6 +200,42 @@ function populateBotSelector(activeBots, allBots) {
                 option.textContent += ` ($${(bot.capital_override / 1000).toFixed(0)}k)`;
             }
             selector.appendChild(option);
+
+            // 2. Custom dropdown option card
+            if (customMenu) {
+                const isSelected = bot.client_id === currentSelectedId;
+                const optCard = document.createElement('div');
+                optCard.className = `custom-bot-option ${isSelected ? 'selected' : ''}`;
+                optCard.setAttribute('data-client-id', bot.client_id);
+                optCard.setAttribute('role', 'option');
+                optCard.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+
+                const symClass = bot.symbol.toLowerCase();
+                const stratText = bot.strategy === 'sma_crossover' ? 'SMA 5/20 Crossover' : (bot.strategy || 'Trend Strategy');
+                const capText = bot.capital_override ? `$${(bot.capital_override / 1000).toFixed(0)}k` : '';
+
+                optCard.innerHTML = `
+                    <div class="custom-bot-option-left">
+                        <span class="custom-bot-option-symbol-badge ${symClass}">${bot.symbol}</span>
+                        <div class="custom-bot-option-details">
+                            <span class="custom-bot-option-name">${bot.name}</span>
+                            <span class="custom-bot-option-desc">${stratText}</span>
+                        </div>
+                    </div>
+                    <div class="custom-bot-option-right">
+                        ${capText ? `<span class="custom-bot-option-capital">${capText}</span>` : ''}
+                        <span class="custom-bot-option-status-dot" title="Active"></span>
+                        <span class="custom-bot-option-check">✓</span>
+                    </div>
+                `;
+
+                optCard.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    selectCustomBot(bot);
+                });
+
+                customMenu.appendChild(optCard);
+            }
         });
     }
 
@@ -200,17 +251,109 @@ function populateBotSelector(activeBots, allBots) {
             option.disabled = true;
             option.style.color = '#718096';
             disabledGroup.appendChild(option);
+
+            if (customMenu) {
+                const optCard = document.createElement('div');
+                optCard.className = 'custom-bot-option disabled';
+                optCard.setAttribute('data-client-id', bot.client_id);
+                optCard.setAttribute('role', 'option');
+                optCard.setAttribute('aria-disabled', 'true');
+                optCard.innerHTML = `
+                    <div class="custom-bot-option-left">
+                        <span class="custom-bot-option-symbol-badge">${bot.symbol}</span>
+                        <div class="custom-bot-option-details">
+                            <span class="custom-bot-option-name">${bot.name} (disabled)</span>
+                            <span class="custom-bot-option-desc">Inactive</span>
+                        </div>
+                    </div>
+                    <div class="custom-bot-option-right">
+                        <span class="custom-bot-option-status-dot disabled"></span>
+                    </div>
+                `;
+                customMenu.appendChild(optCard);
+            }
         });
         selector.appendChild(disabledGroup);
     }
 
     // Set selected value if saved preference exists
-    const savedBotId = localStorage.getItem('selectedBotId');
     if (savedBotId) {
         selector.value = savedBotId;
     }
 
+    // Setup custom trigger click listener (once)
+    if (customTrigger && !customTrigger.dataset.listenerAttached) {
+        customTrigger.dataset.listenerAttached = 'true';
+        customTrigger.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleCustomBotMenu();
+        });
+
+        customTrigger.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                toggleCustomBotMenu();
+            } else if (e.key === 'Escape') {
+                closeCustomBotMenu();
+            }
+        });
+
+        // Close on click outside
+        document.addEventListener('click', (e) => {
+            const wrapper = document.getElementById('customBotSelectorWrapper');
+            if (wrapper && !wrapper.contains(e.target)) {
+                closeCustomBotMenu();
+            }
+        });
+    }
+
     Logger.info('BotFocus', `Bot selector populated with ${activeBots.length} active bots, ${disabledBots.length} disabled`);
+}
+
+/**
+ * Toggle the custom bot dropdown menu open/closed
+ */
+function toggleCustomBotMenu() {
+    const customMenu = document.getElementById('customBotMenu');
+    const customTrigger = document.getElementById('customBotSelect');
+    if (!customMenu || !customTrigger) return;
+
+    const isOpen = customMenu.style.display === 'flex' || customMenu.style.display === 'block';
+    if (isOpen) {
+        closeCustomBotMenu();
+    } else {
+        customMenu.style.display = 'flex';
+        customTrigger.classList.add('open');
+        customTrigger.setAttribute('aria-expanded', 'true');
+    }
+}
+
+/**
+ * Close the custom bot dropdown menu
+ */
+function closeCustomBotMenu() {
+    const customMenu = document.getElementById('customBotMenu');
+    const customTrigger = document.getElementById('customBotSelect');
+    if (customMenu) {
+        customMenu.style.display = 'none';
+    }
+    if (customTrigger) {
+        customTrigger.classList.remove('open');
+        customTrigger.setAttribute('aria-expanded', 'false');
+    }
+}
+
+/**
+ * Switch bot selection from custom dropdown
+ * @param {Object} bot - Bot configuration object
+ */
+function selectCustomBot(bot) {
+    closeCustomBotMenu();
+    const selector = document.getElementById('botSelector');
+    if (selector && selector.value !== bot.client_id.toString()) {
+        selector.value = bot.client_id;
+        handleBotSelectorChange({ target: selector });
+    }
 }
 
 /**
@@ -340,7 +483,284 @@ function updateSymbolReferences() {
         el.textContent = CONFIG.symbol;
     });
 
+    // Update custom bot trigger pill and title
+    const customPill = document.getElementById('customBotPill');
+    const customTitle = document.getElementById('customBotTitle');
+    const botStrategy = document.getElementById('botStrategy');
+
+    if (customPill) {
+        customPill.textContent = CONFIG.symbol;
+        if (CONFIG.symbol === 'NVDA') {
+            customPill.classList.add('nvda');
+        } else {
+            customPill.classList.remove('nvda');
+        }
+    }
+
+    if (customTitle) {
+        customTitle.textContent = CONFIG.botName || `${CONFIG.symbol.toLowerCase()}_sma`;
+    }
+
+    if (botStrategy && CONFIG.strategy) {
+        botStrategy.textContent = CONFIG.strategy === 'sma_crossover' ? 'SMA 5/20 Crossover' : CONFIG.strategy;
+    }
+
+    // Update selected state in custom dropdown menu
+    document.querySelectorAll('.custom-bot-option').forEach(opt => {
+        const clientId = parseInt(opt.getAttribute('data-client-id'));
+        if (clientId === CONFIG.botId) {
+            opt.classList.add('selected');
+            opt.setAttribute('aria-selected', 'true');
+        } else {
+            opt.classList.remove('selected');
+            opt.setAttribute('aria-selected', 'false');
+        }
+    });
+
+    // Load bot configuration parameters for active symbol
+    loadBotParameters(CONFIG.symbol);
+
     Logger.debug('Updated symbol references to:', CONFIG.symbol);
+}
+
+// Active Bot Parameters State
+let currentBotParams = null;
+let currentParamCategory = 'all';
+
+/**
+ * Fetch and render bot configuration parameters for the specified symbol
+ * @param {string} symbol - Ticker symbol (e.g. 'IWM', 'NVDA')
+ */
+async function loadBotParameters(symbol) {
+    if (!symbol) return;
+    const badgeEl = document.getElementById('paramSymbolBadge');
+    const descEl = document.getElementById('paramBotDesc');
+    const gridEl = document.getElementById('paramsCardsGrid');
+
+    if (badgeEl) {
+        badgeEl.textContent = symbol.toUpperCase();
+        if (symbol.toUpperCase() === 'NVDA') {
+            badgeEl.classList.add('nvda');
+        } else {
+            badgeEl.classList.remove('nvda');
+        }
+    }
+
+    try {
+        const endpoint = (typeof API_ENDPOINTS !== 'undefined' && API_ENDPOINTS.BOT_PARAMS) 
+            ? API_ENDPOINTS.BOT_PARAMS(symbol) 
+            : `/api/bot-params/${symbol}`;
+
+        const res = await fetch(endpoint);
+        if (!res.ok) {
+            throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        }
+        const data = await res.json();
+        const params = data.parameters || data;
+        currentBotParams = params;
+
+        if (descEl) {
+            descEl.textContent = params.description || `${symbol.toUpperCase()} configuration parameters`;
+        }
+
+        renderBotParameters(params);
+    } catch (err) {
+        Logger.error('BotFocus', `Failed to load bot parameters for ${symbol}`, err);
+        if (gridEl) {
+            gridEl.innerHTML = `
+                <div class="params-loading-placeholder" style="color: #f56565;">
+                    <span>⚠️</span> Unable to load parameters for ${symbol}: ${err.message}
+                </div>
+            `;
+        }
+    }
+}
+
+/**
+ * Format helpers for parameter display
+ */
+function fmtParamCurrency(num) {
+    if (num === undefined || num === null) return '--';
+    return `$${Number(num).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+}
+
+function fmtParamPercent(num, plus = false) {
+    if (num === undefined || num === null) return '--';
+    const val = Number(num) * 100;
+    const sign = plus && val > 0 ? '+' : '';
+    return `${sign}${val.toFixed(2)}%`;
+}
+
+function fmtParamPill(bool, trueText = 'ENABLED', falseText = 'DISABLED') {
+    const isTrue = Boolean(bool);
+    return `<span class="param-pill ${isTrue ? 'enabled' : 'disabled'}">${isTrue ? trueText : falseText}</span>`;
+}
+
+function fmtParamTags(arr) {
+    if (!Array.isArray(arr) || arr.length === 0) return '--';
+    return `<div class="param-pills-wrap">${arr.map(t => `<span class="param-pill tag">${t}</span>`).join('')}</div>`;
+}
+
+/**
+ * Render bot parameter domain cards
+ * @param {Object} params - The parsed bot parameters JSON
+ */
+function renderBotParameters(params) {
+    const gridEl = document.getElementById('paramsCardsGrid');
+    if (!gridEl || !params) return;
+
+    const cards = [
+        // 1. Capital Allocation & Sizing
+        {
+            category: 'capital',
+            icon: '💰',
+            title: 'Capital & Position Sizing',
+            desc: 'Portfolio bucket sizing, risk per trade, and position capital limits',
+            rows: [
+                { key: 'Long Bucket Capital', val: `<span class="param-val number highlight-green">${fmtParamCurrency(params.capital?.capital_per_bucket_long ?? 30000)}</span>` },
+                { key: 'Short Bucket Capital', val: `<span class="param-val number">${fmtParamCurrency(params.capital?.capital_per_bucket_short ?? 1000)}</span>` },
+                { key: 'Buckets per Group', val: `<span class="param-val number">${params.capital?.buckets_per_group ?? 1} bucket(s)</span>` },
+                { key: 'Max Position Capital', val: `<span class="param-val number highlight-blue">${fmtParamCurrency(params.atr_parameters?.position_max_capital ?? 25000)}</span>` },
+                { key: 'Min Position Shares', val: `<span class="param-val number">${params.atr_parameters?.position_min_shares ?? 100} shares</span>` },
+                { key: 'Risk Per Trade', val: `<span class="param-val number">${fmtParamPercent(params.atr_parameters?.position_risk_per_trade_pct ?? 0.005)}</span>` },
+                { key: 'ATR Position Sizing', val: fmtParamPill(params.atr_parameters?.use_atr_position_sizing) }
+            ]
+        },
+        // 2. Risk Management & Stops
+        {
+            category: 'risk',
+            icon: '🛑',
+            title: 'Risk Management & Stops',
+            desc: 'Hard stop floors, net profit target, and trailing ATR stop triggers',
+            rows: [
+                { key: 'Hard Stop Loss Floor', val: `<span class="param-val number highlight-purple">${fmtParamPercent(1 - (params.risk_management?.stop_loss_threshold ?? 0.95), false)} (${params.risk_management?.stop_loss_threshold ?? 0.95}x)</span>` },
+                { key: 'Net Profit Target', val: `<span class="param-val number highlight-green">${fmtParamPercent(params.risk_management?.profit_target_net ?? 0.015, true)}</span>` },
+                { key: 'ATR Stop Multiplier', val: `<span class="param-val number">${params.exit_logic?.atr_stop_multiplier ?? 2.0}x ATR</span>` },
+                { key: 'Trailing Stop %', val: `<span class="param-val number">${fmtParamPercent(params.atr_parameters?.trailing_stop_pct ?? 0.03)}</span>` },
+                { key: 'Activation Floor %', val: `<span class="param-val number">${fmtParamPercent(params.atr_parameters?.activation_floor_pct ?? 0.012)}</span>` },
+                { key: 'Trailing Stop ATR', val: `<span class="param-val number">${params.atr_parameters?.trailing_stop_atr_multiplier ?? 2.0}x ATR</span>` },
+                { key: 'Activation Floor ATR', val: `<span class="param-val number">${params.atr_parameters?.activation_floor_atr_multiplier ?? 1.5}x ATR</span>` },
+                { key: 'Max ATR Ratio Trailing', val: `<span class="param-val number">${params.atr_parameters?.max_atr_ratio_for_trailing ?? 2.0}x</span>` }
+            ]
+        },
+        // 3. Entry Filters & Timing
+        {
+            category: 'entry',
+            icon: '🎯',
+            title: 'Entry Filters & Timing',
+            desc: 'Multi-timeframe trend alignment, tick confirmation, and price floors',
+            rows: [
+                { key: 'MTF Lookback Bars', val: `<span class="param-val number">${params.entry_filters?.mtf_lookback_bars ?? 2} bars</span>` },
+                { key: 'MTF Bullish Threshold', val: `<span class="param-val number highlight-blue">${Number(params.entry_filters?.mtf_bullish_threshold ?? 0.5).toFixed(2)}</span>` },
+                { key: 'Confirmation Ticks', val: `<span class="param-val number">${params.entry_filters?.confirmation_ticks_required ?? 10} ticks</span>` },
+                { key: 'Min Confirmation Time', val: `<span class="param-val number">${params.entry_filters?.confirmation_min_seconds ?? 15} sec</span>` },
+                { key: 'Confirmation Mode', val: `<span class="param-pill tag">${params.entry_filters?.confirmation_mode ?? 'atr_max_floor'}</span>` },
+                { key: 'Min % Price Floor', val: `<span class="param-val number">${fmtParamPercent(params.entry_filters?.confirmation_min_pct_floor ?? 0.0008)}</span>` },
+                { key: 'Confirmation ATR Mult', val: `<span class="param-val number">${params.entry_filters?.confirmation_atr_multiplier ?? 0.2}x ATR</span>` },
+                { key: 'Breakout Lookback', val: `<span class="param-val number">${params.adaptive_entry?.lookback_bars_breakout ?? 2} bars (Normal ${params.adaptive_entry?.lookback_bars_normal ?? 4})</span>` }
+            ]
+        },
+        // 4. Covered Calls Overlay
+        {
+            category: 'calls',
+            icon: '📜',
+            title: 'Covered Calls Overlay',
+            desc: 'Options income overlay rules, delta filter, and expiration cadence',
+            rows: [
+                { key: 'Covered Calls Strategy', val: fmtParamPill(params.covered_calls?.use_covered_calls) },
+                { key: 'Eligible Regimes', val: fmtParamTags(params.covered_calls?.call_enabled_regimes || ['BULL', 'NEUTRAL']) },
+                { key: 'Target Expiration', val: `<span class="param-val number highlight-blue">${params.covered_calls?.call_expiration_days ?? 14} days</span>` },
+                { key: 'Min Option Premium', val: `<span class="param-val number highlight-green">${fmtParamPercent(params.covered_calls?.call_min_premium_pct ?? 0.006)}</span>` },
+                { key: 'Call Confirm Bars', val: `<span class="param-val number">${params.covered_calls?.call_confirmation_bars ?? 1} bar(s)</span>` },
+                { key: 'Delta Filter', val: fmtParamPill(params.covered_calls?.use_delta_filter, `${params.covered_calls?.min_delta ?? 0.25} - ${params.covered_calls?.max_delta ?? 0.35}`, 'DISABLED') },
+                { key: 'Profit Cushion ATR', val: `<span class="param-val number">${params.adaptive_covered_call?.base_profit_cushion_atr ?? 1.0}x ATR</span>` },
+                { key: 'Breakout Freeze Thresh', val: `<span class="param-val number">ADX ${params.adaptive_covered_call?.adx_trend_breakout_threshold ?? 25.0}</span>` }
+            ]
+        },
+        // 5. Regime & Macro Trend
+        {
+            category: 'regime',
+            icon: '🧭',
+            title: 'Regime & Macro Trend',
+            desc: 'ADX directional momentum, SMA 200 anchor, and neutral entry behavior',
+            rows: [
+                { key: 'Regime Filter', val: fmtParamPill(params.regime?.use_regime_filter) },
+                { key: 'ADX Period', val: `<span class="param-val number">${params.regime?.adx_period ?? 14} bars</span>` },
+                { key: 'ADX Trend Threshold', val: `<span class="param-val number highlight-green">${params.regime?.adx_trend_threshold ?? 22.0}</span>` },
+                { key: 'ADX Exit Threshold', val: `<span class="param-val number highlight-purple">${params.regime?.adx_exit_threshold ?? 18.0}</span>` },
+                { key: 'Min DI Spread (+/-)', val: `<span class="param-val number">${params.regime?.di_spread_min ?? 3.0} pts</span>` },
+                { key: 'SMA 200 Macro Anchor', val: fmtParamPill(params.regime?.adx_regime_sma200_anchor, 'ACTIVE (Bull/Bear)', 'DISABLED') },
+                { key: 'Neutral Regime Entries', val: fmtParamPill(params.neutral_regime?.use_neutral_regime_entries) },
+                { key: 'Neutral Entry Mode', val: `<span class="param-pill tag">${params.neutral_regime?.neutral_entry_mode ?? 'aggressive'}</span>` }
+            ]
+        },
+        // 6. Adaptive PnL & Scaling
+        {
+            category: 'adaptive',
+            icon: '⚡',
+            title: 'Adaptive PnL & Scaling',
+            desc: 'Dynamic profit locking, giveback protection, streak dampeners, and scaling',
+            rows: [
+                { key: 'Adaptive PnL Engine', val: fmtParamPill(params.adaptive_pnl?.enable_adaptive_pnl) },
+                { key: 'Streak Loss Dampener', val: fmtParamPill(params.adaptive_pnl?.streak_dampener_enabled, `MAX ${params.adaptive_pnl?.max_consecutive_losses ?? 3} (${(1 - (params.adaptive_pnl?.streak_reduction_factor ?? 0.5)) * 100}% CUT)`, 'DISABLED') },
+                { key: 'Break-Even Stop Lock', val: `<span class="param-val number highlight-blue">${params.adaptive_pnl?.break_even_lock_r_multiple ?? 1.0}R Multiple</span>` },
+                { key: 'Scale-Out Target', val: `<span class="param-val number">${params.adaptive_pnl?.scale_out_target_r ?? 1.5}R (Take ${fmtParamPercent(params.adaptive_pnl?.scale_out_pct ?? 0.5)})</span>` },
+                { key: 'Pyramiding on Trend', val: fmtParamPill(params.adaptive_pnl?.enable_pyramiding, `TRIG ${params.adaptive_pnl?.pyramid_trigger_r_multiple ?? 1.2}R (+${fmtParamPercent(params.adaptive_pnl?.pyramid_add_pct ?? 0.5)})`, 'DISABLED') },
+                { key: 'Peak Giveback Shield', val: fmtParamPill(params.adaptive_pnl?.peak_giveback_shield_enabled, `@ ${params.adaptive_pnl?.peak_giveback_min_r ?? 2.0}R (LOCK ${fmtParamPercent(params.adaptive_pnl?.peak_giveback_protect_pct ?? 0.75)})`, 'DISABLED') },
+                { key: 'Re-Entry Suppression', val: fmtParamPill(params.adaptive_pnl?.re_entry_suppression_enabled, `${params.adaptive_pnl?.re_entry_cooldown_bars ?? 4} BARS COOLDOWN`, 'DISABLED') },
+                { key: 'Time Decay Stop', val: fmtParamPill(params.adaptive_pnl?.time_decay_enabled, `${params.adaptive_pnl?.time_decay_max_days ?? 10}d (TIGHTEN ${fmtParamPercent(params.adaptive_pnl?.time_decay_tighten_pct ?? 0.5)})`, 'DISABLED') }
+            ]
+        },
+        // 7. Exits & Threshold Coordination
+        {
+            category: 'coordination',
+            icon: '🔄',
+            title: 'Exits & Threshold Coordination',
+            desc: 'Coordination between stock exit thresholds, covered call triggers, and time limits',
+            rows: [
+                { key: 'Min Move for Call', val: `<span class="param-val number">${params.threshold_coordination?.min_move_for_call_atr ?? 1.0}x ATR / ${fmtParamPercent(params.threshold_coordination?.min_move_for_call_absolute_pct ?? 0.001)}</span>` },
+                { key: 'Take Profit (With Call)', val: `<span class="param-val number highlight-green">${params.threshold_coordination?.take_profit_with_call_atr ?? 3.0}x ATR / ${fmtParamPercent(params.threshold_coordination?.take_profit_absolute_pct ?? 0.005)}</span>` },
+                { key: 'Take Profit (No Call)', val: `<span class="param-val number highlight-green">${params.threshold_coordination?.take_profit_without_call_atr ?? 6.0}x ATR</span>` },
+                { key: 'Max Holding Hours', val: `<span class="param-val number">${params.threshold_coordination?.max_hold_hours ? params.threshold_coordination.max_hold_hours + ' hrs' : 'Indefinite (0.0)'}</span>` },
+                { key: 'SMA Slope Exit', val: fmtParamPill(params.exit_logic?.use_sma_slope_exit, `THRESH ${params.exit_logic?.sma_slope_threshold ?? -0.001}`, 'DISABLED') },
+                { key: 'Use ATR Targets', val: fmtParamPill(params.exit_logic?.use_atr_targets) }
+            ]
+        },
+        // 8. Security Profile & Behavior
+        {
+            category: 'security',
+            icon: '🛡️',
+            title: 'Security Profile & Behavior',
+            desc: 'Asset archetype, market hours rules, earnings protection, and orchestrator',
+            rows: [
+                { key: 'Asset Archetype', val: `<span class="param-pill tag">${params.security_profile?.asset_archetype ?? 'EQUITY'}</span>` },
+                { key: 'Extended Hours Trading', val: fmtParamPill(params.trading_behavior?.allow_extended_hours, 'ALLOWED', 'DISABLED') },
+                { key: 'Short Position Entries', val: fmtParamPill(params.trading_behavior?.allow_short_entries, 'ALLOWED', 'DISABLED') },
+                { key: 'Earnings Freeze', val: fmtParamPill(params.security_profile?.enable_earnings_freeze, 'ACTIVE (AUTO-FREEZE)', 'DISABLED') },
+                { key: 'Ex-Dividend Shield', val: fmtParamPill(params.security_profile?.enable_ex_dividend_shield, 'ACTIVE', 'DISABLED') },
+                { key: 'Strategy Intent', val: `<span class="param-pill tag">${params.orchestrator?.strategy_intent ?? 'SURFACE_ALL'}</span>` },
+                { key: 'Macro Benchmark & VIX', val: `<span class="param-val highlight-blue">${params.macro_signals?.benchmark_symbol ?? 'SPY'} (VIX ${params.macro_signals?.vix_threshold_moderate ?? 15.0}/${params.macro_signals?.vix_threshold_high ?? 25.0})</span>` }
+            ]
+        }
+    ];
+
+    gridEl.innerHTML = cards.map(c => `
+        <div class="param-card ${currentParamCategory !== 'all' && currentParamCategory !== c.category ? 'hidden-by-filter' : ''}" data-category="${c.category}">
+            <div class="param-card-header">
+                <div class="param-card-icon">${c.icon}</div>
+                <div class="param-card-title">${c.title}</div>
+            </div>
+            <div class="param-card-desc">${c.desc}</div>
+            <div class="param-items-list">
+                ${c.rows.map(r => `
+                    <div class="param-row">
+                        <span class="param-key">${r.key}</span>
+                        ${r.val}
+                    </div>
+                `).join('')}
+            </div>
+        </div>
+    `).join('');
 }
 
 /**
@@ -535,6 +955,39 @@ function attachEventListeners() {
     chartBtns.forEach((btn, index) => {
         btn.addEventListener('click', (e) => handleChartButtonClick(e, index));
     });
+
+    // Bot Parameters Category Tabs
+    const tabButtons = document.querySelectorAll('.param-tab');
+    tabButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            tabButtons.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            const category = btn.getAttribute('data-category');
+            currentParamCategory = category;
+
+            document.querySelectorAll('.param-card').forEach(card => {
+                if (category === 'all' || card.getAttribute('data-category') === category) {
+                    card.classList.remove('hidden-by-filter');
+                } else {
+                    card.classList.add('hidden-by-filter');
+                }
+            });
+        });
+    });
+
+    // Bot Parameters Collapse / Expand toggle
+    const toggleBtn = document.getElementById('toggleParamsBtn');
+    const paramsBody = document.getElementById('paramsBody');
+    const toggleIcon = document.getElementById('toggleParamsIcon');
+    const toggleText = document.getElementById('toggleParamsText');
+
+    if (toggleBtn && paramsBody) {
+        toggleBtn.addEventListener('click', () => {
+            const isCollapsed = paramsBody.classList.toggle('collapsed');
+            if (toggleIcon) toggleIcon.textContent = isCollapsed ? '▼' : '▲';
+            if (toggleText) toggleText.textContent = isCollapsed ? 'Expand' : 'Collapse';
+        });
+    }
 }
 
 /**
