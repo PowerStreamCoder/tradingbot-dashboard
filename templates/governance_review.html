@@ -7,7 +7,7 @@
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚖️</text></svg>">
     <link rel="stylesheet" href="/static/css/bot_focus.css">
     <link rel="stylesheet" href="/static/css/learning_review.css">
-    <link rel="stylesheet" href="/static/css/governance_review.css">
+    <link rel="stylesheet" href="/static/css/governance_review.css?v=2.2.0">
 </head>
 <body>
     <div class="learning-container">
@@ -100,26 +100,60 @@
 
         <!-- Applied Changes Ledger -->
         <section class="section-title">
-            <h2>Applied Changes Ledger</h2>
-            <p>Unified audit trail of every correction (adaptive / decoder / learning).</p>
+            <div class="section-header-flex">
+                <div>
+                    <h2>Applied Changes Ledger</h2>
+                    <p>Unified audit trail of every correction (adaptive / decoder / learning).</p>
+                </div>
+                <div class="ledger-header-badges">
+                    <span class="badge-count" id="ledger-count-badge">0 records</span>
+                </div>
+            </div>
         </section>
+
+        <!-- Ledger Controls & Filters -->
+        <div class="ledger-toolbar">
+            <div class="ledger-search-box">
+                <span class="search-icon">🔍</span>
+                <input type="text" id="ledger-search" placeholder="Search parameters, fields, or symbols..." oninput="filterLedger()">
+            </div>
+            <div class="ledger-filter-group">
+                <label for="ledger-engine-filter">Engine:</label>
+                <select id="ledger-engine-filter" onchange="filterLedger()">
+                    <option value="">All Engines</option>
+                    <option value="decoder">Exit Decoder (L1)</option>
+                    <option value="adaptive">Adaptive Engine (L0)</option>
+                    <option value="learning">Learning Engine (L2)</option>
+                    <option value="operator">Operator (Manual)</option>
+                </select>
+            </div>
+            <div class="ledger-filter-group">
+                <label for="ledger-symbol-filter">Symbol:</label>
+                <select id="ledger-symbol-filter" onchange="filterLedger()">
+                    <option value="">All Symbols</option>
+                </select>
+            </div>
+            <button class="btn-reset-filter" onclick="resetLedgerFilters()">Reset</button>
+        </div>
+
         <div class="table-card">
             <div class="table-scroll">
-                <table class="data-table">
+                <table class="data-table ledger-table">
                     <thead>
                         <tr>
-                            <th>Applied</th>
-                            <th>Symbol</th>
-                            <th>Engine</th>
-                            <th>Field</th>
-                            <th>Old</th>
-                            <th>New</th>
-                            <th>Decision</th>
-                            <th>Status</th>
+                            <th style="width: 32px;" title="Click row to expand details"></th>
+                            <th title="Timestamp when change was written to live config">Applied At</th>
+                            <th title="Target trading bot symbol">Symbol</th>
+                            <th title="Authority and pipeline tier that authored this change">Source Engine</th>
+                            <th style="min-width: 260px;" title="Strategy parameter updated and human-readable explanation">Parameter / Field</th>
+                            <th title="Previous parameter setting before change">Previous (Old)</th>
+                            <th title="Updated parameter setting now active">Applied (New)</th>
+                            <th title="Approval mechanism or Profit Factor gate verdict">Governance Decision</th>
+                            <th title="Pipeline lifecycle status">Status</th>
                         </tr>
                     </thead>
                     <tbody id="ledger-body">
-                        <tr><td colspan="8" class="loading">Loading ledger...</td></tr>
+                        <tr><td colspan="9" class="loading">Loading ledger...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -153,12 +187,48 @@
 
         <!-- Exit Telemetry Archive -->
         <section class="section-title">
-            <h2>Exit Telemetry Session Archive</h2>
-            <p>Per-session reachability inventory (dead / shadowed / fired) feeds the nightly re-analysis.</p>
+            <div class="section-header-flex">
+                <div>
+                    <h2>Exit Telemetry Session Archive</h2>
+                    <p>Per-session reachability inventory (dead / shadowed / fired) feeds the nightly re-analysis.</p>
+                </div>
+                <div class="ledger-header-badges">
+                    <span class="badge-count" id="telemetry-count-badge">0 sessions</span>
+                </div>
+            </div>
         </section>
-        <div class="gov-hint-banner">
-            ℹ️ <strong>Read-Only Diagnostics:</strong> Per-session exit branch reachability metrics (evaluated, fired, proximity) recorded at session archive. This diagnostic data feeds nightly learning re-analysis.
+
+        <!-- Informative Diagnostic Hint Banner with Legend -->
+        <div class="gov-hint-banner telemetry-hint-banner">
+            <div class="hint-header">
+                <strong>ℹ️ Diagnostic Reachability Inventory &amp; Proximity Saturation:</strong>
+            </div>
+            <div class="telemetry-legend">
+                <span class="legend-item"><span class="chip chip-fired">🟢 Fired</span> Executed an active exit in this session</span>
+                <span class="legend-item"><span class="chip chip-shadowed">🟡 Shadowed</span> Not reached (preempted by higher-priority rule or conditions not tested)</span>
+                <span class="legend-item"><span class="chip chip-dead">🟣 Evaluated</span> Tested by cascade but price threshold wasn't crossed</span>
+                <span class="legend-item"><span class="chip chip-ineligible">⚪ Ineligible</span> Disabled in bot config</span>
+            </div>
+            <div class="hint-subtext">
+                <strong>Peak Proximity Saturation:</strong> Measures how close the position's price came to triggering each exit threshold (0–100%). Detects near-misses (&gt;80%) before a rule ever fires.
+            </div>
         </div>
+
+        <!-- Telemetry Toolbar -->
+        <div class="ledger-toolbar telemetry-toolbar">
+            <div class="ledger-search-box">
+                <span class="search-icon">🔍</span>
+                <input type="text" id="telemetry-search" placeholder="Search exit rules or branches..." oninput="filterTelemetrySessions()">
+            </div>
+            <div class="ledger-filter-group">
+                <label for="telemetry-symbol-filter">Symbol:</label>
+                <select id="telemetry-symbol-filter" onchange="filterTelemetrySessions()">
+                    <option value="">All Symbols</option>
+                </select>
+            </div>
+            <button class="btn-reset-filter" onclick="resetTelemetryFilters()">Reset</button>
+        </div>
+
         <div id="telemetry-container">
             <div class="loading">Loading sessions...</div>
         </div>
@@ -168,6 +238,6 @@
 
     <script src="/static/js/utils.js"></script>
     <script src="/static/js/config.js?v=2.0.0"></script>
-    <script src="/static/js/governance_review.js?v=1.0.0"></script>
+    <script src="/static/js/governance_review.js?v=2.2.0"></script>
 </body>
 </html>
