@@ -38,48 +38,139 @@ async function fetchJSON(url) {
 
 /* ------------------------------- governance ------------------------------- */
 
+function formatBranchKindCell(branch, kind) {
+    const bKey = String(branch || '').toLowerCase().trim();
+    const branchMeta = (typeof EXIT_BRANCH_METADATA !== 'undefined' && EXIT_BRANCH_METADATA[bKey]) ? EXIT_BRANCH_METADATA[bKey] : {
+        name: bKey ? bKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) : 'General Rule',
+        icon: '🌿',
+        category: 'Exit Rule'
+    };
+
+    const kKey = String(kind || '').toLowerCase().trim();
+    let kindBadge = '';
+    if (kKey === 'enable') {
+        kindBadge = `<span class="kind-badge kind-enable">⚡ Enable Rule</span>`;
+    } else if (kKey === 'disable') {
+        kindBadge = `<span class="kind-badge kind-disable">⛔ Disable Rule</span>`;
+    } else if (kKey === 'tune') {
+        kindBadge = `<span class="kind-badge kind-tune">🔧 Tune Threshold</span>`;
+    } else if (kKey === 'reorder') {
+        kindBadge = `<span class="kind-badge kind-reorder">↕️ Reorder Priority</span>`;
+    } else if (kKey) {
+        kindBadge = `<span class="kind-badge kind-general">${escapeHtml(kKey)}</span>`;
+    }
+
+    return `
+        <div class="branch-kind-cell">
+            <div class="branch-title-row">
+                <span class="branch-icon">${branchMeta.icon}</span>
+                <strong class="branch-name">${escapeHtml(branchMeta.name)}</strong>
+            </div>
+            <code class="branch-raw">${escapeHtml(branch || 'general')}</code>
+            <div class="branch-kind-row">${kindBadge}</div>
+        </div>
+    `;
+}
+
 function renderProposalChanges(changes) {
     if (!changes || !changes.length) {
-        return `<div class="empty-state" style="padding: 12px;">No pending parameter changes proposed.</div>`;
+        return `<div class="empty-state" style="padding: 24px;">No pending parameter changes proposed.</div>`;
     }
     const rows = changes.map(ch => {
-        const fieldName = ch.field ? `<code>${escapeHtml(ch.field)}</code>` : `<em>Priority Order Update</em>`;
-        const valTransition = ch.field != null
-            ? `<div class="val-transition"><span class="old-val">${escapeHtml(ch.current ?? '—')}</span><span class="val-arrow">→</span><span class="new-val">${escapeHtml(ch.proposed ?? '—')}</span></div>`
-            : `Priority → <strong>${escapeHtml(ch.proposed_priority ?? '—')}</strong>`;
+        const branchCell = formatBranchKindCell(ch.branch, ch.kind);
+        const fieldCell = ch.field ? formatFieldCell(ch.field) : `
+            <div class="field-cell">
+                <div class="field-title-row">
+                    <span class="field-title">Cascade Priority Ordering</span>
+                    <span class="field-cat cat-priority">Evaluation Priority</span>
+                </div>
+                <code class="field-code">cascade_priority</code>
+                <div class="field-desc">Order in which exit conditions are evaluated by the cascade</div>
+            </div>`;
 
-        const evidence = ch.evidence ? `<div class="evidence-text">${escapeHtml(ch.evidence)}</div>` : '';
-        const risk = ch.risk ? `<div class="risk-warning">⚠ ${escapeHtml(ch.risk)}</div>` : '';
+        let currentFormatted = '';
+        let proposedFormatted = '';
+
+        if (ch.field != null) {
+            const isEnableKind = String(ch.kind || '').toLowerCase() === 'enable';
+            let currVal = ch.current;
+            if ((currVal === null || currVal === undefined || currVal === '') && isEnableKind) {
+                currVal = false;
+            }
+            let propVal = ch.proposed;
+            if ((propVal === null || propVal === undefined || propVal === '') && isEnableKind) {
+                propVal = true;
+            }
+            currentFormatted = formatValDetailed(currVal, ch.field);
+            proposedFormatted = formatValDetailed(propVal, ch.field);
+        } else {
+            currentFormatted = `<span class="val-pill val-metric">P${escapeHtml(ch.current_priority ?? '—')}</span>`;
+            proposedFormatted = `<span class="val-pill val-on">P${escapeHtml(ch.proposed_priority ?? '—')}</span>`;
+        }
+
+        const valTransition = `
+            <div class="val-transition-card">
+                <div class="val-state-box val-current">
+                    <span class="val-state-label">CURRENT</span>
+                    <div class="val-content">${currentFormatted}</div>
+                </div>
+                <div class="val-arrow-box">➔</div>
+                <div class="val-state-box val-proposed">
+                    <span class="val-state-label">PROPOSED</span>
+                    <div class="val-content">${proposedFormatted}</div>
+                </div>
+            </div>
+        `;
+
+        const evidence = ch.evidence ? `
+            <div class="proposal-evidence">
+                <div class="evidence-header">
+                    <span class="evidence-icon">📊</span>
+                    <strong>Observed Evidence</strong>
+                </div>
+                <div class="evidence-body">${escapeHtml(ch.evidence)}</div>
+            </div>` : '';
+
+        const cleanRisk = ch.risk ? String(ch.risk).replace(/^⚠️?\s*/, '') : '';
+        const risk = cleanRisk ? `
+            <div class="proposal-risk">
+                <div class="risk-header">
+                    <span class="risk-icon">⚠️</span>
+                    <strong>Governance &amp; Safety Impact</strong>
+                </div>
+                <div class="risk-body">${escapeHtml(cleanRisk)}</div>
+            </div>` : '';
 
         return `
             <tr>
-                <td>
-                    ${chip(ch.kind || 'tune', ch.branch || 'general')}
-                    <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">${escapeHtml(ch.kind || '')}</div>
-                </td>
-                <td>${fieldName}</td>
-                <td>${valTransition}</td>
-                <td>
-                    ${evidence}
-                    ${risk}
+                <td class="col-branch">${branchCell}</td>
+                <td class="col-field">${fieldCell}</td>
+                <td class="col-transition">${valTransition}</td>
+                <td class="col-evidence">
+                    <div class="proposal-evidence-stack">
+                        ${evidence}
+                        ${risk}
+                    </div>
                 </td>
             </tr>`;
     }).join('');
 
     return `
-        <table class="gov-changes-table">
-            <thead>
-                <tr>
-                    <th style="width: 15%;">Branch / Kind</th>
-                    <th style="width: 35%;">Parameter Field</th>
-                    <th style="width: 20%;">Current → Proposed</th>
-                    <th style="width: 30%;">Evidence & Risk Warning</th>
-                </tr>
-            </thead>
-            <tbody>
-                ${rows}
-            </tbody>
-        </table>`;
+        <div class="gov-table-wrapper">
+            <table class="gov-changes-table">
+                <thead>
+                    <tr>
+                        <th style="width: 20%;">Branch / Kind</th>
+                        <th style="width: 30%;">Parameter Field</th>
+                        <th style="width: 22%;">Current → Proposed</th>
+                        <th style="width: 28%;">Evidence &amp; Risk Warning</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rows}
+                </tbody>
+            </table>
+        </div>`;
 }
 
 async function loadGovernance() {
@@ -1257,6 +1348,41 @@ const EXIT_BRANCH_METADATA = {
         icon: '⏳',
         priority: 9,
         desc: 'Opportunity-cost time exit when trade reaches maximum allowed hours'
+    },
+    'time_decay': {
+        name: 'Time Decay Exit',
+        category: 'Time Exit',
+        icon: '⏳',
+        priority: 9,
+        desc: 'Liquidates or tightens stops on stale positions after max hold duration'
+    },
+    'intraday_shield': {
+        name: 'Intraday Pattern Shield',
+        category: 'Pattern Shield',
+        icon: '🛡️',
+        priority: 5,
+        desc: 'Protects position against adverse intraday patterns (ORB breakout, gap fade, morning reversal)'
+    },
+    'intraday_pattern': {
+        name: 'Intraday Pattern Shield',
+        category: 'Pattern Shield',
+        icon: '🛡️',
+        priority: 5,
+        desc: 'Protects position against adverse intraday patterns (ORB breakout, gap fade, morning reversal)'
+    },
+    'giveback': {
+        name: 'Peak Giveback Protection',
+        category: 'Profit Lock',
+        icon: '📉',
+        priority: 5,
+        desc: 'Protects unrealized peak profit against sudden reversal from highs'
+    },
+    'break_even': {
+        name: 'Break-Even Stop Lock',
+        category: 'Risk & Stops',
+        icon: '🔒',
+        priority: 4,
+        desc: 'Moves stop loss to entry price after initial gain milestone'
     },
     'hold': {
         name: 'Position Holding State',
