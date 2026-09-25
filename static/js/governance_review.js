@@ -38,7 +38,7 @@ async function fetchJSON(url) {
 
 /* ------------------------------- governance ------------------------------- */
 
-function formatBranchKindCell(branch, kind) {
+function formatBranchKindCell(branch, kind, attempts = 1, isClamped = false) {
     const bKey = String(branch || '').toLowerCase().trim();
     const branchMeta = (typeof EXIT_BRANCH_METADATA !== 'undefined' && EXIT_BRANCH_METADATA[bKey]) ? EXIT_BRANCH_METADATA[bKey] : {
         name: bKey ? bKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) : 'General Rule',
@@ -48,7 +48,9 @@ function formatBranchKindCell(branch, kind) {
 
     const kKey = String(kind || '').toLowerCase().trim();
     let kindBadge = '';
-    if (kKey === 'enable') {
+    if (isClamped) {
+        kindBadge = `<span class="kind-badge kind-clamped" style="background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3);">⚠️ Floor Clamped</span>`;
+    } else if (kKey === 'enable') {
         kindBadge = `<span class="kind-badge kind-enable">⚡ Enable Rule</span>`;
     } else if (kKey === 'disable') {
         kindBadge = `<span class="kind-badge kind-disable">⛔ Disable Rule</span>`;
@@ -60,11 +62,16 @@ function formatBranchKindCell(branch, kind) {
         kindBadge = `<span class="kind-badge kind-general">${escapeHtml(kKey)}</span>`;
     }
 
+    const attemptsBadge = (attempts && attempts > 1)
+        ? `<span class="badge-gravity" style="display: inline-flex; align-items: center; gap: 3px; font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); font-weight: 600;">🔥 ${attempts} attempts</span>`
+        : '';
+
     return `
         <div class="branch-kind-cell">
             <div class="branch-title-row">
                 <span class="branch-icon">${branchMeta.icon}</span>
                 <strong class="branch-name">${escapeHtml(branchMeta.name)}</strong>
+                ${attemptsBadge}
             </div>
             <code class="branch-raw">${escapeHtml(branch || 'general')}</code>
             <div class="branch-kind-row">${kindBadge}</div>
@@ -77,7 +84,7 @@ function renderProposalChanges(changes) {
         return `<div class="empty-state" style="padding: 24px;">No pending parameter changes proposed.</div>`;
     }
     const rows = changes.map(ch => {
-        const branchCell = formatBranchKindCell(ch.branch, ch.kind);
+        const branchCell = formatBranchKindCell(ch.branch, ch.kind, ch.attempts || 1, Boolean(ch.boundary_clamped));
         const fieldCell = ch.field ? formatFieldCell(ch.field) : `
             <div class="field-cell">
                 <div class="field-title-row">
@@ -433,9 +440,12 @@ function formatFieldInfo(fieldName) {
     };
 }
 
-function formatFieldCell(fieldName) {
+function formatFieldCell(fieldName, attempts = 1) {
     const meta = formatFieldInfo(fieldName);
     const catClass = 'cat-' + meta.category.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const attemptsBadge = (attempts && attempts > 1)
+        ? `<div style="margin-top: 4px;"><span class="badge-attempts" style="display: inline-flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(139, 92, 246, 0.15); color: #a78bfa; border: 1px solid rgba(139, 92, 246, 0.3); font-weight: 600;">⚡ ${attempts} attempts</span></div>`
+        : '';
     return `
         <div class="field-cell" title="${escapeHtml(meta.desc)}">
             <div class="field-title-row">
@@ -444,6 +454,7 @@ function formatFieldCell(fieldName) {
             </div>
             <code class="field-code">${escapeHtml(meta.code)}</code>
             <div class="field-desc">${escapeHtml(meta.desc)}</div>
+            ${attemptsBadge}
         </div>
     `;
 }
@@ -622,6 +633,7 @@ function renderLedgerRows(changes) {
         const docId = c.doc_id || `change-${idx}`;
         const isExpanded = expandedLedgerRows.has(docId);
         const meta = formatFieldInfo(c.field);
+        const attempts = c.attempts || (c.evidence && c.evidence.attempts) || 1;
 
         html.push(`
             <tr class="ledger-row ${isExpanded ? 'row-expanded' : ''}" onclick="toggleLedgerDetail('${escapeHtml(docId)}')">
@@ -631,7 +643,7 @@ function renderLedgerRows(changes) {
                 <td>${formatTimestamp(c.applied_at)}</td>
                 <td>${formatSymbol(c.symbol)}</td>
                 <td>${formatEngineBadge(c.engine)}</td>
-                <td>${formatFieldCell(c.field)}</td>
+                <td>${formatFieldCell(c.field, attempts)}</td>
                 <td>${formatValDetailed(c.old_value, c.field)}</td>
                 <td>${formatValDetailed(c.new_value, c.field)}</td>
                 <td>${formatDecisionBadge(c.decision, c.engine, c.status)}</td>
@@ -674,6 +686,10 @@ function renderLedgerRows(changes) {
                                     <div class="detail-meta-item">
                                         <span class="detail-label">Config Fingerprint:</span>
                                         <code>${escapeHtml(c.config_fingerprint || '—')}</code>
+                                    </div>
+                                    <div class="detail-meta-item">
+                                        <span class="detail-label">Evaluation Attempts:</span>
+                                        <span style="font-weight: 600; color: #a78bfa;">${escapeHtml(String(attempts))}</span>
                                     </div>
                                     <div class="detail-meta-item">
                                         <span class="detail-label">Document ID:</span>
