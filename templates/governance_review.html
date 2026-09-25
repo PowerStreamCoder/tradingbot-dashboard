@@ -263,9 +263,11 @@
             </div>
             <div class="telemetry-legend">
                 <span class="legend-item"><span class="chip chip-fired">🟢 Fired</span> Executed an active exit in this session</span>
-                <span class="legend-item"><span class="chip chip-shadowed">🟡 Shadowed</span> Not reached (preempted by higher-priority rule or conditions not tested)</span>
+                <span class="legend-item"><span class="chip chip-contended">⚡ Contended</span> Condition met, but preempted by higher-priority rule in arbitration</span>
                 <span class="legend-item"><span class="chip chip-dead">🟣 Evaluated</span> Tested by cascade but price threshold wasn't crossed</span>
-                <span class="legend-item"><span class="chip chip-ineligible">⚪ Ineligible</span> Disabled in bot config</span>
+                <span class="legend-item"><span class="chip chip-shadowed">🟡 Shadowed</span> Downstream rule not reached (preempted by higher-priority rule)</span>
+                <span class="legend-item"><span class="chip chip-idle">⚪ Idle</span> Unexercised (session had no active evaluations)</span>
+                <span class="legend-item"><span class="chip chip-ineligible">🚫 Ineligible</span> Disabled in bot config</span>
             </div>
             <div class="hint-subtext">
                 <strong>Peak Proximity Saturation:</strong> Measures how close the position's price came to triggering each exit threshold (0–100%). Detects near-misses (&gt;80%) before a rule ever fires.

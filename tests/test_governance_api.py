@@ -95,10 +95,13 @@ class TestGovernanceApi(unittest.TestCase):
         self.db.collections["exit_telemetry_snapshots"] = {
             "NVDA_20260921_x": {"symbol": "NVDA", "session_id": "x",
                                 "archived_at": "2026-09-21T22:00:00Z",
-                                "inventory": {"branches": {}}},
+                                "inventory": {"branches": {"profit_target": {"evaluated": 10, "fired": 1}}}},
             "NVDA_20260920_x": {"symbol": "NVDA", "session_id": "x",
                                 "archived_at": "2026-09-20T22:00:00Z",
-                                "inventory": {"branches": {}}},
+                                "inventory": {"branches": {"stop_loss": {"evaluated": 5, "fired": 0}}}},
+            "NVDA_20260919_empty": {"symbol": "NVDA", "session_id": "empty",
+                                    "archived_at": "2026-09-19T22:00:00Z",
+                                    "inventory": {"branches": {}}},
         }
 
         self.client_patch = patch("main.firestore.Client", return_value=self.db)
@@ -154,6 +157,10 @@ class TestGovernanceApi(unittest.TestCase):
         sessions = r.json()["sessions"]
         assert len(sessions) == 2
         assert sessions[0]["archived_at"] == "2026-09-21T22:00:00Z"
+
+        # include_empty=True returns all 3 including the empty session
+        r_all = self._get("/api/exit-telemetry/snapshots", params={"include_empty": True})
+        assert len(r_all.json()["sessions"]) == 3
 
         r2 = self._get("/api/exit-telemetry/snapshots", params={"limit": 1})
         assert len(r2.json()["sessions"]) == 1

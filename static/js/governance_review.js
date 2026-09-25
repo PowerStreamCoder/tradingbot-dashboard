@@ -1419,10 +1419,14 @@ const EXIT_BRANCH_METADATA = {
     }
 };
 
-function formatBranchStatus(status, reason = '') {
+function formatBranchStatus(status, reason = '', contendedCount = 0) {
     const s = String(status || '').toLowerCase().trim();
     if (s === 'fired') {
         return `<span class="chip chip-fired" title="This branch actively executed a trade exit in this session">🟢 Fired</span>`;
+    }
+    if (s === 'contended') {
+        const countTxt = contendedCount > 1 ? ` (${contendedCount}x)` : '';
+        return `<span class="chip chip-contended" title="Arbitration Contention: Exit condition was met${contendedCount > 0 ? ` ${contendedCount} time(s)` : ''}, but preempted by a higher-priority cascade rule">⚡ Contended${countTxt}</span>`;
     }
     if (s === 'eligible') {
         return `<span class="chip chip-eligible" title="Branch was active and evaluated in cascade">🔵 Eligible</span>`;
@@ -1431,10 +1435,13 @@ function formatBranchStatus(status, reason = '') {
         return `<span class="chip chip-dead" title="Evaluated in cascade, but threshold condition was never met">🟣 Evaluated</span>`;
     }
     if (s === 'shadowed') {
-        return `<span class="chip chip-shadowed" title="Not reached; preempted by higher-priority rule or conditions not tested">🟡 Shadowed</span>`;
+        return `<span class="chip chip-shadowed" title="Not reached; preempted by higher-priority rule before this rule could be evaluated">🟡 Shadowed</span>`;
+    }
+    if (s === 'idle' || s === 'unexercised') {
+        return `<span class="chip chip-idle" title="Unexercised: Session had no active trade evaluations or rule was never tested">⚪ Idle</span>`;
     }
     if (s === 'ineligible') {
-        return `<span class="chip chip-ineligible" title="${escapeHtml(reason || 'Branch disabled in configuration')}">⚪ Ineligible</span>`;
+        return `<span class="chip chip-ineligible" title="${escapeHtml(reason || 'Branch disabled in configuration')}">🚫 Ineligible</span>`;
     }
     return chip(status, status ? status.toUpperCase() : '—');
 }
@@ -1550,17 +1557,24 @@ function renderTelemetrySessions(sessions) {
         // Compute session aggregate stats
         let totalFired = 0;
         let totalEvaluated = 0;
+        let totalContended = 0;
         let maxProximity = 0;
         let firedBranches = [];
+        let contendedBranches = [];
 
         branchKeys.forEach(branch => {
             const b = branches[branch] || {};
             const f = Number(b.fired || 0);
             const e = Number(b.evaluated || 0);
+            const c = Number(b.contended_count || 0);
             const p = Number(b.proximity || 0);
             if (f > 0) {
                 totalFired += f;
-                firedBranches.push(branch);
+                firedBranches.push(EXIT_BRANCH_METADATA[branch]?.name || branch);
+            }
+            if (c > 0) {
+                totalContended += c;
+                contendedBranches.push(`${EXIT_BRANCH_METADATA[branch]?.name || branch} (${c}x)`);
             }
             totalEvaluated += e;
             if (p > maxProximity) maxProximity = p;
@@ -1569,7 +1583,7 @@ function renderTelemetrySessions(sessions) {
         const branchRows = branchKeys.map(branch => {
             const b = branches[branch] || {};
             const statusStr = String(b.status || 'shadowed').toLowerCase();
-            const statusBadge = formatBranchStatus(statusStr, b.ineligible_reason);
+            const statusBadge = formatBranchStatus(statusStr, b.ineligible_reason, b.contended_count);
 
             return `
                 <tr class="branch-row">
@@ -1589,8 +1603,12 @@ function renderTelemetrySessions(sessions) {
                         <div class="session-stats-badges">
                             <span class="session-badge badge-branches">${branchKeys.length} Branches</span>
                             <span class="session-badge ${totalFired > 0 ? 'badge-fired' : 'badge-neutral'}">
-                                ${totalFired > 0 ? `🎯 ${totalFired} Fired (${firedBranches.map(b => (EXIT_BRANCH_METADATA[b]?.name || b)).join(', ')})` : '0 Fired'}
+                                ${totalFired > 0 ? `🎯 ${totalFired} Fired (${firedBranches.join(', ')})` : '0 Fired'}
                             </span>
+                            ${totalContended > 0 ? `
+                            <span class="session-badge badge-contended" title="Arbitration Contention: condition met but preempted by upstream rule">
+                                ⚡ ${totalContended} Contended (${contendedBranches.join(', ')})
+                            </span>` : ''}
                             <span class="session-badge ${totalEvaluated > 0 ? 'badge-active' : 'badge-neutral'}">
                                 ⚡ ${totalEvaluated} Total Evaluations
                             </span>
