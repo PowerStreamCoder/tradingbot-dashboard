@@ -227,12 +227,22 @@ function renderProposedRule(rule, configChanges, finding) {
 
     // Kind / Reachability Issue if present
     if (rule.kind) {
-        const isDead = rule.kind === 'dead';
-        const kindLabel = isDead ? '🟣 Dead (Evaluated but Unfired)' : '🟡 Shadowed (Never Reached by Cascade)';
+        let kindLabel = '';
+        let chipClass = '';
+        if (rule.kind === 'dead') {
+            kindLabel = '🟣 Dead (Evaluated but Unfired)';
+            chipClass = 'chip-dead';
+        } else if (rule.kind === 'contended') {
+            kindLabel = '⚡ Contended (Satisfied but Preempted)';
+            chipClass = 'chip-contended';
+        } else {
+            kindLabel = '🟡 Shadowed (Never Reached by Cascade)';
+            chipClass = 'chip-shadowed';
+        }
         cards.push(`
             <div class="rule-meta-card">
                 <span class="meta-label">Diagnostic Status</span>
-                <span class="meta-val"><span class="chip ${isDead ? 'chip-dead' : 'chip-shadowed'}">${kindLabel}</span></span>
+                <span class="meta-val"><span class="chip ${chipClass}">${kindLabel}</span></span>
             </div>
         `);
     }
@@ -275,6 +285,13 @@ function renderProposedRule(rule, configChanges, finding) {
             <div class="rule-meta-card">
                 <span class="meta-label">Proposed Value</span>
                 <span class="meta-val val-proposed">${escapeHtml(String(propVal))}</span>
+            </div>
+        `);
+    } else if (rule.kind === 'contended') {
+        cards.push(`
+            <div class="rule-meta-card">
+                <span class="meta-label">Implementation</span>
+                <span class="meta-val val-contended">Arbitration / Priority Tuning</span>
             </div>
         `);
     } else if (rule.kind === 'shadowed' || !propVal) {
@@ -340,17 +357,30 @@ function renderEvidenceItems(evidence) {
     }
 
     if (evidence.shadowed_sessions !== undefined) {
-        const pct = evidence.session_count ? ((evidence.shadowed_sessions / evidence.session_count) * 100).toFixed(0) : '0';
+        const base = evidence.active_sessions || evidence.session_count || 1;
+        const pct = ((evidence.shadowed_sessions / base) * 100).toFixed(0);
         items.push(`
-            <div class="evidence-item item-alert">
+            <div class="evidence-item ${evidence.shadowed_sessions > 0 ? 'item-alert' : ''}">
                 <div class="label">Shadowed Sessions</div>
                 <div class="value">${evidence.shadowed_sessions} <span class="sub-val">(${pct}%)</span></div>
             </div>
         `);
     }
 
+    if (evidence.contended_sessions !== undefined) {
+        const base = evidence.active_sessions || evidence.session_count || 1;
+        const pct = ((evidence.contended_sessions / base) * 100).toFixed(0);
+        items.push(`
+            <div class="evidence-item ${evidence.contended_sessions > 0 ? 'item-warning' : ''}">
+                <div class="label">Contended Sessions</div>
+                <div class="value">${evidence.contended_sessions} <span class="sub-val">(${pct}%)</span></div>
+            </div>
+        `);
+    }
+
     if (evidence.dead_sessions !== undefined) {
-        const pct = evidence.session_count ? ((evidence.dead_sessions / evidence.session_count) * 100).toFixed(0) : '0';
+        const base = evidence.active_sessions || evidence.session_count || 1;
+        const pct = ((evidence.dead_sessions / base) * 100).toFixed(0);
         items.push(`
             <div class="evidence-item ${evidence.dead_sessions > 0 ? 'item-alert' : ''}">
                 <div class="label">Dead / Unfired Sessions</div>
@@ -368,10 +398,19 @@ function renderEvidenceItems(evidence) {
         `);
     }
 
+    if (evidence.active_sessions !== undefined && evidence.active_sessions !== evidence.session_count) {
+        items.push(`
+            <div class="evidence-item">
+                <div class="label">Active Sessions</div>
+                <div class="value">${evidence.active_sessions}</div>
+            </div>
+        `);
+    }
+
     if (evidence.total_evaluated !== undefined) {
         items.push(`
             <div class="evidence-item">
-                <div class="label">Total Cascade Checks</div>
+                <div class="label">Branch Checks</div>
                 <div class="value">${evidence.total_evaluated}</div>
             </div>
         `);
