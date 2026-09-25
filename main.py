@@ -2652,14 +2652,28 @@ async def get_adaptive_actions(limit: int = 100):
         raise HTTPException(status_code=500, detail=f"Failed to fetch adaptive actions: {str(e)}")
 
 
+def _has_telemetry_analytical_value(data: dict) -> bool:
+    inv = data.get("inventory") or {}
+    branches = inv.get("branches") or {}
+    total_eval = sum(int(b.get("evaluated", 0) or 0) for b in branches.values())
+    total_fired = sum(int(b.get("fired", 0) or 0) for b in branches.values())
+    adaptive = inv.get("_adaptive_pnl") or {}
+    total_eval += int(adaptive.get("evaluated", 0) or 0)
+    total_fired += int(adaptive.get("fired", 0) or 0)
+    stream = inv.get("_verdict_stream") or {}
+    total_contended = sum(int(v or 0) for v in (stream.get("shadowed_satisfied") or {}).values())
+    return (total_eval + total_fired + total_contended) > 0
+
+
 @app.get("/api/exit-telemetry/snapshots")
-async def get_exit_telemetry_snapshots(symbol: str = "", limit: int = 50):
+async def get_exit_telemetry_snapshots(symbol: str = "", limit: int = 50, include_empty: bool = False):
     """
     Get the per-session exit-telemetry snapshot archive (Phase 6/7 follow-up).
 
     Args:
         symbol: optional per-symbol filter
         limit: max sessions returned (newest first)
+        include_empty: whether to return zero-activity / unexercised sessions (default False)
 
     Returns:
         {"sessions": [{"symbol": ..., "session_id": ..., "archived_at": ...,
@@ -2667,16 +2681,21 @@ async def get_exit_telemetry_snapshots(symbol: str = "", limit: int = 50):
     """
     try:
         limit = max(1, min(limit, 500))
+        fetch_limit = min(limit * 3, 500) if not include_empty else limit
         db = firestore.Client()
         docs = db.collection("exit_telemetry_snapshots").order_by(
-            "archived_at", direction="DESCENDING").limit(limit).stream()
+            "archived_at", direction="DESCENDING").limit(fetch_limit).stream()
         sessions = []
         for doc in docs:
             data = doc.to_dict() or {}
             data.setdefault("doc_id", doc.id)
             if symbol and data.get("symbol") != symbol:
                 continue
+            if not include_empty and not _has_telemetry_analytical_value(data):
+                continue
             sessions.append(data)
+            if len(sessions) >= limit:
+                break
         return {"sessions": sessions}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch exit telemetry sessions: {str(e)}")
