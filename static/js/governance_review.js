@@ -1143,7 +1143,7 @@ function renderAdaptiveTable(actions = null) {
                                     <strong>Trigger Diagnostics</strong>
                                 </div>
                                 <div class="card-body">
-                                    <div class="field-item">
+                                    <div class="field-item field-item-stacked">
                                         <span class="field-label">Trigger Reason:</span>
                                         <span class="field-val highlight-reason">${escapeHtml(triggerReason || meta.desc || 'Pattern condition met')}</span>
                                     </div>
@@ -1239,9 +1239,9 @@ function renderAdaptiveTable(actions = null) {
                                         <span class="field-val ${outcome.realized_r >= 0 ? 'pnl-pos' : 'pnl-neg'}">${outcome.realized_r >= 0 ? '+' : ''}${Number(outcome.realized_r).toFixed(2)}R</span>
                                     </div>` : ''}
                                     ${outcome.exit_reason ? `
-                                    <div class="field-item">
+                                    <div class="field-item field-item-stacked">
                                         <span class="field-label">Closed Exit Reason:</span>
-                                        <span class="field-val">${escapeHtml(outcome.exit_reason)}</span>
+                                        <span class="field-val highlight-reason">${escapeHtml(outcome.exit_reason)}</span>
                                     </div>` : ''}
                                     ` : `
                                     <div class="in-flight-note">
