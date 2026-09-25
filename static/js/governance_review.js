@@ -20,7 +20,7 @@ function showToast(message, type = 'success') {
 }
 
 function chip(status, label) {
-    const cls = String(status || '').replace(/[^a-z0-9_]/gi, '');
+    const cls = String(status || '').replace(/[^a-z0-9_-]/gi, '');
     return `<span class="chip chip-${cls}">${label}</span>`;
 }
 
@@ -197,6 +197,14 @@ async function loadGovernance() {
             const pendingCount = payload.pending_changes ?? changes.length;
             const fingerprintShort = payload.fingerprint ? String(payload.fingerprint).slice(0, 10) : '—';
 
+            const autoApplyOn = payload.auto_apply_governance !== undefined
+                ? Boolean(payload.auto_apply_governance)
+                : (entry.auto_apply_governance !== undefined ? Boolean(entry.auto_apply_governance) : true);
+
+            const autoApplyBadge = autoApplyOn
+                ? chip('auto-apply-on', '⚡ AUTO-APPLY: ON')
+                : chip('auto-apply-off', '⚪ AUTO-APPLY: OFF');
+
             const freshBadge = isFresh
                 ? chip('applied', 'FRESH (CONFIG MATCHES)')
                 : chip('reverted', 'STALE / DRIFTED');
@@ -213,6 +221,7 @@ async function loadGovernance() {
                         <div class="gov-header-left">
                             <div class="gov-symbol">🎯 ${escapeHtml(symbol)}</div>
                             <div class="gov-badges">
+                                ${autoApplyBadge}
                                 ${freshBadge}
                                 ${reviewBadge}
                                 ${changesBadge}
@@ -223,6 +232,7 @@ async function loadGovernance() {
                     <div class="gov-meta-info">
                         <div>📅 <strong>Generated:</strong> ${escapeHtml(generatedFormatted)}</div>
                         <div>🔑 <strong>Fingerprint:</strong> <code>${escapeHtml(fingerprintShort)}</code></div>
+                        <div>⚙️ <strong>Auto-Apply:</strong> ${autoApplyOn ? '<span style="color: #10b981; font-weight: 600;">ON</span> (Autonomous L1 calibration)' : '<span style="color: #94a3b8; font-weight: 600;">OFF</span> (Manual operator review only)'}</div>
                         <div>ℹ️ <strong>Status:</strong> ${escapeHtml(stalenessNote)}</div>
                     </div>
 
