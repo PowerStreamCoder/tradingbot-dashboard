@@ -2562,6 +2562,13 @@ async def get_exit_governance():
         for doc in docs:
             data = doc.to_dict() or {}
             data.setdefault("doc_id", doc.id)
+            if "auto_apply_governance" not in data:
+                sym = data.get("symbol") or doc.id
+                bot_params = load_bot_parameters(sym) if sym else None
+                if bot_params and "auto_apply_governance" in bot_params:
+                    data["auto_apply_governance"] = bool(bot_params["auto_apply_governance"])
+                else:
+                    data["auto_apply_governance"] = True  # TradingBotConfig default
             entries.append(data)
         return {"governance": entries}
     except Exception as e:
