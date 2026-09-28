@@ -1215,7 +1215,8 @@ async def get_bot_status(symbol: str, response: Response = None):
 
             # SMA Crossover Status (new in v2.3.0)
             "crossover_confirmation": status_data.get('crossover_confirmation'),  # "CONFIRMED", "PENDING (n/m ticks)", or None
-            "last_crossover": status_data.get('last_crossover')  # ISO timestamp of last crossover
+            "last_crossover": status_data.get('last_crossover'),  # ISO timestamp of last crossover
+            "entry_funnel": status_data.get('entry_funnel')  # Confirm-to-fill entry funnel telemetry
         }
 
         # Add cache header - browser can cache for 5 seconds

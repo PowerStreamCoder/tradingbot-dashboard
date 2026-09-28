@@ -199,6 +199,48 @@ class TestDashboardAPI(unittest.TestCase):
         bad_params = load_bot_parameters("NONEXISTENT")
         self.assertIsNone(bad_params)
 
+    @patch('main.dashboard_data')
+    def test_get_bot_status_includes_entry_funnel(self, mock_data):
+        """Test get_bot_status returns entry_funnel telemetry (Issue #90)"""
+        import asyncio
+        from main import get_bot_status
+
+        mock_doc = MagicMock()
+        mock_doc.exists = True
+        mock_doc.to_dict.return_value = {
+            'symbol': 'NVDA',
+            'last_heartbeat': datetime.now(timezone.utc),
+            'is_trading': True,
+            'active_buckets': 1,
+            'realized_pnl': 120.50,
+            'market_status': 'open',
+            'sma5': 120.0,
+            'sma20': 118.0,
+            'sma200': 110.0,
+            'sma_signal': 'LONG',
+            'sma_spread_pct': 1.69,
+            'crossover_confirmation': 'CONFIRMED',
+            'last_crossover': '2026-09-28T14:00:00Z',
+            'entry_funnel': {
+                'queued': 10,
+                'filled': 8,
+                'dropped': 2,
+                'drop_reasons': {'signal_expired': 1, 're_entry_suppression': 1},
+                'fill_rate_pct': 80.0,
+                'invariant_holds': True
+            }
+        }
+
+        mock_data.db.collection.return_value.document.return_value.get.return_value = mock_doc
+
+        result = asyncio.run(get_bot_status('NVDA'))
+
+        self.assertIn('entry_funnel', result)
+        self.assertEqual(result['entry_funnel']['queued'], 10)
+        self.assertEqual(result['entry_funnel']['filled'], 8)
+        self.assertEqual(result['entry_funnel']['dropped'], 2)
+        self.assertTrue(result['entry_funnel']['invariant_holds'])
+
 
 if __name__ == '__main__':
     import argparse

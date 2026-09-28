@@ -867,7 +867,7 @@ body {
 
 .strategy-grid {
     display: grid;
-    grid-template-columns: repeat(6, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
     gap: var(--spacing-md);
 }
 
@@ -893,6 +893,17 @@ body {
     font-size: 18px;
     font-weight: 700;
     color: var(--text-primary);
+}
+
+.strategy-subtext {
+    display: block;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 4px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .strategy-value.confirmed {
