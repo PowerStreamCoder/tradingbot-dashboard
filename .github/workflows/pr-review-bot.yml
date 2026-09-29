@@ -54,10 +54,12 @@ jobs:
 
           COMMENTS_AND_LOGGING_REPORT=""
           if [ -n "$PYTHON_FILES" ]; then
-            COMMENTS_AND_LOGGING_REPORT=$(python3 - << 'PYEOF'
+            printf '%s' "$PYTHON_FILES" > /tmp/prr_python_files.txt
+            COMMENTS_AND_LOGGING_REPORT=$(PYTHON_FILES_FILE=/tmp/prr_python_files.txt python3 - << 'PYEOF'
           import os, sys, re, ast
 
-          changed_files = """$PYTHON_FILES""".splitlines()
+          with open(os.environ.get("PYTHON_FILES_FILE", ""), "r", encoding="utf-8", errors="ignore") as _f:
+              changed_files = _f.read().splitlines()
           report_lines = []
 
           for filepath in changed_files:
@@ -118,61 +120,61 @@ jobs:
             )
           fi
 
-          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
-          echo "CHANGED_FILES<<$EOF" >> $GITHUB_ENV
-          echo "$CHANGED_FILES" >> $GITHUB_ENV
-          echo "$EOF" >> $GITHUB_ENV
+          printf '%s' "$CHANGED_FILES" > /tmp/prr_changed_files.txt
+          printf '%s' "$LINT_ERRORS" > /tmp/prr_lint_errors.txt
+          printf '%s' "$SECURITY_ISSUES" > /tmp/prr_security_issues.txt
+          printf '%s' "$COMMENTS_AND_LOGGING_REPORT" > /tmp/prr_comments_logging.txt
+          printf '%s' "$DEPENDENCY_AUDIT_REPORT" > /tmp/prr_dep_audit.txt
 
-          echo "LINT_ERRORS<<$EOF" >> $GITHUB_ENV
-          echo "$LINT_ERRORS" >> $GITHUB_ENV
-          echo "$EOF" >> $GITHUB_ENV
+          python3 - << 'PYEOF'
+          import json
 
-          echo "SECURITY_ISSUES<<$EOF" >> $GITHUB_ENV
-          echo "$SECURITY_ISSUES" >> $GITHUB_ENV
-          echo "$EOF" >> $GITHUB_ENV
+          def _read(path):
+              try:
+                  with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                      return f.read()
+              except Exception:
+                  return ""
 
-          echo "COMMENTS_AND_LOGGING_REPORT<<$EOF" >> $GITHUB_ENV
-          echo "$COMMENTS_AND_LOGGING_REPORT" >> $GITHUB_ENV
-          echo "$EOF" >> $GITHUB_ENV
+          data = {
+              "changed_files": _read("/tmp/prr_changed_files.txt").strip(),
+              "lint_errors": _read("/tmp/prr_lint_errors.txt").strip(),
+              "security_issues": _read("/tmp/prr_security_issues.txt").strip(),
+              "comments_logging_report": _read("/tmp/prr_comments_logging.txt").strip(),
+              "dep_audit_report": _read("/tmp/prr_dep_audit.txt").strip()
+          }
 
-          echo "DEPENDENCY_AUDIT_REPORT<<$EOF" >> $GITHUB_ENV
-          echo "$DEPENDENCY_AUDIT_REPORT" >> $GITHUB_ENV
-          echo "$EOF" >> $GITHUB_ENV
+          with open("/tmp/pr_review_data.json", "w", encoding="utf-8") as f:
+              json.dump(data, f)
+          PYEOF
 
       - name: Post Automated PR Review Comment
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const changedFiles = process.env.CHANGED_FILES || 'None';
-            const lintErrors = process.env.LINT_ERRORS || 'No critical lint issues detected.';
-            const securityIssues = process.env.SECURITY_ISSUES || 'No critical security vulnerabilities found.';
-            const commentsLoggingReport = process.env.COMMENTS_AND_LOGGING_REPORT || '✅ Comments and logging checks passed.';
-            const depAuditReport = process.env.DEPENDENCY_AUDIT_REPORT || 'No requirements.txt found.';
+            const fs = require('fs');
+            let reviewData = {};
+            try {
+              if (fs.existsSync('/tmp/pr_review_data.json')) {
+                reviewData = JSON.parse(fs.readFileSync('/tmp/pr_review_data.json', 'utf8'));
+              }
+            } catch (e) {
+              console.log('Failed to read review data file:', e);
+            }
 
-            const body = `### 🤖 Automated PR Review Bot Summary
+            const changedFiles = (reviewData.changed_files || 'None').substring(0, 1000);
+            const lintErrors = (reviewData.lint_errors || '').trim();
+            const securityIssues = (reviewData.security_issues || '').trim();
+            const commentsLoggingReport = (reviewData.comments_logging_report || '').trim();
+            const depAuditReport = (reviewData.dep_audit_report || '').trim();
 
-            Hello! Here is the automated code review for commit \`${context.sha.substring(0, 7)}\`:
+            const hasLintErrors = Boolean(lintErrors && lintErrors !== '0' && !lintErrors.includes('0 critical'));
+            const hasSecurityIssues = Boolean(securityIssues && !securityIssues.includes('No issues identified.'));
+            const hasCommentsLoggingIssues = Boolean(commentsLoggingReport && (commentsLoggingReport.includes('⚠️') || commentsLoggingReport.includes('🚨')));
+            const hasDepAuditIssues = Boolean(depAuditReport && !depAuditReport.includes('No known vulnerabilities found') && !depAuditReport.includes('No requirements.txt found.'));
 
-            #### 🔍 **1. Scope & Changed Files**
-            \`\`\`
-            ${changedFiles}
-            \`\`\`
-
-            #### 📦 **2. Dependency Health & Vulnerability Scan**
-            ${depAuditReport.includes('No known vulnerabilities found') || depAuditReport.includes('No requirements.txt found.') ? '✅ Dependencies audited cleanly - no known vulnerabilities.' : '```\n' + depAuditReport.substring(0, 800) + '\n```'}
-
-            #### 💬 **3. Code Comments & Logging Audit**
-            ${commentsLoggingReport}
-
-            #### 🛠️ **4. Code Quality & Linting**
-            ${lintErrors.includes('0') || !lintErrors.trim() ? '✅ No critical syntax or style issues found.' : '```\n' + lintErrors + '\n```'}
-
-            #### 🛡️ **5. Security & Vulnerability Audit**
-            ${securityIssues.includes('No issues identified.') || !securityIssues.trim() ? '✅ Security check passed cleanly.' : '```\n' + securityIssues + '\n```'}
-
-            ---
-            *Automated review generated by PR Reviewer Bot (Zero-Cost GitHub Token)*`;
+            const hasErrors = hasLintErrors || hasSecurityIssues || hasCommentsLoggingIssues || hasDepAuditIssues;
 
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
@@ -181,8 +183,62 @@ jobs:
             });
 
             const botComment = comments.find(comment => 
-              comment.user.type === 'Bot' && comment.body.includes('🤖 Automated PR Review Bot Summary')
+              comment.user.type === 'Bot' && (
+                comment.body.includes('🤖 Automated PR Review Bot Summary') ||
+                comment.body.includes('⚠️ Automated PR Review')
+              )
             );
+
+            // Always write full summary to GitHub Actions job summary (zero email notifications)
+            await core.summary
+              .addHeading('Automated PR Review Summary')
+              .addRaw(`Commit \`${context.sha.substring(0, 7)}\` status: ${hasErrors ? '❌ Issues Detected' : '✅ All Checks Passed Cleanly'}\n\n`)
+              .addRaw(`- Lint Errors: ${hasLintErrors ? '❌ Issues found' : '✅ Clean'}\n`)
+              .addRaw(`- Security Scan: ${hasSecurityIssues ? '❌ Issues found' : '✅ Clean'}\n`)
+              .addRaw(`- Comments & Logging: ${hasCommentsLoggingIssues ? '❌ Issues found' : '✅ Clean'}\n`)
+              .addRaw(`- Dependencies: ${hasDepAuditIssues ? '❌ Issues found' : '✅ Clean'}\n`)
+              .write();
+
+            if (!hasErrors) {
+              console.log('✅ All PR checks passed cleanly. Skipping PR comment to avoid unnecessary email notifications.');
+              if (botComment) {
+                console.log('Cleaning up previous bot error comment now that all issues are resolved.');
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: botComment.id,
+                });
+              }
+              return;
+            }
+
+            console.log('⚠️ Issues detected in PR review. Posting comment to notify author.');
+
+            const body = [
+              '### ⚠️ Automated PR Review: Issues Detected',
+              '',
+              `Hello! Automated code review detected issues for commit \`${context.sha.substring(0, 7)}\`:`,
+              '',
+              '#### 🔍 **1. Scope & Changed Files**',
+              '```',
+              changedFiles,
+              '```',
+              '',
+              '#### 📦 **2. Dependency Health & Vulnerability Scan**',
+              hasDepAuditIssues ? '```\n' + depAuditReport.substring(0, 800) + '\n```' : '✅ Dependencies audited cleanly - no known vulnerabilities.',
+              '',
+              '#### 💬 **3. Code Comments & Logging Audit**',
+              hasCommentsLoggingIssues ? commentsLoggingReport.substring(0, 1500) : '✅ Comments and logging checks passed.',
+              '',
+              '#### 🛠️ **4. Code Quality & Linting**',
+              hasLintErrors ? '```\n' + lintErrors.substring(0, 1000) + '\n```' : '✅ No critical syntax or style issues found.',
+              '',
+              '#### 🛡️ **5. Security & Vulnerability Audit**',
+              hasSecurityIssues ? '```\n' + securityIssues.substring(0, 1000) + '\n```' : '✅ Security check passed cleanly.',
+              '',
+              '---',
+              '*Automated review generated by PR Reviewer Bot (Comments restricted to errors/issues only)*'
+            ].join('\n');
 
             if (botComment) {
               await github.rest.issues.updateComment({
