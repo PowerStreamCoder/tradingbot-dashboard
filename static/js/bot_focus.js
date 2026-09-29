@@ -2276,6 +2276,80 @@ async function updateBotStatus() {
             updateElement('lastCrossover', 'N/A');
         }
 
+        // Update entry funnel telemetry (Issue #90)
+        const entryFunnelEl = document.getElementById('entryFunnel');
+        const entryFunnelSubtextEl = document.getElementById('entryFunnelSubtext');
+        const entryFunnelItem = document.getElementById('entryFunnelItem');
+
+        if (data.entry_funnel && typeof data.entry_funnel === 'object') {
+            const ef = data.entry_funnel;
+            const queued = ef.queued || 0;
+            const filled = ef.filled || 0;
+            const dropped = ef.dropped !== undefined ? ef.dropped : (queued - filled);
+            const fillRate = ef.fill_rate_pct !== undefined ? ef.fill_rate_pct : (queued > 0 ? ((filled / queued) * 100).toFixed(1) : 0);
+
+            if (entryFunnelEl) {
+                if (queued > 0) {
+                    entryFunnelEl.textContent = `${filled}/${queued} (${fillRate}%)`;
+                    if (fillRate >= 80) {
+                        entryFunnelEl.style.color = '#48bb78';
+                    } else if (fillRate >= 50) {
+                        entryFunnelEl.style.color = '#ecc94b';
+                    } else {
+                        entryFunnelEl.style.color = '#e2e8f0';
+                    }
+                } else {
+                    entryFunnelEl.textContent = '0 / 0';
+                    entryFunnelEl.style.color = '#a0aec0';
+                }
+            }
+
+            if (entryFunnelSubtextEl) {
+                if (dropped > 0) {
+                    const dropReasons = ef.drop_reasons || {};
+                    let topReason = '';
+                    let topCount = 0;
+                    for (const [r, count] of Object.entries(dropReasons)) {
+                        if (count > topCount) {
+                            topCount = count;
+                            topReason = r;
+                        }
+                    }
+                    const formattedReason = topReason ? topReason.replace(/_/g, ' ') : 'other';
+                    entryFunnelSubtextEl.textContent = `${dropped} drop${dropped !== 1 ? 's' : ''} (${formattedReason}: ${topCount})`;
+                } else {
+                    entryFunnelSubtextEl.textContent = '0 drops';
+                }
+            }
+
+            if (entryFunnelItem) {
+                const dropReasons = ef.drop_reasons || {};
+                const reasonBreakdown = Object.entries(dropReasons)
+                    .filter(([_, c]) => c > 0)
+                    .map(([r, c]) => `${r.replace(/_/g, ' ')}: ${c}`)
+                    .join('\n• ');
+
+                const tooltip = `Confirm-to-Fill Funnel:\n` +
+                    `• Queued: ${queued}\n` +
+                    `• Filled: ${filled} (${fillRate}%)\n` +
+                    `• Dropped: ${dropped}\n` +
+                    (reasonBreakdown ? `Drop breakdown:\n• ${reasonBreakdown}\n` : '') +
+                    `Invariant: ${ef.invariant_holds !== false ? 'Valid (queued == filled + drops)' : 'VIOLATION'}`;
+                entryFunnelItem.title = tooltip;
+            }
+        } else {
+            if (entryFunnelEl) {
+                entryFunnelEl.textContent = 'N/A';
+                entryFunnelEl.style.color = '#a0aec0';
+            }
+            if (entryFunnelSubtextEl) {
+                entryFunnelSubtextEl.textContent = '';
+            }
+            if (entryFunnelItem) {
+                entryFunnelItem.title = 'No entry funnel telemetry recorded yet';
+            }
+        }
+
         // Update Last Price and Session Change if not already set from bot-overview
         // Use SMA5 as a reliable proxy for current price
         const lastPriceEl = document.getElementById('lastPrice');
