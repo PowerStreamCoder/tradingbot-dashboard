@@ -8,6 +8,11 @@ on:
       - '*.md'
       - 'docs/**'
       - '.gitignore'
+      - 'CLAUDE.md'
+      - 'GEMINI.md'
+      - 'AGENT_CONTEXT.md'
+  repository_dispatch:
+    types: [config-bots-changed]  # triggered by config repo when bots.json changes
   workflow_dispatch:  # Allow manual trigger
 
 env:
@@ -67,6 +72,29 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Sync bots.json from config repo
+        uses: actions/checkout@v4
+        with:
+          repository: PowerStreamCoder/tradingbot-config
+          path: _config_repo
+          token: ${{ secrets.PAT_TOKEN }}
+          sparse-checkout: bots.json
+
+      - name: Update local bots.json if changed
+        run: |
+          if [ -f _config_repo/bots.json ]; then
+            if ! diff -q config/bots.json _config_repo/bots.json >/dev/null 2>&1; then
+              echo "🔄 bots.json has changed in config repo — updating local copy"
+              cp _config_repo/bots.json config/bots.json
+              echo "✅ config/bots.json synced from tradingbot-config"
+            else
+              echo "✅ config/bots.json is already in sync"
+            fi
+          else
+            echo "⚠️  Could not fetch bots.json from config repo"
+          fi
+          rm -rf _config_repo
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
