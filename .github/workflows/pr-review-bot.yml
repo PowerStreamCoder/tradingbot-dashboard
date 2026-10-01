@@ -1,17 +1,24 @@
 name: Automated PR Review Bot
 
 on:
+  workflow_dispatch:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [labeled]
 
 permissions:
   pull-requests: write
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   pr-bot-review:
-    name: Automated PR Reviewer
+    name: Automated PR Reviewer (On-Demand)
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ai-review')
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout PR Code
         uses: actions/checkout@v4
@@ -22,6 +29,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
       - name: Install Analysis Tools
         run: |
