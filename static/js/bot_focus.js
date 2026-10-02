@@ -665,9 +665,27 @@ function renderBotParameters(params) {
             category: 'calls',
             icon: '📜',
             title: 'Covered Calls Overlay',
-            desc: 'Options income overlay rules, delta filter, and expiration cadence',
+            desc: 'Options income overlay rules, dual-mode governance, delta filter, and expiration cadence',
             rows: [
                 { key: 'Covered Calls Strategy', val: fmtParamPill(params.covered_calls?.use_covered_calls) },
+                // --- Dual-Mode Governance (cc_mode, #199 visibility) ---
+                { key: 'Strategy Mode', val: (() => {
+                    const mode = params.covered_calls?.cc_mode ?? 'TOTAL_RETURN';
+                    const cls = mode === 'INCOME' ? 'highlight-green' : 'highlight-blue';
+                    return `<span class="param-pill tag ${cls}">${mode}</span>`;
+                })() },
+                { key: 'Income Hold Floor', val: (() => {
+                    const hrs = params.covered_calls?.cc_income_mode_min_hold_hours ?? 96.0;
+                    const active = (params.covered_calls?.cc_mode ?? 'TOTAL_RETURN') === 'INCOME';
+                    return active
+                        ? `<span class="param-val number highlight-green">${hrs} hrs</span>`
+                        : `<span class="param-val number" style="opacity:.5">${hrs} hrs (TOTAL_RETURN)</span>`;
+                })() },
+                { key: 'Profit Target Buyback', val: `<span class="param-val number highlight-purple">${fmtParamPercent(params.covered_calls?.cc_option_profit_target_pct ?? 0.50)} retained</span>` },
+                { key: 'DTE Gamma Guard', val: `<span class="param-val number">&le;${params.covered_calls?.cc_close_at_dte_threshold ?? 3} DTE</span>` },
+                { key: 'Roll Up &amp; Out', val: fmtParamPill(params.covered_calls?.cc_enable_roll_up_and_out, `&ge;${params.covered_calls?.cc_roll_min_net_credit ?? 0.05}/sh net credit`, 'DISABLED') },
+                { key: 'UNRECOVERABLE Block', val: fmtParamPill(params.covered_calls?.cc_unrecoverable_block_portfolio, 'PORTFOLIO-WIDE', 'PER-BUCKET') },
+                // --- Entry & Strike Settings ---
                 { key: 'Eligible Regimes', val: fmtParamTags(params.covered_calls?.call_enabled_regimes || ['BULL', 'NEUTRAL']) },
                 { key: 'Target Expiration', val: `<span class="param-val number highlight-blue">${params.covered_calls?.call_expiration_days ?? 14} days</span>` },
                 { key: 'Min Option Premium', val: `<span class="param-val number highlight-green">${fmtParamPercent(params.covered_calls?.call_min_premium_pct ?? 0.006)}</span>` },
@@ -2414,15 +2432,15 @@ function updatePositionData(botData) {
         if (activeBucket.optionSold && activeBucket.optionPremium) {
             const premiumReceived = activeBucket.optionPremium; // Already total for contract
 
-            // If we have current option value, calculate actual gain/loss
-            // Otherwise, assume we keep the full premium (conservative estimate)
+            // If we have current MTM option value, calculate actual unrealized gain
+            // (#199): when optionCurrentValue is absent the MTM is unknown — do NOT
+            // credit the full premium (that inflates P&L); leave gain at 0 until
+            // broker MTM data arrives.
             if (activeBucket.optionCurrentValue !== undefined) {
-                // Current P&L = Premium Received - Current Option Value
+                // Unrealized option P&L = Premium Received − Current Buyback Cost
                 coveredCallGain = premiumReceived - activeBucket.optionCurrentValue;
-            } else {
-                // Conservative: assume we keep the premium (no buyback needed)
-                coveredCallGain = premiumReceived;
             }
+            // else: MTM unavailable — coveredCallGain stays 0 (conservative/safe)
         }
 
         // Total unrealized P&L includes both stock position and covered call P&L
@@ -3072,14 +3090,15 @@ function updatePositionOrdersTable(botData) {
         : ((markPrice - avgPrice) * quantity);
 
     // Add covered call gains/losses
+    // (#199): when optionCurrentValue is absent do NOT credit full premium — MTM
+    // is unknown; leave gain at 0 to avoid inflating dashboard P&L.
     let coveredCallGain = 0;
     if (activeBucket.optionSold && activeBucket.optionPremium) {
         const premiumReceived = activeBucket.optionPremium;
         if (activeBucket.optionCurrentValue !== undefined) {
             coveredCallGain = premiumReceived - activeBucket.optionCurrentValue;
-        } else {
-            coveredCallGain = premiumReceived;
         }
+        // else: MTM unavailable — coveredCallGain stays 0
     }
 
     // Total unrealized P&L
@@ -3090,18 +3109,63 @@ function updatePositionOrdersTable(botData) {
     const stopLoss = activeBucket.stopLossPrice || null;
     const target = activeBucket.profitTargetPrice || null;
 
-    // Covered call info
+    // Covered call info (#194, #195, #199)
     let coveredCallDisplay = '--';
-    if (activeBucket.optionSold && activeBucket.optionStrike && activeBucket.optionExpiration) {
-        const expiration = new Date(activeBucket.optionExpiration).toLocaleDateString('en-US', {
-            month: 'short',
-            day: 'numeric'
-        });
-        const premium = activeBucket.optionPremium || 0;
-        coveredCallDisplay = `${expiration} $${activeBucket.optionStrike}C<br><small style="color: #48bb78;">+$${premium.toFixed(2)}</small>`;
+    if (activeBucket.optionSold) {
+        let parts = [];
+        if (activeBucket.optionStrike && activeBucket.optionExpiration) {
+            const expiration = new Date(activeBucket.optionExpiration).toLocaleDateString('en-US', {
+                month: 'short',
+                day: 'numeric'
+            });
+            const premium = activeBucket.optionPremium || 0;
+            parts.push(`${expiration} $${activeBucket.optionStrike}C`);
+            parts.push(`<small style="color: #48bb78;">+$${premium.toFixed(2)}</small>`);
+        }
+
+        // MTM valuation and basis (#194/#195)
+        if (activeBucket.optionCurrentValue !== undefined) {
+            const mtmBasis = activeBucket.optionMtmBasis;
+            let basisTag = '';
+            if (mtmBasis === 'BROKER_MID') {
+                basisTag = '<span style="font-size:0.75em; color:#48bb78; font-weight:600;" title="Live Broker Mid Mark">[Broker]</span>';
+            } else if (mtmBasis === 'STALE_BROKER_MID') {
+                basisTag = '<span style="font-size:0.75em; color:#ecc94b; font-weight:600;" title="Cached Broker Mid (<5m old)">[Stale]</span>';
+            } else if (mtmBasis === 'BLACK_SCHOLES') {
+                basisTag = '<span style="font-size:0.75em; color:#9f7aea; font-weight:600;" title="Black-Scholes Synthetic Fallback Mark">[BS Est]</span>';
+            }
+            parts.push(`<small style="color: #a0aec0;">MTM: $${activeBucket.optionCurrentValue.toFixed(2)} ${basisTag}</small>`);
+        }
+
+        // Option lifecycle state badge (#199)
+        const optState = activeBucket.optionState;
+        if (optState === 'UNRECOVERABLE') {
+            parts.push('<div style="margin-top:3px;"><span class="badge badge-danger" style="background:#e53e3e; color:#fff; padding:2px 6px; border-radius:4px; font-size:0.75em; font-weight:bold; letter-spacing:0.5px;">⚠️ UNRECOVERABLE</span></div>');
+        } else if (optState === 'RECONCILE_FAILED') {
+            parts.push('<div style="margin-top:3px;"><span class="badge badge-warning" style="background:#dd6b20; color:#fff; padding:2px 6px; border-radius:4px; font-size:0.75em; font-weight:bold; letter-spacing:0.5px;">⚠️ RECONCILE_FAILED</span></div>');
+        } else if (optState === 'CLOSING') {
+            parts.push('<div style="margin-top:3px;"><span class="badge badge-info" style="background:#3182ce; color:#fff; padding:2px 6px; border-radius:4px; font-size:0.75em;">CLOSING</span></div>');
+        }
+
+        if (parts.length > 0) {
+            coveredCallDisplay = parts.join('<br>');
+        }
     }
 
     const strategyTag = 'SMA Crossover';
+
+    // Check for unrecoverable/reconcile-failed buckets across all bot buckets (#199)
+    let unrecoverableWarning = '';
+    for (let i = 1; i <= 10; i++) {
+        const b = botData[`bucket${i}`];
+        if (b && b.optionState === 'UNRECOVERABLE') {
+            unrecoverableWarning = `⚠️ Bucket #${i} option UNRECOVERABLE — entry blocked!`;
+            break;
+        } else if (b && b.optionState === 'RECONCILE_FAILED') {
+            unrecoverableWarning = `⚠️ Bucket #${i} option RECONCILE_FAILED — broker audit pending.`;
+            break;
+        }
+    }
 
     // Hash the display values for change detection
     const newContent = JSON.stringify({
@@ -3115,7 +3179,11 @@ function updatePositionOrdersTable(botData) {
         target: roundPrice(target),
         optionSold: activeBucket.optionSold,
         optionStrike: roundPrice(activeBucket.optionStrike),
-        optionPremium: roundPrice(activeBucket.optionPremium)
+        optionPremium: roundPrice(activeBucket.optionPremium),
+        optionCurrentValue: roundPrice(activeBucket.optionCurrentValue),
+        optionState: activeBucket.optionState,
+        optionMtmBasis: activeBucket.optionMtmBasis,
+        warning: unrecoverableWarning
     });
 
     if (tbody.dataset.lastContent === newContent) {
@@ -3167,8 +3235,16 @@ function updatePositionOrdersTable(botData) {
 
     // Update status
     if (statusEl) {
-        const side = (activeBucket.side || 'long').toUpperCase();
-        statusEl.textContent = `${side} - 1 position active`;
+        if (unrecoverableWarning) {
+            statusEl.textContent = unrecoverableWarning;
+            statusEl.style.color = '#e53e3e';
+            statusEl.style.fontWeight = 'bold';
+        } else {
+            const side = (activeBucket.side || 'long').toUpperCase();
+            statusEl.textContent = `${side} - 1 position active`;
+            statusEl.style.color = '';
+            statusEl.style.fontWeight = '';
+        }
     }
 
     // Add event listener for position selection
