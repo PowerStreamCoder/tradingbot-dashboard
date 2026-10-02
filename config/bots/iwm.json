@@ -141,7 +141,7 @@
   },
   "orchestrator": {
     "enable_orchestrator": true,
-    "strategy_intent": "SURFACE_ALL",
+    "strategy_intent": "COVERED_CALL_INCOME",
     "income_mode_mtf_relaxation": 0.15,
     "_comment": "Valid options: SURFACE_ALL, AUTO, COVERED_CALL_INCOME, TREND_MOMENTUM_GROWTH, VOLATILITY_DEFENSIVE, NEUTRAL_RANGE_HARVEST"
   },
