@@ -1543,6 +1543,17 @@ td.loss {
     background: rgba(139, 92, 246, 0.08);
 }
 
+.option-event-row.roll,
+.option-event-row.option_roll {
+    background: rgba(59, 130, 246, 0.08);
+}
+
+.option-event-row.buyback_failed,
+.option-event-row.option_buyback_failed {
+    background: rgba(239, 68, 68, 0.15);
+}
+
+
 .option-events-table .action {
     font-weight: 600;
 }

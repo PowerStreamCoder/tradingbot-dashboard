@@ -3475,19 +3475,29 @@ function renderOptionEventsSection(events) {
         `;
 
         group.forEach(event => {
-            const action = getEventAction(event.event_type);
-            const premiumClass = (event.premium || 0) >= 0 ? 'profit' : 'loss';
+            const action = getEventAction(event.event_type, event);
+            const isRoll = event.event_type === 'roll' || event.event_type === 'option_roll';
+            const displayPremium = isRoll
+                ? (event.net_credit_realized !== undefined ? event.net_credit_realized * 100 : (event.premium || 0))
+                : (event.premium || 0);
+            const premiumClass = displayPremium >= 0 ? 'profit' : 'loss';
+            const priceDisplay = isRoll && event.net_credit_realized !== undefined
+                ? `$${event.net_credit_realized.toFixed(2)}/sh`
+                : `$${(Math.abs(event.premium || 0) / 100).toFixed(2)}`;
+            const orderIdDisplay = isRoll
+                ? (event.rolls_count ? `Roll #${event.rolls_count}` : (event.option_order_id || 'N/A'))
+                : (event.option_order_id || 'N/A');
 
             html += `
                 <tr class="option-event-row ${event.event_type}">
                     <td class="time">${formatTime(event.timestamp)}</td>
                     <td class="action">${action.icon} ${action.label}</td>
-                    <td class="price">$${(Math.abs(event.premium || 0) / 100).toFixed(2)}</td>
+                    <td class="price">${priceDisplay}</td>
                     <td class="premium ${premiumClass}">
-                        ${(event.premium || 0) >= 0 ? '+' : ''}$${(event.premium || 0).toFixed(2)}
+                        ${displayPremium >= 0 ? '+' : ''}$${displayPremium.toFixed(2)}
                     </td>
                     <td class="stock-price">$${event.stock_price_at_event?.toFixed(2) || 'N/A'}</td>
-                    <td class="order-id">${event.option_order_id || 'N/A'}</td>
+                    <td class="order-id">${orderIdDisplay}</td>
                 </tr>
             `;
         });
@@ -3520,7 +3530,9 @@ function groupOptionEvents(events) {
     const groups = {};
 
     events.forEach(event => {
-        const key = `${event.strike}_${event.expiration}`;
+        const strike = event.strike ?? event.sto_strike ?? event.btc_strike ?? 0.0;
+        const expiration = event.expiration ?? event.sto_expiry ?? event.btc_expiry ?? '';
+        const key = `${strike}_${expiration}`;
         if (!groups[key]) {
             groups[key] = [];
         }
@@ -3538,7 +3550,18 @@ function groupOptionEvents(events) {
 /**
  * Get display info for event type
  */
-function getEventAction(eventType) {
+function getEventAction(eventType, event = null) {
+    if (eventType === 'roll' || eventType === 'option_roll') {
+        if (event && event.roll_state === 'ROLL_FAILED') {
+            const reason = event.failure_reason ? ` (${event.failure_reason})` : '';
+            return { icon: '⚠️', label: `ROLL FAILED${reason}` };
+        }
+        return { icon: '🔄', label: 'ROLL' };
+    }
+    if (eventType === 'buyback_failed' || eventType === 'option_buyback_failed') {
+        const reason = event?.failure_reason ? ` (${event.failure_reason})` : '';
+        return { icon: '⚠️', label: `BUYBACK FAILED${reason}` };
+    }
     const actions = {
         'sell': { icon: '📈', label: 'SELL' },
         'buyback': { icon: '📉', label: 'BUY' },
@@ -3547,6 +3570,7 @@ function getEventAction(eventType) {
     };
     return actions[eventType] || { icon: '?', label: eventType.toUpperCase() };
 }
+
 
 /**
  * Count unique option contracts (by strike + expiration)
