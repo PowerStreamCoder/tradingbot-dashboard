@@ -147,32 +147,37 @@ def evaluate_covered_call_candidate(ticker: str) -> Optional[Dict[str, Any]]:
         score += 15.0
     elif monthly_yield > 0.040:
         score += 10.0  # High yield often implies dangerous underlying risk
+    else:
+        score -= 15.0  # Zero or negligible premium yield
 
     # 2. Volatility Stability Contribution (Up to +20 pts)
     # ATR % between 0.8% and 2.5% is ideal for covered calls
     if 0.008 <= est_atr_pct <= 0.025:
         score += 20.0
-    elif est_atr_pct > 0.035:
-        score -= 20.0  # Too volatile for safe income
+    elif est_atr_pct > 0.035 or est_atr_pct < 0.001:
+        score -= 15.0  # Too volatile or completely flat
 
     # 3. Liquidity Contribution (Up to +15 pts)
     if open_interest >= 500:
         score += 15.0
     elif open_interest >= 100:
         score += 8.0
+    else:
+        score -= 10.0  # Illiquid open interest
 
     # Bid-Ask spread tightness
     spread = ask - bid
     if spread <= 0.15:
         score += 10.0
     elif spread > 0.35:
-        score -= 10.0
+        score -= 15.0
 
-    # 4. Earnings Collision Safety (Up to +15 pts / Penalty -25 pts)
-    if days_to_earnings > 35:
+    # 4. Earnings Collision Safety (Up to +15 pts / Penalty -30 pts & score cap)
+    if 35 < days_to_earnings < 900:
         score += 15.0
     elif earnings_risk_flag:
-        score -= 25.0  # Penalty for holding call across binary earnings event
+        score -= 30.0  # Penalty for holding call across binary earnings event
+        score = min(score, 60.0)  # Absolute safety ceiling for earnings collision
 
     final_score = max(5.0, min(99.0, round(score, 1)))
 
