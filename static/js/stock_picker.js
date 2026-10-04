@@ -320,6 +320,18 @@ function renderStockPicksTable() {
                     🚀 Provision Bot
                 </button>
             `;
+        } else if (status === 'PROVISIONING_FAILED') {
+            statusBadge = `<span style="background: rgba(239,68,68,0.25); color: #fca5a5; border: 1px solid #ef4444; padding: 4px 10px; border-radius: 12px; font-size: 0.8em; font-weight: 600;">⚠️ Provisioning Failed</span>`;
+            actionButtons = `
+                <div style="display: flex; flex-direction: column; gap: 4px; align-items: center;">
+                    <button onclick="openAcceptModal('${sym}', '${track}')" title="Retry Provisioning" style="padding: 4px 8px; border-radius: 5px; border: 1px solid #f59e0b; background: rgba(245,158,11,0.2); color: #fbbf24; font-size: 0.78em; font-weight: 600; cursor: pointer;">
+                        🔄 Retry
+                    </button>
+                    <button onclick="openRejectModal('${sym}')" title="Reject candidate" style="padding: 3px 8px; border-radius: 5px; border: 1px solid #ef4444; background: transparent; color: #f87171; font-size: 0.75em; cursor: pointer;">
+                        ❌ Reject
+                    </button>
+                </div>
+            `;
         } else if (status === 'REJECTED') {
             statusBadge = `<span style="background: rgba(239,68,68,0.2); color: #f87171; border: 1px solid #ef4444; padding: 4px 10px; border-radius: 12px; font-size: 0.8em; font-weight: 600;">🔴 Rejected</span>`;
             actionButtons = `<span style="font-size: 0.8em; color: #94a3b8;">In 7-day cooldown</span>`;
@@ -349,6 +361,13 @@ function renderStockPicksTable() {
                 <td style="text-align: center; padding: 12px 8px;">${statusBadge}</td>
                 <td style="padding: 12px 10px; font-size: 0.9em; max-width: 320px;" title="${catalyst}">
                     ${catalyst.length > 80 ? catalyst.substring(0, 80) + '...' : catalyst}
+                    ${status === 'PROVISIONING_FAILED' ? `
+                        <div style="margin-top: 6px; padding: 6px 8px; background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.3); border-radius: 6px; font-size: 0.78em; color: #fca5a5;">
+                            <div><strong>Stage:</strong> ${pick.failure_stage || 'CONFIG'}</div>
+                            <div><strong>Reason:</strong> ${pick.failure_reason || 'Provisioning script error'}</div>
+                            <div style="color: #94a3b8; margin-top: 2px;">💡 ${pick.suggested_action || 'Review permissions and retry.'}</div>
+                        </div>
+                    ` : ''}
                 </td>
                 <td style="padding: 12px 10px; font-size: 0.85em;">
                     <div>${metricsHtml}</div>
@@ -465,6 +484,50 @@ function openAcceptModal(sym, track) {
     if (elSym) elSym.textContent = sym;
     if (elTrack) elTrack.value = track === 'INCOME' ? 'Track 2: Covered Call Income' : 'Track 1: Growth Equity';
     if (modal) modal.style.display = 'block';
+
+    refreshParameterAdvice();
+}
+
+async function refreshParameterAdvice() {
+    if (!selectedSymbolForAction) return;
+    const sym = selectedSymbolForAction;
+    const track = selectedTrackForAction || 'GROWTH';
+    const capitalInput = document.getElementById('modal-accept-capital');
+    const capital = capitalInput ? parseFloat(capitalInput.value) || 10000 : 10000;
+
+    const summaryEl = document.getElementById('modal-advice-summary');
+    const bulletsEl = document.getElementById('modal-advice-bullets');
+    const badgeEl = document.getElementById('modal-advice-risk-badge');
+
+    try {
+        const res = await fetch(`/api/stock-picks/parameter-advice?symbol=${encodeURIComponent(sym)}&strategy_track=${encodeURIComponent(track)}&capital_allocation=${capital}`);
+        if (res.ok) {
+            const advice = await res.json();
+            if (badgeEl) {
+                badgeEl.textContent = `${advice.risk_tier} Risk`;
+                badgeEl.style.color = advice.risk_tier === 'High' ? '#f87171' : (advice.risk_tier === 'Low' ? '#34d399' : '#fbbf24');
+                badgeEl.style.borderColor = advice.risk_tier === 'High' ? '#ef4444' : (advice.risk_tier === 'Low' ? '#10b981' : '#f59e0b');
+            }
+            if (summaryEl) summaryEl.textContent = advice.advisory_summary || '';
+            if (bulletsEl) {
+                bulletsEl.innerHTML = (advice.expert_rationale || []).map(b => `<div style="margin-bottom: 2px;">• ${b}</div>`).join('');
+            }
+
+            const p = advice.recommended_params || {};
+            const atr = p.atr_parameters || {};
+            const cc = p.covered_calls || {};
+            const elStop = document.getElementById('modal-param-trailing-stop');
+            if (elStop && atr.trailing_stop_atr_multiplier) elStop.value = atr.trailing_stop_atr_multiplier;
+            const elShares = document.getElementById('modal-param-min-shares');
+            if (elShares && atr.position_min_shares) elShares.value = atr.position_min_shares;
+            const elMode = document.getElementById('modal-param-cc-mode');
+            if (elMode && cc.cc_mode) elMode.value = cc.cc_mode;
+            const elExp = document.getElementById('modal-param-call-exp-days');
+            if (elExp && cc.call_expiration_days) elExp.value = cc.call_expiration_days;
+        }
+    } catch (err) {
+        console.error('Error fetching parameter advice:', err);
+    }
 }
 
 function closeAcceptModal() {
@@ -482,6 +545,17 @@ async function confirmProvisionBot() {
     const capitalInput = document.getElementById('modal-accept-capital');
     const capital = capitalInput ? parseFloat(capitalInput.value) || 10000 : 10000;
 
+    const elStop = document.getElementById('modal-param-trailing-stop');
+    const elShares = document.getElementById('modal-param-min-shares');
+    const elMode = document.getElementById('modal-param-cc-mode');
+    const elExp = document.getElementById('modal-param-call-exp-days');
+
+    const customParams = {};
+    if (elStop && elStop.value) customParams.trailing_stop_atr_multiplier = parseFloat(elStop.value);
+    if (elShares && elShares.value) customParams.position_min_shares = parseInt(elShares.value);
+    if (elMode && elMode.value) customParams.cc_mode = elMode.value;
+    if (elExp && elExp.value) customParams.call_expiration_days = parseInt(elExp.value);
+
     const btn = document.getElementById('modal-confirm-provision-btn');
     if (btn) {
         btn.disabled = true;
@@ -495,12 +569,18 @@ async function confirmProvisionBot() {
             body: JSON.stringify({
                 symbol: sym,
                 strategy_track: track,
-                capital_allocation: capital
+                capital_allocation: capital,
+                custom_params: customParams
             })
         });
 
         if (!response.ok) {
-            throw new Error(`Provisioning failed: ${response.statusText}`);
+            let errorMsg = response.statusText;
+            try {
+                const errData = await response.json();
+                if (errData.detail) errorMsg = errData.detail;
+            } catch (_) {}
+            throw new Error(errorMsg);
         }
 
         const res = await response.json();
@@ -510,7 +590,9 @@ async function confirmProvisionBot() {
 
     } catch (e) {
         console.error('Error provisioning bot:', e);
-        showToast(`❌ Provisioning error: ${e.message}`, 'error');
+        showToast(`❌ ${e.message}`, 'error');
+        // Refresh picks so table displays PROVISIONING_FAILED state if recorded
+        loadStockPicks();
     } finally {
         if (btn) {
             btn.disabled = false;

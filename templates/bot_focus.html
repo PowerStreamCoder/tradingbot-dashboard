@@ -530,26 +530,76 @@
 
             <!-- Accept & Provision Modal -->
             <div id="sp-accept-modal" style="display: none; position: fixed; z-index: 10001; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); backdrop-filter: blur(4px);">
-                <div style="background: #1e293b; border: 1px solid #334155; border-radius: 12px; max-width: 480px; margin: 10% auto; padding: 24px; color: #f8fafc; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5);">
+                <div style="background: #1e293b; border: 1px solid #334155; border-radius: 12px; max-width: 560px; margin: 6% auto; padding: 24px; color: #f8fafc; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); max-height: 85vh; overflow-y: auto;">
                     <h3 style="margin-top: 0; color: #38bdf8; display: flex; align-items: center; gap: 8px;">
                         <span>🤖</span> Accept Lead & Provision Bot
                     </h3>
-                    <p style="color: #94a3b8; font-size: 0.95em;">
+                    <p style="color: #94a3b8; font-size: 0.9em; margin-bottom: 12px;">
                         Provision an automated trading bot for <strong id="modal-accept-symbol" style="color: #f1f5f9; font-size: 1.1em;">-</strong>.
                     </p>
-                    <div style="margin: 15px 0;">
-                        <label style="display: block; font-size: 0.85em; color: #94a3b8; margin-bottom: 5px;">Strategy Track</label>
-                        <input type="text" id="modal-accept-track" readonly style="width: 100%; padding: 8px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #f8fafc;" />
+
+                    <!-- Strategy & Capital -->
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                        <div>
+                            <label style="display: block; font-size: 0.85em; color: #94a3b8; margin-bottom: 4px;">Strategy Track</label>
+                            <input type="text" id="modal-accept-track" readonly style="width: 100%; padding: 8px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #f8fafc; font-size: 0.85em;" />
+                        </div>
+                        <div>
+                            <label style="display: block; font-size: 0.85em; color: #94a3b8; margin-bottom: 4px;">Capital Allocation ($ USD)</label>
+                            <input type="number" id="modal-accept-capital" value="10000" min="1000" step="1000" onchange="refreshParameterAdvice()" style="width: 100%; padding: 8px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #f8fafc; font-size: 0.85em;" />
+                        </div>
                     </div>
-                    <div style="margin: 15px 0;">
-                        <label style="display: block; font-size: 0.85em; color: #94a3b8; margin-bottom: 5px;">Capital Allocation ($ USD)</label>
-                        <input type="number" id="modal-accept-capital" value="10000" min="1000" step="1000" style="width: 100%; padding: 8px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #f8fafc;" />
+
+                    <!-- Expert Parameter Advice Card -->
+                    <div id="modal-expert-advice-panel" style="background: rgba(15, 23, 42, 0.8); border: 1px solid #0284c7; border-radius: 8px; padding: 12px; margin: 14px 0;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                            <span style="font-weight: 600; font-size: 0.9em; color: #38bdf8; display: flex; align-items: center; gap: 6px;">
+                                <span>🧠</span> Expert Quant Advice
+                            </span>
+                            <span id="modal-advice-risk-badge" style="background: rgba(16, 185, 129, 0.2); color: #34d399; font-size: 0.75em; padding: 2px 8px; border-radius: 10px; font-weight: 600; border: 1px solid #10b981;">
+                                Moderate Risk
+                            </span>
+                        </div>
+                        <p id="modal-advice-summary" style="font-size: 0.82em; color: #cbd5e1; margin: 4px 0 8px 0; line-height: 1.4;">
+                            Calculating asset-tailored parameters...
+                        </p>
+                        <div id="modal-advice-bullets" style="font-size: 0.78em; color: #94a3b8; line-height: 1.35;">
+                        </div>
                     </div>
-                    <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 25px;">
-                        <button onclick="closeAcceptModal()" style="padding: 8px 16px; border-radius: 6px; border: 1px solid #475569; background: transparent; color: #cbd5e1; cursor: pointer;">
+
+                    <!-- Collapsible Advanced Config -->
+                    <details style="background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 10px 12px; margin: 12px 0;">
+                        <summary style="font-size: 0.85em; font-weight: 600; color: #38bdf8; cursor: pointer;">
+                            ⚙️ Review & Fine-Tune Parameters (Optional)
+                        </summary>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px;">
+                            <div>
+                                <label style="display: block; font-size: 0.8em; color: #94a3b8; margin-bottom: 3px;">Trailing Stop ATR Multiplier</label>
+                                <input type="number" id="modal-param-trailing-stop" step="0.1" min="1.0" max="5.0" style="width: 100%; padding: 6px 8px; border-radius: 5px; border: 1px solid #475569; background: #1e293b; color: #f8fafc; font-size: 0.85em;" />
+                            </div>
+                            <div>
+                                <label style="display: block; font-size: 0.8em; color: #94a3b8; margin-bottom: 3px;">Position Min Shares</label>
+                                <input type="number" id="modal-param-min-shares" min="1" step="1" style="width: 100%; padding: 6px 8px; border-radius: 5px; border: 1px solid #475569; background: #1e293b; color: #f8fafc; font-size: 0.85em;" />
+                            </div>
+                            <div>
+                                <label style="display: block; font-size: 0.8em; color: #94a3b8; margin-bottom: 3px;">Covered Call Mode</label>
+                                <select id="modal-param-cc-mode" style="width: 100%; padding: 6px 8px; border-radius: 5px; border: 1px solid #475569; background: #1e293b; color: #f8fafc; font-size: 0.85em;">
+                                    <option value="TOTAL_RETURN">TOTAL_RETURN (Growth Upside)</option>
+                                    <option value="INCOME">INCOME (Max Premium Yield)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label style="display: block; font-size: 0.8em; color: #94a3b8; margin-bottom: 3px;">Call Expiration (Days)</label>
+                                <input type="number" id="modal-param-call-exp-days" min="5" max="60" step="1" style="width: 100%; padding: 6px 8px; border-radius: 5px; border: 1px solid #475569; background: #1e293b; color: #f8fafc; font-size: 0.85em;" />
+                            </div>
+                        </div>
+                    </details>
+
+                    <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px;">
+                        <button onclick="closeAcceptModal()" style="padding: 8px 16px; border-radius: 6px; border: 1px solid #475569; background: transparent; color: #cbd5e1; cursor: pointer; font-size: 0.85em;">
                             Cancel
                         </button>
-                        <button id="modal-confirm-provision-btn" onclick="confirmProvisionBot()" style="padding: 8px 18px; border-radius: 6px; border: none; background: #10b981; color: white; font-weight: 600; cursor: pointer;">
+                        <button id="modal-confirm-provision-btn" onclick="confirmProvisionBot()" style="padding: 8px 18px; border-radius: 6px; border: none; background: #10b981; color: white; font-weight: 600; cursor: pointer; font-size: 0.85em;">
                             🚀 Provision Bot Now
                         </button>
                     </div>

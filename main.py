@@ -3207,15 +3207,75 @@ async def reject_stock_pick(request: Request):
         raise HTTPException(status_code=500, detail=f"Failed to reject stock pick: {str(e)}")
 
 
+@app.get("/api/stock-picks/parameter-advice")
+async def get_parameter_advice(
+    request: Request,
+    symbol: str,
+    strategy_track: str = "GROWTH",
+    capital_allocation: float = 10000.0
+):
+    """
+    Get dynamic Quant/AI expert parameter advice for a candidate symbol.
+    """
+    session_id = request.cookies.get("dashboard_session")
+    if not session_id or session_id not in authenticated_sessions:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    sym = symbol.upper().strip()
+    if not sym or not re.match(r"^[A-Z0-9.\-]{1,10}$", sym):
+        raise HTTPException(status_code=400, detail="Invalid ticker symbol")
+
+    from stockpicker.parameter_advisor import generate_expert_parameter_advice
+
+    price = None
+    atr_pct = None
+    iv = None
+    solvency = None
+
+    try:
+        cached = {}
+        with _stock_picks_cache['lock']:
+            cached = _stock_picks_cache.get('data') or {}
+        if not cached:
+            doc = dashboard_data.stock_picks_ref.document('current').get()
+            if doc.exists:
+                cached = doc.to_dict() or {}
+        all_picks = (cached.get("actionable_leads", []) +
+                     cached.get("growth_picks", []) +
+                     cached.get("income_picks", []) +
+                     cached.get("already_accepted", []))
+        match = next((p for p in all_picks if (p.get("ticker") or p.get("symbol") or "").upper() == sym), None)
+        if match:
+            price = match.get("current_price")
+            atr_val = match.get("est_atr_pct")
+            atr_pct = (atr_val / 100.0) if (atr_val and atr_val > 0) else None
+            iv = match.get("implied_volatility")
+            dossier = match.get("evidence_dossier") or {}
+            solvency = dossier.get("solvency_rating")
+    except Exception:
+        pass
+
+    advice = generate_expert_parameter_advice(
+        symbol=sym,
+        strategy_track=strategy_track,
+        capital_allocation=capital_allocation,
+        current_price=price,
+        est_atr_pct=atr_pct,
+        implied_volatility=iv,
+        solvency_rating=solvency
+    )
+    return advice
+
+
 @app.post("/api/stock-picks/provision-bot")
 async def provision_bot_from_pick(request: Request):
     """
-    Automated bot provisioning workflow:
+    Automated bot provisioning workflow with expert parameter tailoring and rollback:
     1. Allocate next sequential client_id
-    2. Instantiate bots/{symbol.lower()}.json using preset (mid_vol for growth, low_vol for income)
+    2. Instantiate bots/{symbol.lower()}.json using expert quant defaults or customized parameters
     3. Update bots.json registry
     4. Update Firestore stock_picks/current status to PROVISIONED
-    5. Invalidate caches
+    5. On error: rollback registry changes and record PROVISIONING_FAILED status with root-cause reason
     """
     session_id = request.cookies.get("dashboard_session")
     if not session_id or session_id not in authenticated_sessions:
@@ -3233,6 +3293,7 @@ async def provision_bot_from_pick(request: Request):
     strategy_track = (body.get("strategy_track") or "GROWTH").upper()
     capital_allocation = float(body.get("capital_allocation") or 10000.0)
     strategy = body.get("strategy", "sma_crossover")
+    custom_params = body.get("custom_params") or {}
 
     config_paths = [
         os.path.join(os.path.dirname(__file__), "..", "tradingbot-config", "bots.json"),
@@ -3244,10 +3305,15 @@ async def provision_bot_from_pick(request: Request):
             bots_config_path = p
             break
 
-    if not bots_config_path:
-        raise HTTPException(status_code=500, detail="bots.json configuration file not found")
+    stage = "LOCATING_CONFIG"
+    bots_json_modified = False
+    bot_id = f"{symbol.lower()}_sma"
 
     try:
+        if not bots_config_path:
+            raise RuntimeError("bots.json configuration file not found in known config paths")
+
+        stage = "UPDATING_BOTS_REGISTRY"
         with _bot_config_cache['lock']:
             with open(bots_config_path, "r") as f:
                 bots_config = json.load(f)
@@ -3265,7 +3331,6 @@ async def provision_bot_from_pick(request: Request):
 
             max_id = max([b.get("client_id", 0) for b in bots], default=2)
             next_id = max(3, max_id + 1)
-            bot_id = f"{symbol.lower()}_sma"
 
             new_bot_entry = {
                 "name": bot_id,
@@ -3281,10 +3346,12 @@ async def provision_bot_from_pick(request: Request):
 
             with open(bots_config_path, "w") as f:
                 json.dump(bots_config, f, indent=2)
+            bots_json_modified = True
 
             _bot_config_cache["config"] = None
             _bot_config_cache["mtime"] = None
 
+        stage = "WRITING_BOT_PARAMS"
         target_dirs = [
             os.path.join(os.path.dirname(bots_config_path), "bots")
         ]
@@ -3292,42 +3359,53 @@ async def provision_bot_from_pick(request: Request):
         if os.path.exists(alt_bot_dir) and alt_bot_dir not in target_dirs:
             target_dirs.append(alt_bot_dir)
 
+        from stockpicker.parameter_advisor import generate_expert_parameter_advice
+        advice = generate_expert_parameter_advice(
+            symbol=symbol,
+            strategy_track=strategy_track,
+            capital_allocation=capital_allocation
+        )
+        recommended = advice["recommended_params"]
+
         template_path = os.path.join(os.path.dirname(bots_config_path), "bots", "nvda.json")
         bot_params = {}
         if os.path.exists(template_path):
             with open(template_path, "r") as f:
                 bot_params = json.load(f)
-        else:
-            bot_params = {
-                "symbol": symbol,
-                "capital": {"capital_per_bucket_long": capital_allocation / 2.0, "capital_per_bucket_short": 1000.0, "buckets_per_group": 2},
-                "atr_parameters": {"atr_period": 14, "trailing_stop_atr_multiplier": 2.0, "position_min_shares": 100},
-                "covered_calls": {"use_covered_calls": True, "call_expiration_days": 7 if strategy_track == "GROWTH" else 30}
-            }
 
+        # Merge base with expert quant parameters
         bot_params["symbol"] = symbol
-        bot_params["description"] = f"{symbol} automated trader - {strategy_track} strategy"
-        if "capital" in bot_params:
-            bot_params["capital"]["capital_per_bucket_long"] = round(capital_allocation / 2.0, 2)
-        if "covered_calls" in bot_params:
-            if strategy_track == "INCOME":
-                bot_params["covered_calls"]["cc_mode"] = "INCOME"
-                bot_params["covered_calls"]["call_expiration_days"] = 30
-                bot_params["covered_calls"]["use_covered_calls"] = True
-            else:
-                bot_params["covered_calls"]["cc_mode"] = "TOTAL_RETURN"
-                bot_params["covered_calls"]["call_expiration_days"] = 7
-                bot_params["covered_calls"]["use_covered_calls"] = True
+        bot_params["description"] = f"{symbol} automated trader - {strategy_track} strategy ({advice['risk_tier']} risk)"
+
+        if "capital" not in bot_params:
+            bot_params["capital"] = {}
+        bot_params["capital"].update(recommended["capital"])
+        if custom_params.get("capital_per_bucket_long"):
+            bot_params["capital"]["capital_per_bucket_long"] = float(custom_params["capital_per_bucket_long"])
+
+        if "atr_parameters" not in bot_params:
+            bot_params["atr_parameters"] = {}
+        bot_params["atr_parameters"].update(recommended["atr_parameters"])
+        if custom_params.get("trailing_stop_atr_multiplier"):
+            bot_params["atr_parameters"]["trailing_stop_atr_multiplier"] = float(custom_params["trailing_stop_atr_multiplier"])
+        if custom_params.get("position_min_shares"):
+            bot_params["atr_parameters"]["position_min_shares"] = int(custom_params["position_min_shares"])
+
+        if "covered_calls" not in bot_params:
+            bot_params["covered_calls"] = {}
+        bot_params["covered_calls"].update(recommended["covered_calls"])
+        if custom_params.get("cc_mode"):
+            bot_params["covered_calls"]["cc_mode"] = custom_params["cc_mode"]
+        if custom_params.get("call_expiration_days"):
+            bot_params["covered_calls"]["call_expiration_days"] = int(custom_params["call_expiration_days"])
 
         for b_dir in target_dirs:
-            try:
-                os.makedirs(b_dir, exist_ok=True)
-                target_json = os.path.join(b_dir, f"{symbol.lower()}.json")
-                with open(target_json, "w") as f:
-                    json.dump(bot_params, f, indent=2)
-            except Exception as w_err:
-                logger.warning(f"Could not write bot params to {b_dir}: {w_err}")
+            os.makedirs(b_dir, exist_ok=True)
+            target_json = os.path.join(b_dir, f"{symbol.lower()}.json")
+            with open(target_json, "w") as f:
+                json.dump(bot_params, f, indent=2)
 
+        stage = "UPDATING_FIRESTORE"
         now_str = datetime.now(timezone.utc).isoformat()
         try:
             doc_ref = dashboard_data.stock_picks_ref.document("current")
@@ -3347,6 +3425,8 @@ async def provision_bot_from_pick(request: Request):
                     match["provisioned_at"] = now_str
                     match["dashboard_link"] = f"/bot/{bot_id}"
                     match["status_label"] = f"Bot Active (client_id: {next_id})"
+                    match.pop("provisioning_error", None)
+                    match.pop("failure_stage", None)
                 else:
                     already_accepted.append({
                         "symbol": symbol,
@@ -3376,14 +3456,70 @@ async def provision_bot_from_pick(request: Request):
             "bot_id": bot_id,
             "client_id": next_id,
             "symbol": symbol,
-            "message": f"Successfully provisioned bot {bot_id} (client_id: {next_id}) for {symbol}"
+            "message": f"Successfully provisioned bot {bot_id} (client_id: {next_id}) for {symbol}",
+            "applied_params": bot_params.get("capital")
         }
 
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.exception(f"Error provisioning bot for {symbol}")
-        raise HTTPException(status_code=500, detail=f"Failed to provision bot: {str(e)}")
+        logger.exception(f"Error provisioning bot for {symbol} at stage {stage}")
+        # Rollback bots.json addition if failure happened afterwards
+        if bots_json_modified and bots_config_path and os.path.exists(bots_config_path):
+            try:
+                with _bot_config_cache['lock']:
+                    with open(bots_config_path, "r") as f:
+                        rollback_cfg = json.load(f)
+                    rollback_cfg["bots"] = [b for b in rollback_cfg.get("bots", []) if b.get("name") != bot_id]
+                    with open(bots_config_path, "w") as f:
+                        json.dump(rollback_cfg, f, indent=2)
+                    _bot_config_cache["config"] = None
+                    _bot_config_cache["mtime"] = None
+                logger.info(f"Successfully rolled back bots.json entry for {bot_id}")
+            except Exception as rb_err:
+                logger.error(f"Rollback failed for {bot_id}: {rb_err}")
+
+        # Update Firestore with PROVISIONING_FAILED status and failure reason
+        try:
+            doc_ref = dashboard_data.stock_picks_ref.document("current")
+            doc = doc_ref.get()
+            if doc.exists:
+                data = doc.to_dict() or {}
+                now_fail = datetime.now(timezone.utc).isoformat()
+                suggested_actions = {
+                    "LOCATING_CONFIG": "Verify bots.json exists in tradingbot-config or config/ directory.",
+                    "UPDATING_BOTS_REGISTRY": "Inspect bots.json file write permissions and disk availability.",
+                    "WRITING_BOT_PARAMS": "Ensure config/bots/ directory exists with write permissions.",
+                    "UPDATING_FIRESTORE": "Check Firestore database connectivity and retry."
+                }
+                action_text = suggested_actions.get(stage, "Check application logs, verify permissions, and retry.")
+
+                for track_key in ["actionable_leads", "growth_picks", "income_picks"]:
+                    for item in data.get(track_key, []):
+                        if (item.get("ticker") or item.get("symbol") or "").upper() == symbol:
+                            item["status"] = "PROVISIONING_FAILED"
+                            item["failure_reason"] = str(e)
+                            item["failure_stage"] = stage
+                            item["failed_at"] = now_fail
+                            item["suggested_action"] = action_text
+
+                for item in data.get("already_accepted", []):
+                    if (item.get("ticker") or item.get("symbol") or "").upper() == symbol:
+                        item["status"] = "PROVISIONING_FAILED"
+                        item["failure_reason"] = str(e)
+                        item["failure_stage"] = stage
+                        item["failed_at"] = now_fail
+                        item["suggested_action"] = action_text
+
+                doc_ref.set(data)
+                with _stock_picks_cache["lock"]:
+                    _stock_picks_cache["data"] = None
+                    _stock_picks_cache["timestamp"] = None
+        except Exception as fs_fail_err:
+            logger.warning(f"Could not persist PROVISIONING_FAILED status to Firestore: {fs_fail_err}")
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Provisioning failed at stage [{stage}]: {str(e)}"
+        )
 
 
 
