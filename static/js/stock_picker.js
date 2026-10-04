@@ -1,13 +1,14 @@
 /**
- * StockPicker Tab - Display top 5 daily picks
- * Integrated with existing dashboard patterns
+ * StockPicker Tab - Dual-Track Leads, Evidence Dossier & HITL Gateway
  *
  * Features:
- * - On-demand execution with "Run Now" button
- * - Auto-refresh every 60 seconds
- * - Toast notifications instead of blocking alerts
- * - Loading states for better UX
- * - Error handling with retry suggestions
+ * - Dual-Track: Track 1 (Growth Equity) and Track 2 (Covered Call Income)
+ * - State-Aware: Previously accepted/provisioned stocks are stamped PROVISIONED
+ *   with direct bot links, while fresh leads are promoted into review slots.
+ * - Multi-Dimensional Evidence Dossier: Clickable SEC link, XAI thesis (3 bull / 3 risk),
+ *   institutional data, and options yield metrics.
+ * - HITL Provisioning Gateway: Accept & Provision Bot modal with capital allocation,
+ *   Reject modal with structured reason tags and 7-day cooldown.
  */
 
 // =============================================================================
@@ -16,21 +17,18 @@
 
 let stockPickerRefreshInterval = null;
 let isRunningStockPicker = false;
-let lastTabSwitchTime = 0;  // For debouncing tab switches
+let lastTabSwitchTime = 0;
+let rawStockPickerData = null;
+let currentTrackFilter = 'all';
+let selectedSymbolForAction = null;
+let selectedTrackForAction = null;
 
 
 // =============================================================================
-// TOAST NOTIFICATIONS (Better UX than alert())
+// TOAST NOTIFICATIONS
 // =============================================================================
 
-/**
- * Show a toast notification (non-blocking, auto-dismisses after 5 seconds).
- *
- * @param {string} message - Message to display
- * @param {string} type - 'info', 'success', 'error', or 'warning'
- */
 function showToast(message, type = 'info') {
-    // Create toast element
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
     toast.style.cssText = `
@@ -38,29 +36,25 @@ function showToast(message, type = 'info') {
         top: 20px;
         right: 20px;
         padding: 15px 20px;
-        background: ${type === 'success' ? '#27ae60' : type === 'error' ? '#e74c3c' : type === 'warning' ? '#f39c12' : '#3498db'};
+        background: ${type === 'success' ? '#10b981' : type === 'error' ? '#ef4444' : type === 'warning' ? '#f59e0b' : '#3b82f6'};
         color: white;
-        border-radius: 5px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-        z-index: 10000;
-        max-width: 400px;
+        border-radius: 8px;
+        box-shadow: 0 10px 15px -3px rgba(0,0,0,0.4);
+        z-index: 10002;
+        max-width: 420px;
         animation: slideIn 0.3s ease-out;
         font-size: 14px;
         line-height: 1.5;
     `;
     toast.textContent = message;
-
-    // Add to page
     document.body.appendChild(toast);
 
-    // Auto-remove after 5 seconds
     setTimeout(() => {
         toast.style.animation = 'slideOut 0.3s ease-in';
         setTimeout(() => toast.remove(), 300);
     }, 5000);
 }
 
-// Add CSS animation for toasts (inject once)
 if (!document.getElementById('toast-styles')) {
     const style = document.createElement('style');
     style.id = 'toast-styles';
@@ -73,32 +67,47 @@ if (!document.getElementById('toast-styles')) {
             from { transform: translateX(0); opacity: 1; }
             to { transform: translateX(400px); opacity: 0; }
         }
+        .dossier-drawer {
+            background: #0f172a;
+            border-left: 3px solid #38bdf8;
+            padding: 16px 20px;
+            font-size: 0.9em;
+            color: #cbd5e1;
+        }
+        .dossier-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+            margin-top: 10px;
+        }
+        .dossier-card {
+            background: #1e293b;
+            border-radius: 8px;
+            padding: 12px 14px;
+            border: 1px solid #334155;
+        }
+        .dossier-card h4 {
+            margin: 0 0 8px 0;
+            font-size: 0.95em;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
     `;
     document.head.appendChild(style);
 }
 
 
 // =============================================================================
-// MANUAL TRIGGER (Run Now Button)
+// MANUAL TRIGGER (Run Now)
 // =============================================================================
 
-/**
- * Trigger manual StockPicker run via POST /api/stock-picks/run.
- *
- * Features:
- * - Prevents concurrent runs (button disabled while running)
- * - Shows progress toast (non-blocking)
- * - Displays results or errors
- * - Auto-refreshes table on success
- */
 async function runStockPickerNow() {
-    // Prevent concurrent runs (check local flag)
     if (isRunningStockPicker) {
         showToast('StockPicker is already running. Please wait...', 'warning');
         return;
     }
 
-    // Disable button and update UI
     const runButton = document.getElementById('run-stockpicker-btn');
     if (runButton) {
         runButton.disabled = true;
@@ -106,21 +115,18 @@ async function runStockPickerNow() {
     }
 
     isRunningStockPicker = true;
-
-    // Show progress toast (non-blocking, unlike alert())
-    showToast('🔄 StockPicker running... This may take 30-90 seconds.', 'info');
+    showToast('🔄 Scanning dual-track markets with Gemini Flash & alternative data...', 'info');
 
     try {
         const response = await fetch('/api/stock-picks/run', {
             method: 'POST'
         });
 
-        // Handle HTTP errors
         if (!response.ok) {
             if (response.status === 429) {
-                throw new Error('Rate limit exceeded: 10 runs per hour. Please wait before trying again.');
+                throw new Error('Rate limit exceeded: 10 runs per hour.');
             } else if (response.status === 409) {
-                throw new Error('StockPicker is already running in another session. Please wait.');
+                throw new Error('StockPicker is already running in another session.');
             } else {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
@@ -128,20 +134,12 @@ async function runStockPickerNow() {
 
         const result = await response.json();
 
-        // Handle successful response
         if (result.status === 'success') {
             const pickCount = result.pick_count || 0;
             const duration = result.duration_seconds || 0;
-
-            showToast(
-                `✅ Success! Generated ${pickCount} picks in ${duration}s`,
-                'success'
-            );
-
-            // Reload picks immediately to show new results
+            showToast(`✅ Generated ${pickCount} picks in ${duration}s`, 'success');
             loadStockPicks();
         } else {
-            // Error response (status !== 'success')
             showToast(`❌ ${result.message || 'StockPicker run failed'}`, 'error');
         }
 
@@ -149,7 +147,6 @@ async function runStockPickerNow() {
         console.error('Failed to run StockPicker:', error);
         showToast(`❌ Failed to run StockPicker: ${error.message}`, 'error');
     } finally {
-        // Always re-enable button and reset flag
         isRunningStockPicker = false;
         if (runButton) {
             runButton.disabled = false;
@@ -160,27 +157,16 @@ async function runStockPickerNow() {
 
 
 // =============================================================================
-// DATA FETCHING (GET /api/stock-picks)
+// DATA FETCHING & FILTERING
 // =============================================================================
 
-/**
- * Load and display stock picks from API.
- *
- * Features:
- * - Shows loading state while fetching
- * - Updates metrics cards (pick count, avg explosiveness, last run time)
- * - Populates table with picks
- * - Handles empty states and errors gracefully
- */
 async function loadStockPicks() {
     const tbody = document.getElementById('stock-picks-tbody');
-
-    // Show loading state
-    if (tbody) {
+    if (tbody && !rawStockPickerData) {
         tbody.innerHTML = `
             <tr>
                 <td colspan="8" style="text-align:center; padding: 20px; color: #95a5a6;">
-                    ⏳ Loading picks...
+                    ⏳ Loading dual-track stock picks...
                 </td>
             </tr>
         `;
@@ -188,65 +174,24 @@ async function loadStockPicks() {
 
     try {
         const response = await fetch('/api/stock-picks');
-
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
         const data = await response.json();
+        rawStockPickerData = data;
 
-        // Check if data is stale or represents an error state
-        const isStaleOrError = (
-            !data.picks ||
-            data.picks.length === 0 ||
-            data.status === 'ranking_failed' ||
-            data.status === 'no_news' ||
-            data.status === 'error' ||
-            data.error
-        );
-
-        if (isStaleOrError) {
-            // Show clean "Press Run Now" message instead of stale error messages
-            document.getElementById('sp-pick-count').textContent = '-';
-            document.getElementById('sp-avg-explosive').textContent = '-';
-            document.getElementById('sp-last-run').textContent = 'Not run yet';
-
-            if (tbody) {
-                tbody.innerHTML = `
-                    <tr>
-                        <td colspan="8" style="text-align:center; padding: 40px; color: #95a5a6;">
-                            <div style="font-size: 1.1em; margin-bottom: 10px;">
-                                📊 No stock picks available
-                            </div>
-                            <div style="font-size: 1em; color: #3498db;">
-                                Press <strong>"▶️ Run Now"</strong> button to retrieve fresh picks
-                            </div>
-                        </td>
-                    </tr>
-                `;
-            }
-            return;
-        }
-
-        // Data is fresh - update metrics and table normally
         updateStockPickerMetrics(data);
-        updateStockPickerTable(data);
+        renderStockPicksTable();
 
     } catch (error) {
         console.error('Failed to load stock picks:', error);
-
-        // Network/API error - show error state
-        document.getElementById('sp-pick-count').textContent = 'Error';
-        document.getElementById('sp-avg-explosive').textContent = '-';
-        document.getElementById('sp-last-run').textContent = 'Error';
-
         if (tbody) {
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="8" style="text-align:center; color: #e74c3c; padding: 20px;">
+                    <td colspan="8" style="text-align:center; color: #ef4444; padding: 20px;">
                         <strong>Failed to load stock picks</strong><br>
-                        <span style="font-size: 0.9em;">${error.message}</span><br>
-                        <span style="font-size: 0.85em; color: #95a5a6;">Try refreshing the page</span>
+                        <span style="font-size: 0.9em;">${error.message}</span>
                     </td>
                 </tr>
             `;
@@ -254,220 +199,406 @@ async function loadStockPicks() {
     }
 }
 
+function filterStockPicks(filterType) {
+    currentTrackFilter = filterType;
+    document.querySelectorAll('.sp-tab-btn').forEach(btn => {
+        btn.classList.remove('active');
+        btn.style.background = '#1a202c';
+        btn.style.color = '#cbd5e0';
+    });
+
+    const activeBtn = document.getElementById(`sp-filter-${filterType}`);
+    if (activeBtn) {
+        activeBtn.classList.add('active');
+        activeBtn.style.background = '#2d3748';
+        activeBtn.style.color = '#ffffff';
+    }
+
+    renderStockPicksTable();
+}
+
 
 // =============================================================================
-// UI UPDATES
+// UI RENDERING
 // =============================================================================
 
-/**
- * Update metrics cards with pick data.
- *
- * Updates:
- * - Active pick count
- * - Average explosiveness score
- * - Last run timestamp (formatted as "Aug 12, 2:30 PM")
- * - Data sources used (if element exists)
- *
- * @param {Object} data - Stock picks data from API
- */
 function updateStockPickerMetrics(data) {
-    // Pick count
-    const pickCount = data.pick_count || 0;
-    const pickCountEl = document.getElementById('sp-pick-count');
-    if (pickCountEl) {
-        pickCountEl.textContent = pickCount;
-    }
+    const growthCount = data.summary?.growth_actionable_count ?? (data.growth_picks ? data.growth_picks.length : 0);
+    const incomeCount = data.summary?.income_actionable_count ?? (data.income_picks ? data.income_picks.length : 0);
+    const acceptedCount = data.summary?.already_accepted_count ?? (data.already_accepted ? data.already_accepted.length : 0);
 
-    // Average explosiveness (formatted to 1 decimal place)
-    const avgExplosive = data.avg_explosiveness || 0;
-    const avgExplosiveEl = document.getElementById('sp-avg-explosive');
-    if (avgExplosiveEl) {
-        avgExplosiveEl.textContent = avgExplosive.toFixed(1);
-    }
+    const elGrowth = document.getElementById('sp-growth-count');
+    if (elGrowth) elGrowth.textContent = growthCount;
 
-    // Last run timestamp (formatted as human-readable)
-    let lastRunText = 'Never';
-    if (data.run_timestamp) {
+    const elIncome = document.getElementById('sp-income-count');
+    if (elIncome) elIncome.textContent = incomeCount;
+
+    const elAccepted = document.getElementById('sp-accepted-count');
+    if (elAccepted) elAccepted.textContent = acceptedCount;
+
+    const elTabAccepted = document.getElementById('sp-tab-accepted-num');
+    if (elTabAccepted) elTabAccepted.textContent = acceptedCount;
+
+    const elLastRun = document.getElementById('sp-last-run');
+    if (elLastRun && data.run_timestamp) {
         try {
             const runDate = new Date(data.run_timestamp);
-            lastRunText = runDate.toLocaleString('en-US', {
+            elLastRun.textContent = runDate.toLocaleString('en-US', {
                 month: 'short',
                 day: 'numeric',
                 hour: '2-digit',
                 minute: '2-digit'
             });
         } catch (e) {
-            // If date parsing fails, use raw timestamp
-            lastRunText = data.run_timestamp;
+            elLastRun.textContent = data.run_timestamp;
         }
-    }
-    const lastRunEl = document.getElementById('sp-last-run');
-    if (lastRunEl) {
-        lastRunEl.textContent = lastRunText;
-    }
-
-    // Update sources indicator (optional element)
-    const sourcesEl = document.getElementById('sp-sources-used');
-    if (sourcesEl && data.sources_used) {
-        sourcesEl.textContent = data.sources_used.join(', ');
     }
 }
 
-
-/**
- * Update the stock picks table with data.
- *
- * Features:
- * - Displays 8 columns per pick (rank, industry, ticker, scores, catalyst, metrics)
- * - Color-coded metrics (green for good, red for bad)
- * - Truncates long catalyst text with ellipsis
- * - Shows empty state with clear message if no picks
- *
- * @param {Object} data - Stock picks data from API
- */
-function updateStockPickerTable(data) {
+function renderStockPicksTable() {
     const tbody = document.getElementById('stock-picks-tbody');
-    if (!tbody) return;
+    if (!tbody || !rawStockPickerData) return;
 
-    // Handle empty state (no picks available)
-    if (!data.picks || data.picks.length === 0) {
-        const message = data.message || 'No picks available yet';
-        const suggestion = data.status === 'empty'
-            ? '<br><span style="font-size: 0.9em; color: #3498db;">Click "▶️ Run Now" to generate picks</span>'
-            : '';
+    const data = rawStockPickerData;
+    let listToRender = [];
 
+    const growthList = data.growth_picks || (data.picks || []).filter(p => p.strategy_track === 'GROWTH' && p.status === 'PENDING_REVIEW');
+    const incomeList = data.income_picks || (data.picks || []).filter(p => p.strategy_track === 'INCOME' && p.status === 'PENDING_REVIEW');
+    const alreadyAccepted = data.already_accepted || (data.picks || []).filter(p => p.status === 'PROVISIONED' || p.status === 'ACCEPTED');
+
+    if (currentTrackFilter === 'growth') {
+        listToRender = growthList;
+    } else if (currentTrackFilter === 'income') {
+        listToRender = incomeList;
+    } else if (currentTrackFilter === 'accepted') {
+        listToRender = alreadyAccepted;
+    } else {
+        // 'all': Show actionable leads first, followed by already provisioned
+        listToRender = [...growthList, ...incomeList, ...alreadyAccepted];
+    }
+
+    if (!listToRender || listToRender.length === 0) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="8" style="text-align:center; padding: 20px; color: #95a5a6;">
-                    ${message}${suggestion}
+                <td colspan="8" style="text-align:center; padding: 40px; color: #94a3b8;">
+                    <div style="font-size: 1.1em; margin-bottom: 8px;">No candidates in this view</div>
+                    <div style="font-size: 0.9em; color: #38bdf8;">Click "▶️ Run Now" to scan fresh market opportunities</div>
                 </td>
             </tr>
         `;
         return;
     }
 
-    // Populate table with picks
-    tbody.innerHTML = data.picks.map((pick, index) => {
+    tbody.innerHTML = listToRender.map((pick, index) => {
         const rank = index + 1;
-        const ticker = pick.ticker || '-';
-        const industry = pick.industry || 'Unknown';
-        const composite = pick.composite_score || 0;
-        const explosive = pick.explosiveness || 0;
-        const fundamental = pick.fundamental_score;
-        const catalyst = pick.catalyst || '';
+        const sym = pick.ticker || pick.symbol || '-';
+        const track = pick.strategy_track || 'GROWTH';
+        const score = pick.composite_score != null ? pick.composite_score.toFixed(1) : (pick.score != null ? pick.score.toFixed(1) : '-');
+        const status = pick.status || 'PENDING_REVIEW';
+        const catalyst = pick.catalyst || pick.fundamental_reasons || 'Algorithmically identified opportunity';
+        const dossier = pick.evidence_dossier || {};
+
+        const trackBadge = track === 'INCOME'
+            ? `<span style="background: rgba(16,185,129,0.15); color: #34d399; border: 1px solid #059669; padding: 3px 8px; border-radius: 12px; font-size: 0.75em; font-weight: 600;">🛡️ Income</span>`
+            : `<span style="background: rgba(129,140,248,0.15); color: #a5b4fc; border: 1px solid #4f46e5; padding: 3px 8px; border-radius: 12px; font-size: 0.75em; font-weight: 600;">🚀 Growth</span>`;
+
+        let statusBadge = '';
+        let actionButtons = '';
+
+        if (status === 'PROVISIONED') {
+            const botId = pick.bot_id || `${sym.lower()}_sma`;
+            statusBadge = `<span style="background: rgba(16,185,129,0.2); color: #10b981; border: 1px solid #10b981; padding: 4px 10px; border-radius: 12px; font-size: 0.8em; font-weight: 600;">🤖 ${pick.status_label || 'Bot Active'}</span>`;
+            actionButtons = `
+                <a href="${pick.dashboard_link || `/bot/${botId}`}" style="display: inline-block; padding: 6px 12px; border-radius: 6px; background: #3b82f6; color: white; text-decoration: none; font-size: 0.85em; font-weight: 600;">
+                    📊 View Bot Focus
+                </a>
+            `;
+        } else if (status === 'ACCEPTED') {
+            statusBadge = `<span style="background: rgba(59,130,246,0.2); color: #60a5fa; border: 1px solid #3b82f6; padding: 4px 10px; border-radius: 12px; font-size: 0.8em; font-weight: 600;">🔵 Accepted</span>`;
+            actionButtons = `
+                <button onclick="openAcceptModal('${sym}', '${track}')" style="padding: 6px 12px; border-radius: 6px; border: none; background: #10b981; color: white; font-size: 0.85em; font-weight: 600; cursor: pointer;">
+                    🚀 Provision Bot
+                </button>
+            `;
+        } else if (status === 'REJECTED') {
+            statusBadge = `<span style="background: rgba(239,68,68,0.2); color: #f87171; border: 1px solid #ef4444; padding: 4px 10px; border-radius: 12px; font-size: 0.8em; font-weight: 600;">🔴 Rejected</span>`;
+            actionButtons = `<span style="font-size: 0.8em; color: #94a3b8;">In 7-day cooldown</span>`;
+        } else {
+            // PENDING_REVIEW
+            statusBadge = `<span style="background: rgba(245,158,11,0.2); color: #fbbf24; border: 1px solid #f59e0b; padding: 4px 10px; border-radius: 12px; font-size: 0.8em; font-weight: 600;">🟡 Actionable Lead</span>`;
+            actionButtons = `
+                <div style="display: flex; gap: 6px; justify-content: center;">
+                    <button onclick="openAcceptModal('${sym}', '${track}')" title="Accept & Provision Bot" style="padding: 5px 10px; border-radius: 5px; border: none; background: #10b981; color: white; font-size: 0.8em; font-weight: 600; cursor: pointer;">
+                        ✅ Accept
+                    </button>
+                    <button onclick="openRejectModal('${sym}')" title="Reject candidate" style="padding: 5px 10px; border-radius: 5px; border: none; background: #ef4444; color: white; font-size: 0.8em; font-weight: 600; cursor: pointer;">
+                        ❌ Reject
+                    </button>
+                </div>
+            `;
+        }
+
+        const metricsHtml = formatPickMetrics(pick);
 
         return `
-            <tr>
-                <td style="text-align: center; padding: 12px 8px;"><strong style="font-size: 1.1em;">${rank}</strong></td>
-                <td style="padding: 12px 8px;"><span class="badge badge-industry">${industry}</span></td>
-                <td style="text-align: center; padding: 12px 8px;"><strong style="font-size: 1.1em; color: #3498db;">${ticker}</strong></td>
-                <td style="text-align: right; font-weight: 600; color: #2ecc71; padding: 12px 12px;">${composite.toFixed(1)}</td>
-                <td style="text-align: right; color: ${explosive > 0 ? '#e67e22' : '#95a5a6'}; padding: 12px 12px;">${explosive.toFixed(1)}</td>
-                <td style="text-align: right; color: #3498db; padding: 12px 12px;">${fundamental != null ? fundamental.toFixed(1) : '-'}</td>
-                <td class="catalyst-cell" title="${catalyst}">${catalyst}</td>
-                <td class="metrics-cell">${formatPickMetrics(pick)}</td>
+            <tr style="border-bottom: 1px solid #334155;">
+                <td style="text-align: center; padding: 12px 6px;"><strong>${rank}</strong></td>
+                <td style="padding: 12px 8px;">${trackBadge}</td>
+                <td style="text-align: center; padding: 12px 8px;"><strong style="color: #38bdf8; font-size: 1.1em;">${sym}</strong></td>
+                <td style="text-align: right; font-weight: 700; color: #10b981; padding: 12px 8px;">${score}</td>
+                <td style="text-align: center; padding: 12px 8px;">${statusBadge}</td>
+                <td style="padding: 12px 10px; font-size: 0.9em; max-width: 320px;" title="${catalyst}">
+                    ${catalyst.length > 80 ? catalyst.substring(0, 80) + '...' : catalyst}
+                </td>
+                <td style="padding: 12px 10px; font-size: 0.85em;">
+                    <div>${metricsHtml}</div>
+                    <div style="margin-top: 4px;">
+                        <button onclick="toggleDossier('${sym}')" style="background: transparent; border: 1px solid #475569; color: #38bdf8; border-radius: 4px; padding: 2px 8px; font-size: 0.8em; cursor: pointer;">
+                            🔍 Evidence Dossier
+                        </button>
+                    </div>
+                </td>
+                <td style="text-align: center; padding: 12px 8px;">
+                    ${actionButtons}
+                </td>
+            </tr>
+            <tr id="dossier-row-${sym}" style="display: none;">
+                <td colspan="8" style="padding: 0;">
+                    <div class="dossier-drawer">
+                        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; padding-bottom: 8px;">
+                            <div>
+                                <strong style="color: #38bdf8; font-size: 1.05em;">Multi-Dimensional Evidence Dossier: ${sym}</strong>
+                                <span style="margin-left: 10px; font-size: 0.85em; color: #94a3b8;">${dossier.industry || pick.industry || ''}</span>
+                            </div>
+                            <div>
+                                <a href="${dossier.sec_filing_url || 'https://www.sec.gov/edgar/searchedgar/companysearch'}" target="_blank" rel="noopener noreferrer" style="color: #38bdf8; text-decoration: underline; font-weight: 600; font-size: 0.85em;">
+                                    🔗 Clickable SEC EDGAR Filing
+                                </a>
+                            </div>
+                        </div>
+
+                        <div class="dossier-grid">
+                            <!-- Bull Drivers -->
+                            <div class="dossier-card">
+                                <h4 style="color: #34d399;">🐂 Key Bull Drivers</h4>
+                                <ul style="margin: 0; padding-left: 18px; font-size: 0.85em; color: #f1f5f9;">
+                                    ${(dossier.bull_drivers || ['Strong revenue growth momentum', 'Institutional order flow alignment']).map(d => `<li style="margin-bottom: 4px;">${d}</li>`).join('')}
+                                </ul>
+                            </div>
+
+                            <!-- Risk Warnings -->
+                            <div class="dossier-card">
+                                <h4 style="color: #f87171;">⚠️ Key Risk Warnings</h4>
+                                <ul style="margin: 0; padding-left: 18px; font-size: 0.85em; color: #f1f5f9;">
+                                    ${(dossier.risk_warnings || ['Market regime volatility sensitivity', 'Macro cyclical exposure']).map(r => `<li style="margin-bottom: 4px;">${r}</li>`).join('')}
+                                </ul>
+                            </div>
+
+                            <!-- Alternative Data & Solvency -->
+                            <div class="dossier-card">
+                                <h4 style="color: #38bdf8;">🏛️ Alternative Data & Catalysts</h4>
+                                <div style="font-size: 0.85em; color: #cbd5e1;">
+                                    <div><strong>USAspending Awards:</strong> ${(dossier.usaspending_contracts && dossier.usaspending_contracts.length) ? `${dossier.usaspending_contracts.length} active awards` : 'No recent public federal awards'}</div>
+                                    <div style="margin-top: 4px;"><strong>Congressional Trading:</strong> ${(dossier.congressional_trades && dossier.congressional_trades.length) ? `${dossier.congressional_trades.length} filings detected` : 'Neutral insider/congressional flow'}</div>
+                                    <div style="margin-top: 4px;"><strong>Solvency Rating:</strong> ${dossier.solvency_rating || 'Adequate'}</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </td>
             </tr>
         `;
     }).join('');
 }
 
+function toggleDossier(sym) {
+    const row = document.getElementById(`dossier-row-${sym}`);
+    if (row) {
+        row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
+    }
+}
 
-/**
- * Format key financial metrics for display.
- *
- * Formats metrics with color coding:
- * - Revenue YoY: Green if positive, red if negative
- * - Gross/Operating Margin: Percentage display
- * - Debt/Equity: Green if < 100, red if > 250, gray otherwise
- * - Current Ratio: Green if >= 1.2, red if < 1.2
- *
- * @param {Object} pick - Pick object with financial metrics
- * @returns {string} HTML string with formatted metrics
- */
 function formatPickMetrics(pick) {
     const metrics = [];
-
-    // Revenue YoY (most important metric)
-    if (pick.revenue_yoy != null) {
-        const revPercent = (pick.revenue_yoy * 100).toFixed(0);
-        const revColor = pick.revenue_yoy > 0 ? '#27ae60' : '#e74c3c';
-        metrics.push(`<span style="color: ${revColor}">Rev: ${revPercent}%</span>`);
+    if (pick.strategy_track === 'INCOME') {
+        if (pick.monthly_yield_est != null) {
+            metrics.push(`<span style="color: #10b981; font-weight: 600;">Monthly: ${pick.monthly_yield_est}%</span>`);
+        }
+        if (pick.annualized_yield_est != null) {
+            metrics.push(`<span>Ann: ${pick.annualized_yield_est}%</span>`);
+        }
+        if (pick.implied_volatility != null) {
+            metrics.push(`<span>IV: ${pick.implied_volatility}%</span>`);
+        }
+    } else {
+        if (pick.revenue_yoy != null) {
+            const revPercent = (pick.revenue_yoy * 100).toFixed(0);
+            const revColor = pick.revenue_yoy > 0 ? '#10b981' : '#ef4444';
+            metrics.push(`<span style="color: ${revColor}">Rev: ${revPercent}%</span>`);
+        }
+        if (pick.gross_margin != null) {
+            metrics.push(`GM: ${(pick.gross_margin * 100).toFixed(0)}%`);
+        }
+        if (pick.debt_to_equity != null) {
+            const de = pick.debt_to_equity.toFixed(0);
+            const deColor = pick.debt_to_equity < 100 ? '#10b981' : (pick.debt_to_equity > 250 ? '#ef4444' : '#94a3b8');
+            metrics.push(`<span style="color: ${deColor}">D/E: ${de}</span>`);
+        }
     }
 
-    // Gross Margin
-    if (pick.gross_margin != null) {
-        const gmPercent = (pick.gross_margin * 100).toFixed(0);
-        metrics.push(`GM: ${gmPercent}%`);
-    }
-
-    // Operating Margin
-    if (pick.operating_margin != null) {
-        const omPercent = (pick.operating_margin * 100).toFixed(0);
-        metrics.push(`OM: ${omPercent}%`);
-    }
-
-    // Debt to Equity (<100 good, >250 bad)
-    if (pick.debt_to_equity != null) {
-        const de = pick.debt_to_equity.toFixed(0);
-        const deColor = pick.debt_to_equity < 100
-            ? '#27ae60'  // Green: low debt
-            : (pick.debt_to_equity > 250 ? '#e74c3c' : '#95a5a6');  // Red: high debt, Gray: medium
-        metrics.push(`<span style="color: ${deColor}">D/E: ${de}</span>`);
-    }
-
-    // Current Ratio (>=1.2 good, <1.2 bad)
-    if (pick.current_ratio != null) {
-        const cr = pick.current_ratio.toFixed(1);
-        const crColor = pick.current_ratio >= 1.2 ? '#27ae60' : '#e74c3c';
-        metrics.push(`<span style="color: ${crColor}">CR: ${cr}</span>`);
-    }
-
-    // Join metrics with separator (or show dash if none available)
-    return metrics.length > 0
-        ? metrics.join(' <span style="color: #95a5a6;">|</span> ')
-        : '-';
+    return metrics.length > 0 ? metrics.join(' | ') : '-';
 }
 
 
 // =============================================================================
-// AUTO-REFRESH
+// HITL PROVISIONING & REJECT MODALS
 // =============================================================================
 
-/**
- * Start auto-refresh for stock picker tab (60-second interval).
- *
- * Features:
- * - Debouncing to prevent rapid tab switches from creating multiple intervals
- * - Immediate load on start
- * - Safe interval cleanup
- */
-function startStockPickerRefresh() {
-    // Debounce rapid tab switches (prevent multiple intervals)
-    const now = Date.now();
-    if (now - lastTabSwitchTime < 1000) {
-        return;  // Ignore if last switch was < 1 second ago
+function openAcceptModal(sym, track) {
+    selectedSymbolForAction = sym;
+    selectedTrackForAction = track;
+
+    const elSym = document.getElementById('modal-accept-symbol');
+    const elTrack = document.getElementById('modal-accept-track');
+    const modal = document.getElementById('sp-accept-modal');
+
+    if (elSym) elSym.textContent = sym;
+    if (elTrack) elTrack.value = track === 'INCOME' ? 'Track 2: Covered Call Income' : 'Track 1: Growth Equity';
+    if (modal) modal.style.display = 'block';
+}
+
+function closeAcceptModal() {
+    const modal = document.getElementById('sp-accept-modal');
+    if (modal) modal.style.display = 'none';
+    selectedSymbolForAction = null;
+    selectedTrackForAction = null;
+}
+
+async function confirmProvisionBot() {
+    if (!selectedSymbolForAction) return;
+
+    const sym = selectedSymbolForAction;
+    const track = selectedTrackForAction || 'GROWTH';
+    const capitalInput = document.getElementById('modal-accept-capital');
+    const capital = capitalInput ? parseFloat(capitalInput.value) || 10000 : 10000;
+
+    const btn = document.getElementById('modal-confirm-provision-btn');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '⏳ Provisioning...';
     }
+
+    try {
+        const response = await fetch('/api/stock-picks/provision-bot', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                symbol: sym,
+                strategy_track: track,
+                capital_allocation: capital
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Provisioning failed: ${response.statusText}`);
+        }
+
+        const res = await response.json();
+        showToast(`✅ Successfully provisioned bot ${res.bot_id} (client_id: ${res.client_id})!`, 'success');
+        closeAcceptModal();
+        loadStockPicks();
+
+    } catch (e) {
+        console.error('Error provisioning bot:', e);
+        showToast(`❌ Provisioning error: ${e.message}`, 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = '🚀 Provision Bot Now';
+        }
+    }
+}
+
+function openRejectModal(sym) {
+    selectedSymbolForAction = sym;
+    const elSym = document.getElementById('modal-reject-symbol');
+    const modal = document.getElementById('sp-reject-modal');
+
+    if (elSym) elSym.textContent = sym;
+    if (modal) modal.style.display = 'block';
+}
+
+function closeRejectModal() {
+    const modal = document.getElementById('sp-reject-modal');
+    if (modal) modal.style.display = 'none';
+    selectedSymbolForAction = null;
+}
+
+async function confirmRejectLead() {
+    if (!selectedSymbolForAction) return;
+
+    const sym = selectedSymbolForAction;
+    const reasonEl = document.getElementById('modal-reject-reason');
+    const notesEl = document.getElementById('modal-reject-notes');
+
+    const reason = reasonEl ? reasonEl.value : 'OPERATOR_DISCRETION';
+    const notes = notesEl ? notesEl.value : '';
+
+    const btn = document.getElementById('modal-confirm-reject-btn');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '⏳ Processing...';
+    }
+
+    try {
+        const response = await fetch('/api/stock-picks/reject', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                symbol: sym,
+                reason: reason,
+                notes: notes
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Rejection failed: ${response.statusText}`);
+        }
+
+        showToast(`Candidate ${sym} rejected (7-day cooldown applied)`, 'info');
+        closeRejectModal();
+        loadStockPicks();
+
+    } catch (e) {
+        console.error('Error rejecting candidate:', e);
+        showToast(`❌ Error rejecting: ${e.message}`, 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Confirm Rejection';
+        }
+    }
+}
+
+
+// =============================================================================
+// AUTO-REFRESH & TAB HOOKS
+// =============================================================================
+
+function startStockPickerRefresh() {
+    const now = Date.now();
+    if (now - lastTabSwitchTime < 1000) return;
     lastTabSwitchTime = now;
 
-    // Clear any existing interval
     if (stockPickerRefreshInterval) {
         clearInterval(stockPickerRefreshInterval);
         stockPickerRefreshInterval = null;
     }
 
-    // Load immediately
     loadStockPicks();
-
-    // Refresh every 60 seconds
     stockPickerRefreshInterval = setInterval(loadStockPicks, 60000);
 }
 
-
-/**
- * Stop auto-refresh when leaving tab.
- *
- * Cleanup function to prevent unnecessary API calls when tab not visible.
- */
 function stopStockPickerRefresh() {
     if (stockPickerRefreshInterval) {
         clearInterval(stockPickerRefreshInterval);
@@ -475,31 +606,30 @@ function stopStockPickerRefresh() {
     }
 }
 
-
-/**
- * Called when Stock Picker tab becomes active.
- * Hook this into your existing tab switching logic.
- */
 function onStockPickerTabActive() {
     startStockPickerRefresh();
 }
 
-
-/**
- * Called when Stock Picker tab becomes inactive.
- */
 function onStockPickerTabInactive() {
     stopStockPickerRefresh();
 }
 
 
 // =============================================================================
-// EXPORTS (Make functions available globally)
+// EXPORTS
 // =============================================================================
 
 if (typeof window !== 'undefined') {
     window.loadStockPicks = loadStockPicks;
     window.runStockPickerNow = runStockPickerNow;
+    window.filterStockPicks = filterStockPicks;
+    window.toggleDossier = toggleDossier;
+    window.openAcceptModal = openAcceptModal;
+    window.closeAcceptModal = closeAcceptModal;
+    window.confirmProvisionBot = confirmProvisionBot;
+    window.openRejectModal = openRejectModal;
+    window.closeRejectModal = closeRejectModal;
+    window.confirmRejectLead = confirmRejectLead;
     window.startStockPickerRefresh = startStockPickerRefresh;
     window.stopStockPickerRefresh = stopStockPickerRefresh;
     window.onStockPickerTabActive = onStockPickerTabActive;
