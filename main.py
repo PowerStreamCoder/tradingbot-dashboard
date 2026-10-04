@@ -26,6 +26,7 @@ from typing import List, Dict, Optional, Literal  # v5.0.0: Added Literal for tr
 from pydantic import BaseModel
 from google.cloud import firestore
 import os
+import re
 import json
 from io import BytesIO
 import xlsxwriter
@@ -3075,8 +3076,8 @@ async def accept_stock_pick(request: Request):
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
     symbol = (body.get("symbol") or "").upper().strip()
-    if not symbol:
-        raise HTTPException(status_code=400, detail="Missing symbol")
+    if not symbol or not re.match(r"^[A-Z0-9.\-]{1,10}$", symbol):
+        raise HTTPException(status_code=400, detail="Invalid ticker symbol")
 
     notes = body.get("notes", "")
 
@@ -3154,8 +3155,8 @@ async def reject_stock_pick(request: Request):
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
     symbol = (body.get("symbol") or "").upper().strip()
-    if not symbol:
-        raise HTTPException(status_code=400, detail="Missing symbol")
+    if not symbol or not re.match(r"^[A-Z0-9.\-]{1,10}$", symbol):
+        raise HTTPException(status_code=400, detail="Invalid ticker symbol")
 
     reason = body.get("reason", "OPERATOR_DISCRETION")
     notes = body.get("notes", "")
@@ -3226,8 +3227,8 @@ async def provision_bot_from_pick(request: Request):
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
     symbol = (body.get("symbol") or "").upper().strip()
-    if not symbol:
-        raise HTTPException(status_code=400, detail="Missing symbol")
+    if not symbol or not re.match(r"^[A-Z0-9.\-]{1,10}$", symbol):
+        raise HTTPException(status_code=400, detail="Invalid ticker symbol")
 
     strategy_track = (body.get("strategy_track") or "GROWTH").upper()
     capital_allocation = float(body.get("capital_allocation") or 10000.0)
@@ -3247,38 +3248,42 @@ async def provision_bot_from_pick(request: Request):
         raise HTTPException(status_code=500, detail="bots.json configuration file not found")
 
     try:
-        with open(bots_config_path, "r") as f:
-            bots_config = json.load(f)
+        with _bot_config_cache['lock']:
+            with open(bots_config_path, "r") as f:
+                bots_config = json.load(f)
 
-        bots = bots_config.get("bots", [])
-        for b in bots:
-            if b.get("symbol", "").upper() == symbol:
-                return {
-                    "status": "already_exists",
-                    "symbol": symbol,
-                    "bot_id": b.get("name"),
-                    "client_id": b.get("client_id"),
-                    "message": f"Bot for {symbol} is already registered as {b.get('name')} (client_id: {b.get('client_id')})"
-                }
+            bots = bots_config.get("bots", [])
+            for b in bots:
+                if b.get("symbol", "").upper() == symbol:
+                    return {
+                        "status": "already_exists",
+                        "symbol": symbol,
+                        "bot_id": b.get("name"),
+                        "client_id": b.get("client_id"),
+                        "message": f"Bot for {symbol} is already registered as {b.get('name')} (client_id: {b.get('client_id')})"
+                    }
 
-        max_id = max([b.get("client_id", 0) for b in bots], default=2)
-        next_id = max(3, max_id + 1)
-        bot_id = f"{symbol.lower()}_sma"
+            max_id = max([b.get("client_id", 0) for b in bots], default=2)
+            next_id = max(3, max_id + 1)
+            bot_id = f"{symbol.lower()}_sma"
 
-        new_bot_entry = {
-            "name": bot_id,
-            "symbol": symbol,
-            "client_id": next_id,
-            "script": "bots/UniversalSMABot.py",
-            "strategy": strategy,
-            "enabled": True,
-            "description": f"{symbol} SMA 5/20 trader ({strategy_track.lower()})"
-        }
-        bots.append(new_bot_entry)
-        bots_config["bots"] = bots
+            new_bot_entry = {
+                "name": bot_id,
+                "symbol": symbol,
+                "client_id": next_id,
+                "script": "bots/UniversalSMABot.py",
+                "strategy": strategy,
+                "enabled": True,
+                "description": f"{symbol} SMA 5/20 trader ({strategy_track.lower()})"
+            }
+            bots.append(new_bot_entry)
+            bots_config["bots"] = bots
 
-        with open(bots_config_path, "w") as f:
-            json.dump(bots_config, f, indent=2)
+            with open(bots_config_path, "w") as f:
+                json.dump(bots_config, f, indent=2)
+
+            _bot_config_cache["config"] = None
+            _bot_config_cache["mtime"] = None
 
         target_dirs = [
             os.path.join(os.path.dirname(bots_config_path), "bots")
