@@ -485,6 +485,16 @@
                     <div style="font-size: 0.85em; opacity: 0.9; margin-bottom: 5px;">Last Scanned</div>
                     <div style="font-size: 1.1em; font-weight: bold;" id="sp-last-run">-</div>
                 </div>
+                <div class="metric-card" id="sp-data-quality-card" style="background: linear-gradient(135deg, #1e293b 0%, #334155 100%); padding: 16px; border-radius: 12px; color: white;">
+                    <div style="font-size: 0.85em; opacity: 0.9; margin-bottom: 5px;">Data Integrity</div>
+                    <div style="font-size: 1.2em; font-weight: bold;" id="sp-data-quality-val">FULL</div>
+                </div>
+            </div>
+
+            <!-- Run-Level Degradation Alert Banner -->
+            <div id="sp-degradation-alert" style="display: none; margin-bottom: 15px; padding: 10px 16px; background: rgba(245,158,11,0.15); border: 1px solid #f59e0b; border-radius: 8px; color: #fbbf24; font-size: 0.88em; align-items: center; gap: 8px;">
+                <span>⚠️</span>
+                <span id="sp-degradation-alert-text">Scoring degraded on some candidates due to missing/incomplete data feeds.</span>
             </div>
 
             <!-- Track Filter Selector -->
@@ -537,6 +547,14 @@
                     <p style="color: #94a3b8; font-size: 0.9em; margin-bottom: 12px;">
                         Provision an automated trading bot for <strong id="modal-accept-symbol" style="color: #f1f5f9; font-size: 1.1em;">-</strong>.
                     </p>
+
+                    <!-- Data Degradation Alert in Modal -->
+                    <div id="modal-degradation-warning" style="display: none; background: rgba(245, 158, 11, 0.15); border: 1px solid #f59e0b; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; font-size: 0.82em; color: #fbbf24;">
+                        <div style="font-weight: 600; margin-bottom: 3px; display: flex; align-items: center; gap: 6px;">
+                            <span>⚠️</span> Incomplete Data & Scoring Degradation Alert
+                        </div>
+                        <div id="modal-degradation-details" style="color: #fef08a; line-height: 1.35;"></div>
+                    </div>
 
                     <!-- Strategy & Capital -->
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">

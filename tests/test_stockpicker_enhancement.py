@@ -12,8 +12,9 @@ import pytest
 from unittest.mock import patch, MagicMock, mock_open
 from datetime import datetime, timezone, timedelta
 
-from stockpicker.core import build_evidence_dossier
+from stockpicker.core import build_evidence_dossier, compute_fundamental_score
 from stockpicker.income_screener import evaluate_covered_call_candidate, screen_income_candidates
+from stockpicker.parameter_advisor import generate_expert_parameter_advice
 from stockpicker.runner import hydrate_history_state, load_registered_bots, run_stockpicker
 
 
@@ -359,4 +360,80 @@ def test_api_parameter_advice_and_provision_failure_rollback(tmp_path):
             assert "Permission denied" in lead_item["failure_reason"] or "Simulated" in lead_item["failure_reason"]
             assert lead_item["failure_stage"] == "WRITING_BOT_PARAMS"
             assert "suggested_action" in lead_item
+
+
+@patch("stockpicker.alternative_data_client.fetch_alternative_catalysts", return_value={"contracts": [], "congress_trades": []})
+@patch("stockpicker.core.get_companyfacts_quarterly")
+@patch("stockpicker.core.get_yahoo_financial_snapshot")
+@patch("stockpicker.core.get_alpha_earnings")
+@patch("stockpicker.core.get_finnhub_insider_trades")
+def test_data_source_degradation_informational_output(mock_finn, mock_av, mock_yf, mock_sec, mock_alt):
+    """
+    Verify that when one or all data sources are missing or fail:
+    1. Output explicitly flags data_quality (PARTIAL / DEGRADED)
+    2. Output lists specific missing_sources and degradation_warnings
+    3. Evidence dossier synthesizes degradation warning into risk drivers
+    """
+    mock_finn.return_value = {"insider_score": 0, "reason": "no insider data"}
+    mock_av.return_value = {}
+
+    # Case 1: SEC EDGAR is down/empty, but Yahoo Finance succeeds
+    mock_sec.return_value = {}
+    mock_yf.return_value = {
+        "price": {"regularMarketPrice": 45.0, "marketCap": 2000000000},
+        "financialData": {"grossMargins": 0.35, "debtToEquity": 50.0, "currentRatio": 1.5}
+    }
+
+    fund_partial = compute_fundamental_score("TESTSYM")
+    assert fund_partial["is_degraded"] is True
+    assert fund_partial["data_quality"] == "PARTIAL"
+    assert "SEC EDGAR" in fund_partial["missing_sources"]
+    assert any("SEC quarterly filings unavailable" in w for w in fund_partial["degradation_warnings"])
+
+    # Build dossier with partial data
+    dossier = build_evidence_dossier(
+        ticker="TESTSYM",
+        industry="Defense",
+        catalyst="Test catalyst",
+        fundamentals=fund_partial,
+        strategy_track="GROWTH"
+    )
+    assert dossier["is_degraded"] is True
+    assert dossier["data_quality"] == "PARTIAL"
+    assert "SEC EDGAR" in dossier["missing_sources"]
+    assert any("Scoring Degraded" in r for r in dossier["risk_warnings"])
+
+    # Case 2: All sources unavailable (SEC + Yahoo Finance empty)
+    mock_sec.return_value = {}
+    mock_yf.return_value = {}
+
+    fund_degraded = compute_fundamental_score("FAILSYS")
+    assert fund_degraded["is_degraded"] is True
+    assert fund_degraded["data_quality"] == "DEGRADED"
+    assert "SEC EDGAR" in fund_degraded["missing_sources"]
+    assert "Yahoo Finance" in fund_degraded["missing_sources"]
+    assert len(fund_degraded["degradation_warnings"]) >= 2
+
+
+def test_parameter_advisor_handles_degraded_inputs():
+    """Verify that the Quant Parameter Advisor flags degraded inputs to protect capital."""
+    advice = generate_expert_parameter_advice(
+        symbol="UNVERIFIED",
+        strategy_track="GROWTH",
+        capital_allocation=12000.0,
+        current_price=50.0,
+        est_atr_pct=0.012,
+        solvency_rating="Pristine",
+        is_degraded=True,
+        missing_sources=["SEC EDGAR", "Alpha Vantage"]
+    )
+
+    assert advice["is_degraded"] is True
+    assert "SEC EDGAR" in advice["missing_sources"]
+    # Due to degraded inputs, Low risk is adjusted to Moderate
+    assert advice["risk_tier"] == "Moderate"
+    # Advisory rationale contains caution warning
+    assert any("Data Degradation Alert" in r for r in advice["expert_rationale"])
+    assert "inputs degraded" in advice["advisory_summary"]
+
 

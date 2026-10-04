@@ -239,6 +239,40 @@ function updateStockPickerMetrics(data) {
     const elTabAccepted = document.getElementById('sp-tab-accepted-num');
     if (elTabAccepted) elTabAccepted.textContent = acceptedCount;
 
+    // Data Quality & Degradation Metrics
+    const dq = data.overall_data_quality || data.summary?.overall_data_quality || 'FULL';
+    const degradedCount = data.summary?.degraded_candidate_count ?? (data.degraded_candidate_count ?? 0);
+    const missingSources = data.summary?.missing_sources_detected || data.missing_sources_detected || [];
+
+    const elDqVal = document.getElementById('sp-data-quality-val');
+    const elDqCard = document.getElementById('sp-data-quality-card');
+    if (elDqVal) {
+        elDqVal.textContent = dq;
+    }
+    if (elDqCard) {
+        if (dq === 'DEGRADED') {
+            elDqCard.style.background = 'linear-gradient(135deg, #991b1b 0%, #ef4444 100%)';
+        } else if (dq === 'PARTIAL' || degradedCount > 0) {
+            elDqCard.style.background = 'linear-gradient(135deg, #b45309 0%, #f59e0b 100%)';
+        } else {
+            elDqCard.style.background = 'linear-gradient(135deg, #065f46 0%, #10b981 100%)';
+        }
+    }
+
+    const alertBanner = document.getElementById('sp-degradation-alert');
+    const alertText = document.getElementById('sp-degradation-alert-text');
+    if (alertBanner) {
+        if (degradedCount > 0 || dq !== 'FULL') {
+            alertBanner.style.display = 'flex';
+            if (alertText) {
+                const missingTxt = missingSources.length > 0 ? ` (Missing feeds: ${missingSources.join(', ')})` : '';
+                alertText.innerHTML = `<strong>Data Degradation Alert:</strong> ${degradedCount} candidate(s) scored with incomplete market or filing feeds${missingTxt}. Scoring factors were adjusted to neutral baseline.`;
+            }
+        } else {
+            alertBanner.style.display = 'none';
+        }
+    }
+
     const elLastRun = document.getElementById('sp-last-run');
     if (elLastRun && data.run_timestamp) {
         try {
@@ -357,8 +391,19 @@ function renderStockPicksTable() {
                 <td style="text-align: center; padding: 12px 6px;"><strong>${rank}</strong></td>
                 <td style="padding: 12px 8px;">${trackBadge}</td>
                 <td style="text-align: center; padding: 12px 8px;"><strong style="color: #38bdf8; font-size: 1.1em;">${sym}</strong></td>
-                <td style="text-align: right; font-weight: 700; color: #10b981; padding: 12px 8px;">${score}</td>
-                <td style="text-align: center; padding: 12px 8px;">${statusBadge}</td>
+                <td style="text-align: right; font-weight: 700; color: #10b981; padding: 12px 8px;">
+                    ${score}
+                    ${pick.is_degraded ? `
+                        <div style="margin-top: 3px;">
+                            <span style="background: rgba(245,158,11,0.2); color: #fbbf24; border: 1px solid #f59e0b; padding: 1px 6px; border-radius: 8px; font-size: 0.68em; font-weight: 600; display: inline-block;" title="${(pick.degradation_warnings || []).join('; ') || 'Data feeds partial'}">
+                                ⚠️ Degraded
+                            </span>
+                        </div>
+                    ` : ''}
+                </td>
+                <td style="text-align: center; padding: 12px 8px;">
+                    ${statusBadge}
+                </td>
                 <td style="padding: 12px 10px; font-size: 0.9em; max-width: 320px;" title="${catalyst}">
                     ${catalyst.length > 80 ? catalyst.substring(0, 80) + '...' : catalyst}
                     ${status === 'PROVISIONING_FAILED' ? `
@@ -420,8 +465,25 @@ function renderStockPicksTable() {
                                     <div><strong>USAspending Awards:</strong> ${(dossier.usaspending_contracts && dossier.usaspending_contracts.length) ? `${dossier.usaspending_contracts.length} active awards` : 'No recent public federal awards'}</div>
                                     <div style="margin-top: 4px;"><strong>Congressional Trading:</strong> ${(dossier.congressional_trades && dossier.congressional_trades.length) ? `${dossier.congressional_trades.length} filings detected` : 'Neutral insider/congressional flow'}</div>
                                     <div style="margin-top: 4px;"><strong>Solvency Rating:</strong> ${dossier.solvency_rating || 'Adequate'}</div>
+                                    <div style="margin-top: 4px;"><strong>Data Quality:</strong> <span style="font-weight: 600; color: ${dossier.data_quality === 'FULL' ? '#34d399' : (dossier.data_quality === 'PARTIAL' ? '#fbbf24' : '#f87171')};">${dossier.data_quality || (pick.is_degraded ? 'PARTIAL' : 'FULL')}</span></div>
                                 </div>
                             </div>
+
+                            <!-- Data Quality & Degradation Warning (if applicable) -->
+                            ${(dossier.is_degraded || pick.is_degraded || (dossier.degradation_warnings && dossier.degradation_warnings.length > 0)) ? `
+                                <div class="dossier-card" style="border: 1px solid #f59e0b; background: rgba(245,158,11,0.08); grid-column: 1 / -1;">
+                                    <h4 style="color: #fbbf24; display: flex; align-items: center; gap: 6px;">
+                                        <span>⚠️</span> Data Quality & Scoring Degradation Notice
+                                    </h4>
+                                    <div style="font-size: 0.85em; color: #fde68a;">
+                                        <div><strong>Missing / Incomplete Feeds:</strong> ${(dossier.missing_sources && dossier.missing_sources.length) ? dossier.missing_sources.join(', ') : (pick.missing_sources ? pick.missing_sources.join(', ') : 'Partial inputs')}</div>
+                                        <ul style="margin: 6px 0 0 0; padding-left: 18px; color: #fef3c7;">
+                                            ${(dossier.degradation_warnings || pick.degradation_warnings || ['Scoring factors with missing data defaulted to neutral baseline']).map(w => `<li style="margin-bottom: 3px;">${w}</li>`).join('')}
+                                        </ul>
+                                        <div style="margin-top: 6px; font-size: 0.8em; color: #fde047;">ℹ️ Note: Scoring confidence is degraded because one or more fundamental, options, or catalyst feeds were unavailable. The algorithm adjusted missing inputs to baseline neutrality.</div>
+                                    </div>
+                                </div>
+                            ` : ''}
                         </div>
                     </div>
                 </td>
@@ -483,6 +545,27 @@ function openAcceptModal(sym, track) {
 
     if (elSym) elSym.textContent = sym;
     if (elTrack) elTrack.value = track === 'INCOME' ? 'Track 2: Covered Call Income' : 'Track 1: Growth Equity';
+
+    // Check if candidate is degraded and warn operator
+    const degWarnModal = document.getElementById('modal-degradation-warning');
+    const degDetailsModal = document.getElementById('modal-degradation-details');
+    if (degWarnModal && degDetailsModal && rawStockPickerData) {
+        const allCandidates = (rawStockPickerData.actionable_leads || [])
+            .concat(rawStockPickerData.growth_picks || [])
+            .concat(rawStockPickerData.income_picks || [])
+            .concat(rawStockPickerData.already_accepted || [])
+            .concat(rawStockPickerData.picks || []);
+        const cand = allCandidates.find(c => (c.ticker || c.symbol || '').toUpperCase() === sym.toUpperCase());
+        if (cand && (cand.is_degraded || cand.data_quality !== 'FULL' || (cand.missing_sources && cand.missing_sources.length > 0))) {
+            const missing = (cand.missing_sources && cand.missing_sources.length) ? cand.missing_sources.join(', ') : 'Partial feeds';
+            const warnList = cand.degradation_warnings && cand.degradation_warnings.length ? cand.degradation_warnings.join(' • ') : 'Scoring adjusted to baseline neutrality.';
+            degDetailsModal.innerHTML = `Missing inputs: <strong>${missing}</strong>. ${warnList} Please review parameters carefully before provisioning.`;
+            degWarnModal.style.display = 'block';
+        } else {
+            degWarnModal.style.display = 'none';
+        }
+    }
+
     if (modal) modal.style.display = 'block';
 
     refreshParameterAdvice();

@@ -181,6 +181,19 @@ def evaluate_covered_call_candidate(ticker: str) -> Optional[Dict[str, Any]]:
 
     final_score = max(5.0, min(99.0, round(score, 1)))
 
+    missing_sources = []
+    degradation_warnings = []
+
+    if next_earnings is None:
+        missing_sources.append("Earnings Calendar")
+        degradation_warnings.append("Earnings calendar date unavailable (binary volatility risk unverified)")
+
+    if open_interest < 100:
+        degradation_warnings.append(f"Low open interest ({open_interest}) - contract liquidity degraded")
+
+    data_quality = "PARTIAL" if missing_sources else "FULL"
+    is_degraded = bool(missing_sources or degradation_warnings)
+
     return {
         "ticker": ticker,
         "current_price": round(current_price, 2),
@@ -197,6 +210,10 @@ def evaluate_covered_call_candidate(ticker: str) -> Optional[Dict[str, Any]]:
         "earnings_risk_flag": earnings_risk_flag,
         "income_score": final_score,
         "strategy_track": "INCOME",
+        "data_quality": data_quality,
+        "is_degraded": is_degraded,
+        "missing_sources": missing_sources,
+        "degradation_warnings": degradation_warnings,
     }
 
 
