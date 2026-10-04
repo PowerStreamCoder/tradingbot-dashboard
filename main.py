@@ -3252,6 +3252,9 @@ async def get_parameter_advice(
             iv = match.get("implied_volatility")
             dossier = match.get("evidence_dossier") or {}
             solvency = dossier.get("solvency_rating")
+            is_degraded = match.get("is_degraded") or dossier.get("is_degraded", False)
+            missing_sources = match.get("missing_sources") or dossier.get("missing_sources", [])
+            degradation_warnings = match.get("degradation_warnings") or dossier.get("degradation_warnings", [])
     except Exception:
         pass
 
@@ -3262,7 +3265,10 @@ async def get_parameter_advice(
         current_price=price,
         est_atr_pct=atr_pct,
         implied_volatility=iv,
-        solvency_rating=solvency
+        solvency_rating=solvency,
+        is_degraded=is_degraded if 'is_degraded' in locals() else False,
+        missing_sources=missing_sources if 'missing_sources' in locals() else None,
+        degradation_warnings=degradation_warnings if 'degradation_warnings' in locals() else None
     )
     return advice
 

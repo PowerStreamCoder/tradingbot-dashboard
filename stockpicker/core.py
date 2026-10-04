@@ -931,6 +931,8 @@ def generate_fundamentals_picks(top_n=20) -> List[Dict]:
             # A normalized score of 10+ is decent (was 40+ in old scale)
             if fund_score and fund_score.get('score', 0) >= 10:
                 scores_summary.append(f"{ticker}:{fund_score['score']:.0f}")
+                fund_missing = sorted(list(set(fund_score.get('missing_sources', []) + ['News Catalysts'])))
+                fund_warnings = fund_score.get('degradation_warnings', []) + ['News catalyst feeds returned no explosive news (explosiveness 0.0)']
                 candidates.append({
                     'headline': f"Strong fundamentals in {sector}",
                     'explosiveness': 0.0,  # No news = no explosiveness
@@ -942,7 +944,11 @@ def generate_fundamentals_picks(top_n=20) -> List[Dict]:
                     'news_source': 'fundamentals_only',
                     'published_at': datetime.now(UTC).isoformat(),
                     'fundamental_score': fund_score['score'],
-                    'ticker': ticker
+                    'ticker': ticker,
+                    'data_quality': 'PARTIAL',
+                    'is_degraded': True,
+                    'missing_sources': fund_missing,
+                    'degradation_warnings': fund_warnings
                 })
         except Exception as e:
             logger.warning(f"Failed to score {ticker}: {e}")
@@ -1531,10 +1537,48 @@ def compute_fundamental_score(ticker: str) -> Dict[str, Any]:
     normalized_score = (score / MAX_POSSIBLE_SCORE) * 100
     normalized_score = max(0, min(100, round(normalized_score, 2)))
 
+    # Data Quality & Missing Source Tracking
+    missing_sources = []
+    degradation_warnings = []
+
+    sec_has_data = bool(sec and (sec.get('revenue') or sec.get('net_income') or sec.get('operating_income')))
+    if not sec_has_data:
+        missing_sources.append("SEC EDGAR")
+        degradation_warnings.append("SEC quarterly filings unavailable (YoY revenue & operating margins omitted; potential ±28 pt factor impact)")
+
+    yf_has_data = bool(yf and (yf.get('price') or yf.get('financialData') or yf.get('summaryDetail')))
+    if not yf_has_data:
+        missing_sources.append("Yahoo Finance")
+        degradation_warnings.append("Market price & financial snapshot unavailable (price momentum, ratios, and valuation omitted)")
+    else:
+        if current_price is None:
+            degradation_warnings.append("Current market price unavailable from Yahoo Finance (1-day momentum ±50 pt factor omitted)")
+        if gross_margin is None and operating_margin is None:
+            degradation_warnings.append("Margin metrics unavailable from Yahoo Finance (growth quality factor reduced)")
+
+    if not av or eps_surprise is None:
+        missing_sources.append("Alpha Vantage (EPS)")
+        degradation_warnings.append("Earnings surprise (EPS) data unavailable (Alpha Vantage factor omitted)")
+
+    if "SEC EDGAR" in missing_sources and "Yahoo Finance" in missing_sources:
+        data_quality = "DEGRADED"
+    elif missing_sources:
+        data_quality = "PARTIAL"
+    else:
+        data_quality = "FULL"
+
+    is_degraded = (data_quality != "FULL")
+    if is_degraded:
+        reasons.append(f"data_quality={data_quality} (missing: {', '.join(missing_sources)})")
+
     return {
         'ticker': ticker,
         'score': normalized_score,  # Use normalized score
         'raw_score': raw_score,     # Keep raw for debugging
+        'data_quality': data_quality,
+        'is_degraded': is_degraded,
+        'missing_sources': missing_sources,
+        'degradation_warnings': degradation_warnings,
         'revenue_yoy': revenue_yoy,
         'net_income': net_income,
         'operating_income': op_income,
@@ -1584,11 +1628,13 @@ def build_evidence_dossier(
 
     # 2. Alternative Data (Contracts & Congress)
     alt_data = {}
+    alt_data_failed = False
     try:
         from .alternative_data_client import fetch_alternative_catalysts
         alt_data = fetch_alternative_catalysts(ticker)
     except Exception as e:
         logger.debug(f"Alternative data fetch failed for {ticker}: {e}")
+        alt_data_failed = True
 
     contracts = alt_data.get("contracts", [])
     congress_trades = alt_data.get("congress_trades", [])
@@ -1645,6 +1691,37 @@ def build_evidence_dossier(
     else:
         risk_warnings.append("Fast momentum can experience sharp mean-reverting pullbacks")
 
+    # Collect missing sources and degradation warnings from fundamentals & dossier
+    dossier_missing = list(fundamentals.get("missing_sources", []))
+    dossier_warnings = list(fundamentals.get("degradation_warnings", []))
+
+    if alt_data_failed:
+        dossier_missing.append("USAspending / Congress Catalysts")
+        dossier_warnings.append("Alternative catalyst data feeds unavailable (public contracts and congressional filings unverified)")
+
+    if strategy_track == "INCOME":
+        if not options_data or options_data.get("monthly_yield_est") is None:
+            dossier_missing.append("Options Chain Greeks")
+            dossier_warnings.append("Covered call options Greeks / premium yield unverified")
+        elif options_data.get("days_to_earnings") is None:
+            dossier_missing.append("Earnings Calendar")
+            dossier_warnings.append("Earnings date unavailable - binary event risk unverified")
+
+    # Determine data quality
+    data_quality = fundamentals.get("data_quality", "FULL")
+    if "SEC EDGAR" in dossier_missing and "Yahoo Finance" in dossier_missing:
+        data_quality = "DEGRADED"
+    elif len(dossier_missing) >= 3:
+        data_quality = "DEGRADED"
+    elif dossier_missing:
+        data_quality = "PARTIAL"
+
+    is_degraded = (data_quality != "FULL") or bool(dossier_warnings)
+
+    if is_degraded:
+        # Prepend a clear warning to risk_warnings so that the operator and downstream sentinels know
+        risk_warnings.insert(0, f"⚠️ Scoring Degraded: {', '.join(dossier_missing) if dossier_missing else 'Missing key data feeds'}")
+
     # Determine Solvency Rating
     cr = fundamentals.get("current_ratio")
     de = fundamentals.get("debt_to_equity")
@@ -1659,6 +1736,10 @@ def build_evidence_dossier(
 
     dossier = {
         "sec_filing_url": sec_url,
+        "data_quality": data_quality,
+        "is_degraded": is_degraded,
+        "missing_sources": dossier_missing,
+        "degradation_warnings": dossier_warnings,
         "revenue_yoy": fundamentals.get("revenue_yoy"),
         "net_income": fundamentals.get("net_income"),
         "operating_income": fundamentals.get("operating_income"),
@@ -1782,6 +1863,15 @@ def score_candidates(ranked_news: List[Dict]) -> List[Dict]:
                 strategy_track="GROWTH"
             )
 
+            is_degraded = dossier.get('is_degraded', False)
+            missing_sources = dossier.get('missing_sources', [])
+            degradation_warnings = dossier.get('degradation_warnings', [])
+            data_quality = dossier.get('data_quality', 'FULL')
+
+            rat_base = f"{news_item.get('rationale_short', '')} | {news_item.get('thesis', '')}"
+            if is_degraded and missing_sources:
+                rat_base += f" | [⚠️ Degraded: missing {', '.join(missing_sources)}]"
+
             pick = {
                 'industry': industry,
                 'ticker': best_ticker,
@@ -1792,6 +1882,10 @@ def score_candidates(ranked_news: List[Dict]) -> List[Dict]:
                 'strategy_track': 'GROWTH',
                 'status': 'PENDING_REVIEW',
                 'evidence_dossier': dossier,
+                'data_quality': data_quality,
+                'is_degraded': is_degraded,
+                'missing_sources': missing_sources,
+                'degradation_warnings': degradation_warnings,
 
                 # Financial metrics (may be None if data unavailable)
                 'revenue_yoy': best_fundamentals.get('revenue_yoy'),
@@ -1806,7 +1900,7 @@ def score_candidates(ranked_news: List[Dict]) -> List[Dict]:
 
                 # Rationale combining news and fundamentals
                 'fundamental_reasons': best_fundamentals.get('fundamental_reasons', ''),
-                'rationale': f"{news_item.get('rationale_short', '')} | {news_item.get('thesis', '')}"
+                'rationale': rat_base
             }
             picks.append(pick)
 

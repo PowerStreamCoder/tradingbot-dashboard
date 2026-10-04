@@ -18,7 +18,10 @@ def generate_expert_parameter_advice(
     current_price: Optional[float] = None,
     est_atr_pct: Optional[float] = None,
     implied_volatility: Optional[float] = None,
-    solvency_rating: Optional[str] = None
+    solvency_rating: Optional[str] = None,
+    is_degraded: bool = False,
+    missing_sources: Optional[List[str]] = None,
+    degradation_warnings: Optional[List[str]] = None
 ) -> Dict[str, Any]:
     """
     Generate tailored bot parameters with quant rationale.
@@ -31,6 +34,9 @@ def generate_expert_parameter_advice(
         est_atr_pct: Estimated 14-day ATR percentage (e.g. 0.025 for 2.5%)
         implied_volatility: Options implied volatility if available
         solvency_rating: Solvency health ('Pristine', 'Robust', 'Adequate', 'Distressed')
+        is_degraded: Whether candidate data feeds were incomplete or degraded
+        missing_sources: List of missing upstream data sources
+        degradation_warnings: List of specific data degradation warnings
 
     Returns:
         Structured dictionary with recommended_params, expert_rationale, and risk_tier.
@@ -91,7 +97,7 @@ def generate_expert_parameter_advice(
     # 5. Risk Tier Assessment
     if atr_pct >= 0.030 or solvency == "Distressed":
         risk_tier = "High"
-    elif atr_pct < 0.015 and solvency in ("Pristine", "Robust"):
+    elif atr_pct < 0.015 and solvency in ("Pristine", "Robust") and not is_degraded:
         risk_tier = "Low"
     else:
         risk_tier = "Moderate"
@@ -103,12 +109,22 @@ def generate_expert_parameter_advice(
         f"Covered Call Execution: {cc_desc}",
     ]
 
+    if is_degraded:
+        missing_text = ', '.join(missing_sources) if missing_sources else 'partial feeds'
+        rationale_bullets.insert(
+            0,
+            f"⚠️ Data Degradation Alert: Sizing & risk parameters calibrated with unverified/missing inputs ({missing_text}). Operator discretion advised."
+        )
+
     return {
         "symbol": sym,
         "strategy_track": track,
         "capital_allocation": capital,
         "current_price": price,
         "risk_tier": risk_tier,
+        "is_degraded": is_degraded,
+        "missing_sources": missing_sources or [],
+        "degradation_warnings": degradation_warnings or [],
         "recommended_params": {
             "capital": {
                 "capital_per_bucket_long": long_bucket_capital,
@@ -136,5 +152,7 @@ def generate_expert_parameter_advice(
             }
         },
         "expert_rationale": rationale_bullets,
-        "advisory_summary": f"Quant recommendation for {sym}: Deploy ${capital:,.0f} across {buckets_per_group} buckets ({position_min_shares} min shares/order) with a {trailing_stop_multiplier}x ATR stop and {cc_mode} covered call rules."
+        "advisory_summary": f"Quant recommendation for {sym}: Deploy ${capital:,.0f} across {buckets_per_group} buckets ({position_min_shares} min shares/order) with a {trailing_stop_multiplier}x ATR stop and {cc_mode} covered call rules." + (
+            f" (⚠️ Note: inputs degraded due to missing {missing_text})" if is_degraded else ""
+        )
     }

@@ -290,11 +290,18 @@ def run_stockpicker() -> Optional[Dict[str, Any]]:
                     "current_price": inc.get("current_price"),
                     "implied_volatility": inc.get("implied_volatility"),
                     "open_interest": inc.get("open_interest"),
+                    "data_quality": inc.get("data_quality", "FULL"),
+                    "missing_sources": inc.get("missing_sources", []),
+                    "degradation_warnings": inc.get("degradation_warnings", []),
                 },
                 strategy_track="INCOME",
                 options_data=inc
             )
             inc["evidence_dossier"] = dossier
+            inc["data_quality"] = dossier.get("data_quality", "FULL")
+            inc["is_degraded"] = dossier.get("is_degraded", False)
+            inc["missing_sources"] = dossier.get("missing_sources", [])
+            inc["degradation_warnings"] = dossier.get("degradation_warnings", [])
             inc["composite_score"] = inc.get("income_score", 50.0)
             inc["status"] = "PENDING_REVIEW"
         logger.info(f"✓ Screened {len(income_candidates)} income candidates with dossiers")
@@ -398,11 +405,18 @@ def run_stockpicker() -> Optional[Dict[str, Any]]:
             if explosiveness_vals:
                 avg_explosive = sum(explosiveness_vals) / len(explosiveness_vals)
 
+        degraded_count = sum(1 for c in actionable_leads if c.get("is_degraded"))
+        all_missing_sources = sorted(list(set(src for c in actionable_leads for src in c.get("missing_sources", []))))
+        overall_dq = "DEGRADED" if any(c.get("data_quality") == "DEGRADED" for c in actionable_leads) else ("PARTIAL" if degraded_count > 0 else "FULL")
+
         summary = {
             "growth_actionable_count": len(growth_picks),
             "income_actionable_count": len(income_picks),
             "already_accepted_count": len(already_accepted),
             "rejected_cooldown_count": len(rejected_cooldown),
+            "degraded_candidate_count": degraded_count,
+            "missing_sources_detected": all_missing_sources,
+            "overall_data_quality": overall_dq
         }
 
         # Step 6: Write to Firestore
@@ -418,6 +432,9 @@ def run_stockpicker() -> Optional[Dict[str, Any]]:
             'already_accepted': already_accepted,
             'rejected_cooldown': rejected_cooldown,
             'summary': summary,
+            'overall_data_quality': overall_dq,
+            'degraded_candidate_count': degraded_count,
+            'missing_sources_detected': all_missing_sources,
             'run_timestamp': firestore.SERVER_TIMESTAMP,
             'pick_count': len(picks),
             'avg_explosiveness': round(avg_explosive, 2),
