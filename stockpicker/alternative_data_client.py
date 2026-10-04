@@ -104,7 +104,6 @@ def fetch_congressional_trades(ticker: str, days: int = 60) -> List[Dict[str, An
     Returns:
         List of matching Congressional purchases within the window.
     """
-    global _congressional_cache
     now = datetime.now(UTC)
 
     # Refresh cached transactions if expired
