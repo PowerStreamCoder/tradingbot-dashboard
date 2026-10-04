@@ -75,7 +75,7 @@ def detect_active_sources() -> List[str]:
     Detect which API sources are configured via environment variables.
 
     Returns:
-        List of active source names (e.g., ['sec_edgar', 'yahoo_finance', 'openai'])
+        List of active source names (e.g., ['sec_edgar', 'yahoo_finance', 'gemini'])
 
     Note:
         'sec_edgar' and 'yahoo_finance' are always included (free, no API key).
@@ -93,8 +93,8 @@ def detect_active_sources() -> List[str]:
         sources.append('polygon')
 
     # Optional ranking enhancement
-    if os.getenv('OPENAI_API_KEY'):
-        sources.append('openai')
+    if os.getenv('GEMINI_API_KEY'):
+        sources.append('gemini')
 
     # Optional fundamental enhancement
     if os.getenv('ALPHAVANTAGE_API_KEY'):
@@ -166,7 +166,7 @@ def run_stockpicker() -> Optional[List[Dict]]:
 
     This function orchestrates the complete pipeline:
     1. Fetch news from all available sources (NewsAPI, X, Polygon)
-    2. Rank news by explosiveness (OpenAI LLM or heuristic)
+    2. Rank news by explosiveness (Google Gemini LLM or heuristic)
     3. Score candidate tickers using fundamental analysis
     4. Select top 5 picks by composite score
     5. Write results to Firestore
@@ -183,7 +183,7 @@ def run_stockpicker() -> Optional[List[Dict]]:
     Expected Duration:
         - Without API keys: 5-10 seconds (no news sources)
         - With NewsAPI only: 30-45 seconds
-        - With OpenAI + NewsAPI: 45-60 seconds
+        - With Gemini + NewsAPI: 40-55 seconds
         - Full configuration: 60-90 seconds
     """
     logger.info("=" * 60)

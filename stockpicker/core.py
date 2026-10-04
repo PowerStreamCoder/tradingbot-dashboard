@@ -4,7 +4,7 @@ Extracted from standalone app.py - news fetching, ranking, and fundamental scori
 
 All logic preserved from original:
 - News sources: NewsAPI, X/Twitter, Polygon/Benzinga (all optional)
-- Ranking: OpenAI LLM or heuristic fallback (LLM optional)
+- Ranking: Google Gemini LLM or heuristic fallback (LLM optional)
 - Fundamental scoring: SEC EDGAR + Yahoo Finance + Alpha Vantage (AV optional)
 - Composite scoring: 60% explosiveness + 40% fundamentals
 
@@ -41,7 +41,7 @@ X_RECENT_URL = 'https://api.x.com/2/tweets/search/recent'
 POLYGON_BENZINGA_URL = 'https://api.polygon.io/benzinga/v1/news'
 FINNHUB_NEWS_URL = 'https://finnhub.io/api/v1/news'
 ALPHAVANTAGE_NEWS_URL = 'https://www.alphavantage.co/query'
-OPENAI_URL = 'https://api.openai.com/v1/chat/completions'
+GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models'
 SEC_TICKER_URL = 'https://www.sec.gov/files/company_tickers.json'
 YF_QUOTE_SUMMARY = 'https://query2.finance.yahoo.com/v10/finance/quoteSummary/{ticker}'
 ALPHA_VANTAGE_URL = 'https://www.alphavantage.co/query'
@@ -726,7 +726,7 @@ def fetch_all_news(hours=24) -> List[NewsItem]:
 
 
 # =============================================================================
-# NEWS RANKING (OpenAI LLM or Heuristic)
+# NEWS RANKING (Google Gemini LLM or Heuristic)
 # =============================================================================
 
 def build_llm_prompt(records: List[Dict]) -> str:
@@ -737,7 +737,7 @@ def build_llm_prompt(records: List[Dict]) -> str:
         records: List of news items as dicts
 
     Returns:
-        Complete prompt string for OpenAI API
+        Complete prompt string for Gemini API
 
     Note:
         Only first 40 records sent to avoid token limits (~4000 tokens).
@@ -757,7 +757,7 @@ def build_llm_prompt(records: List[Dict]) -> str:
 
 def heuristic_rank(records: List[Dict]) -> List[Dict]:
     """
-    Rank news using keyword-based heuristic (FALLBACK when no OpenAI key).
+    Rank news using keyword-based heuristic (FALLBACK when no Gemini key).
 
     This is a simple keyword matching algorithm that:
     1. Scores each news item based on keyword matches
@@ -820,11 +820,11 @@ def heuristic_rank(records: List[Dict]) -> List[Dict]:
 
 def call_llm_rank(records: List[Dict]) -> List[Dict]:
     """
-    Rank news using OpenAI LLM (OPTIONAL - requires OPENAI_API_KEY).
+    Rank news using Google Gemini LLM (OPTIONAL - requires GEMINI_API_KEY).
 
-    Uses GPT-4o-mini by default (~$0.01 per run).
+    Uses gemini-2.5-flash by default (high speed, cost-effective or free tier).
     Falls back to heuristic ranking if:
-    - OPENAI_API_KEY not set
+    - GEMINI_API_KEY not set
     - API call fails
     - Response format invalid
 
@@ -838,40 +838,59 @@ def call_llm_rank(records: List[Dict]) -> List[Dict]:
         LLM provides more nuanced scoring (can distinguish 7.2 vs 8.5)
         and better industry categorization than heuristic approach.
     """
-    api_key = env('OPENAI_API_KEY')
+    api_key = env('GEMINI_API_KEY')
     if not api_key:
-        logger.info("OpenAI key not set, using heuristic ranking as fallback")
+        logger.info("Gemini key not set, using heuristic ranking as fallback")
         return heuristic_rank(records)
 
     try:
-        headers = {'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'}
+        model = env('GEMINI_MODEL', 'gemini-2.5-flash')
+        url = f"{GEMINI_BASE_URL}/{model}:generateContent?key={api_key}"
+        headers = {'Content-Type': 'application/json'}
         payload = {
-            'model': env('OPENAI_MODEL', 'gpt-4o-mini'),  # Default to mini (cost-effective)
-            'messages': [
-                {'role': 'system', 'content': 'Return only valid JSON.'},
-                {'role': 'user', 'content': build_llm_prompt(records)}
+            'contents': [
+                {
+                    'parts': [
+                        {'text': build_llm_prompt(records)}
+                    ]
+                }
             ],
-            'temperature': 0.1,  # Low temperature for consistent scoring
-            'max_tokens': 4000   # Cap token usage (~$0.01 per call with gpt-4o-mini)
+            'generationConfig': {
+                'temperature': 0.1,
+                'responseMimeType': 'application/json'
+            }
         }
 
-        logger.info(f"Calling OpenAI API to rank {len(records)} news items...")
-        r = requests.post(OPENAI_URL, headers=headers, json=payload, timeout=90)
+        logger.info(f"Calling Gemini API ({model}) to rank {len(records)} news items...")
+        r = requests.post(url, headers=headers, json=payload, timeout=90)
         r.raise_for_status()
-        text = r.json()['choices'][0]['message']['content']
+        data = r.json()
 
-        # Extract JSON array from response (may have markdown formatting)
-        m = re.search(r'(\[.*\])', text, re.S)
-        if not m:
-            logger.warning("LLM did not return JSON list, falling back to heuristic")
+        candidates = data.get('candidates', [])
+        if not candidates:
+            logger.warning("Gemini returned no candidates, falling back to heuristic")
             return heuristic_rank(records)
 
-        ranked = json.loads(m.group(1))
-        logger.info(f"LLM ranked {len(ranked)} items successfully")
+        text = candidates[0].get('content', {}).get('parts', [{}])[0].get('text', '')
+
+        try:
+            ranked = json.loads(text)
+        except Exception:
+            m = re.search(r'(\[.*\])', text, re.S)
+            if not m:
+                logger.warning("Gemini did not return JSON list, falling back to heuristic")
+                return heuristic_rank(records)
+            ranked = json.loads(m.group(1))
+
+        if not isinstance(ranked, list):
+            logger.warning("Gemini response is not a list, falling back to heuristic")
+            return heuristic_rank(records)
+
+        logger.info(f"Gemini ranked {len(ranked)} items successfully")
         return ranked
 
     except Exception as e:
-        logger.warning(f"LLM ranking failed: {e}, falling back to heuristic")
+        logger.warning(f"Gemini ranking failed: {e}, falling back to heuristic")
         return heuristic_rank(records)
 
 
@@ -943,7 +962,7 @@ def rank_news(news_items: List[NewsItem]) -> List[Dict]:
     Rank news by explosiveness using LLM or heuristic fallback.
 
     This is the main entry point for news ranking.
-    Automatically uses OpenAI LLM if API key available, else heuristic.
+    Automatically uses Google Gemini LLM if API key available, else heuristic.
 
     Args:
         news_items: List of NewsItem objects from news sources
