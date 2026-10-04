@@ -18,10 +18,11 @@ Features:
 
 import os
 import sys
+import json
 import logging
+from datetime import datetime, timezone, timedelta
+from typing import Any, Dict, List, Optional
 from google.cloud import firestore
-from datetime import datetime
-from typing import Dict, List, Optional
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -156,8 +157,6 @@ def write_error_result(db: firestore.Client, error: Exception):
         logger.error(f"Failed to write error status to Firestore: {db_error}")
 
 
-import json
-from datetime import datetime, timezone, timedelta
 
 def load_registered_bots() -> Dict[str, Dict]:
     """
