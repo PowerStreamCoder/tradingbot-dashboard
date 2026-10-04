@@ -453,11 +453,7 @@ def run_stockpicker() -> Optional[Dict[str, Any]]:
         raise
 
 
-# =============================================================================
-# COMMAND-LINE EXECUTION
-# =============================================================================
-
-if __name__ == '__main__':
+def main() -> int:
     """
     Command-line entry point for manual or cron execution.
 
@@ -474,11 +470,15 @@ if __name__ == '__main__':
         # Success cases (both are valid outcomes)
         if result:
             print(f"\n✅ Success: Generated {len(result)} picks")
-            sys.exit(0)
+            return 0
         else:
             print("\n✅ Success: No picks generated (no explosive news)")
-            sys.exit(0)
+            return 0
 
     except Exception as e:
         print(f"\n❌ Fatal error: {e}")
-        sys.exit(1)
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
