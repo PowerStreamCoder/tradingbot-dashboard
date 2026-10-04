@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 import httpx
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional, Literal  # v5.0.0: Added Literal for trading_mode validation
 from pydantic import BaseModel
 from google.cloud import firestore
@@ -2999,18 +2999,28 @@ async def run_stock_picker(request: Request):
             _stock_picks_cache['data'] = None
             _stock_picks_cache['timestamp'] = None
 
+        picks_list = picks.get('picks', []) if isinstance(picks, dict) else (picks or [])
+
         # Build response
-        return {
+        resp = {
             'status': 'success',
-            'picks': picks if picks else [],
-            'pick_count': len(picks) if picks else 0,
+            'picks': picks_list,
+            'pick_count': len(picks_list),
             'message': (
-                f'Generated {len(picks)} picks successfully'
-                if picks else
+                f'Generated {len(picks_list)} picks successfully'
+                if picks_list else
                 'No picks generated (no explosive news found with threshold ≥7.5)'
             ),
             'duration_seconds': duration
         }
+        if isinstance(picks, dict):
+            resp['actionable_leads'] = picks.get('actionable_leads', [])
+            resp['growth_picks'] = picks.get('growth_picks', [])
+            resp['income_picks'] = picks.get('income_picks', [])
+            resp['already_accepted'] = picks.get('already_accepted', [])
+            resp['rejected_cooldown'] = picks.get('rejected_cooldown', [])
+            resp['summary'] = picks.get('summary', {})
+        return resp
 
     except asyncio.TimeoutError:
         # Timeout after 2 minutes
@@ -3043,6 +3053,333 @@ async def run_stock_picker(request: Request):
         # Always release the lock (even on timeout/error)
         with _stockpicker_lock:
             _stockpicker_running = False
+
+
+# =============================================================================
+# STOCKPICKER HITL & BOT PROVISIONING GATEWAYS
+# =============================================================================
+
+@app.post("/api/stock-picks/accept")
+async def accept_stock_pick(request: Request):
+    """
+    Accept a StockPicker lead candidate.
+    Advances status: PENDING_REVIEW -> ACCEPTED.
+    """
+    session_id = request.cookies.get("dashboard_session")
+    if not session_id or session_id not in authenticated_sessions:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    symbol = (body.get("symbol") or "").upper().strip()
+    if not symbol:
+        raise HTTPException(status_code=400, detail="Missing symbol")
+
+    notes = body.get("notes", "")
+
+    try:
+        doc_ref = dashboard_data.stock_picks_ref.document("current")
+        doc = doc_ref.get()
+        if not doc.exists:
+            raise HTTPException(status_code=404, detail="No stock picks found")
+
+        data = doc.to_dict() or {}
+        now_str = datetime.now(timezone.utc).isoformat()
+
+        found = False
+        target_candidate = None
+        for key in ["actionable_leads", "growth_picks", "income_picks", "picks"]:
+            if key in data and isinstance(data[key], list):
+                for item in data[key]:
+                    if (item.get("ticker") or item.get("symbol") or "").upper() == symbol:
+                        item["status"] = "ACCEPTED"
+                        item["accepted_at"] = now_str
+                        item["notes"] = notes
+                        found = True
+                        if not target_candidate:
+                            target_candidate = dict(item)
+
+        if not found:
+            target_candidate = {
+                "symbol": symbol,
+                "ticker": symbol,
+                "status": "ACCEPTED",
+                "accepted_at": now_str,
+                "notes": notes,
+                "strategy_track": body.get("strategy_track", "GROWTH")
+            }
+
+        already_accepted = data.get("already_accepted", [])
+        exists_idx = next((i for i, x in enumerate(already_accepted) if (x.get("ticker") or x.get("symbol") or "").upper() == symbol), None)
+        if exists_idx is not None:
+            already_accepted[exists_idx].update(target_candidate)
+        else:
+            already_accepted.append(target_candidate)
+        data["already_accepted"] = already_accepted
+
+        for key in ["actionable_leads", "growth_picks", "income_picks"]:
+            if key in data and isinstance(data[key], list):
+                data[key] = [x for x in data[key] if (x.get("ticker") or x.get("symbol") or "").upper() != symbol]
+
+        doc_ref.set(data)
+
+        with _stock_picks_cache["lock"]:
+            _stock_picks_cache["data"] = None
+            _stock_picks_cache["timestamp"] = None
+
+        return {"status": "success", "symbol": symbol, "lead_status": "ACCEPTED", "updated_at": now_str}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error accepting stock pick {symbol}")
+        raise HTTPException(status_code=500, detail=f"Failed to accept stock pick: {str(e)}")
+
+
+@app.post("/api/stock-picks/reject")
+async def reject_stock_pick(request: Request):
+    """
+    Reject a StockPicker lead candidate with structured reason tag.
+    Advances status: PENDING_REVIEW -> REJECTED and enforces 7-day cooldown.
+    """
+    session_id = request.cookies.get("dashboard_session")
+    if not session_id or session_id not in authenticated_sessions:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    symbol = (body.get("symbol") or "").upper().strip()
+    if not symbol:
+        raise HTTPException(status_code=400, detail="Missing symbol")
+
+    reason = body.get("reason", "OPERATOR_DISCRETION")
+    notes = body.get("notes", "")
+
+    try:
+        doc_ref = dashboard_data.stock_picks_ref.document("current")
+        doc = doc_ref.get()
+        if not doc.exists:
+            raise HTTPException(status_code=404, detail="No stock picks found")
+
+        data = doc.to_dict() or {}
+        now_dt = datetime.now(timezone.utc)
+        now_str = now_dt.isoformat()
+        cooldown_expires = (now_dt + timedelta(days=7)).isoformat()
+
+        for key in ["actionable_leads", "growth_picks", "income_picks", "picks"]:
+            if key in data and isinstance(data[key], list):
+                data[key] = [x for x in data[key] if (x.get("ticker") or x.get("symbol") or "").upper() != symbol]
+
+        rejected_cooldown = data.get("rejected_cooldown", [])
+        rej_entry = {
+            "symbol": symbol,
+            "ticker": symbol,
+            "status": "REJECTED",
+            "rejection_reason": reason,
+            "notes": notes,
+            "rejected_at": now_str,
+            "cooldown_expires": cooldown_expires
+        }
+        idx = next((i for i, x in enumerate(rejected_cooldown) if (x.get("ticker") or x.get("symbol") or "").upper() == symbol), None)
+        if idx is not None:
+            rejected_cooldown[idx] = rej_entry
+        else:
+            rejected_cooldown.append(rej_entry)
+        data["rejected_cooldown"] = rejected_cooldown
+
+        doc_ref.set(data)
+
+        with _stock_picks_cache["lock"]:
+            _stock_picks_cache["data"] = None
+            _stock_picks_cache["timestamp"] = None
+
+        return {"status": "success", "symbol": symbol, "lead_status": "REJECTED", "cooldown_expires": cooldown_expires}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error rejecting stock pick {symbol}")
+        raise HTTPException(status_code=500, detail=f"Failed to reject stock pick: {str(e)}")
+
+
+@app.post("/api/stock-picks/provision-bot")
+async def provision_bot_from_pick(request: Request):
+    """
+    Automated bot provisioning workflow:
+    1. Allocate next sequential client_id
+    2. Instantiate bots/{symbol.lower()}.json using preset (mid_vol for growth, low_vol for income)
+    3. Update bots.json registry
+    4. Update Firestore stock_picks/current status to PROVISIONED
+    5. Invalidate caches
+    """
+    session_id = request.cookies.get("dashboard_session")
+    if not session_id or session_id not in authenticated_sessions:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    symbol = (body.get("symbol") or "").upper().strip()
+    if not symbol:
+        raise HTTPException(status_code=400, detail="Missing symbol")
+
+    strategy_track = (body.get("strategy_track") or "GROWTH").upper()
+    capital_allocation = float(body.get("capital_allocation") or 10000.0)
+    strategy = body.get("strategy", "sma_crossover")
+
+    config_paths = [
+        os.path.join(os.path.dirname(__file__), "..", "tradingbot-config", "bots.json"),
+        os.path.join(os.path.dirname(__file__), "config", "bots.json"),
+    ]
+    bots_config_path = None
+    for p in config_paths:
+        if os.path.exists(p):
+            bots_config_path = p
+            break
+
+    if not bots_config_path:
+        raise HTTPException(status_code=500, detail="bots.json configuration file not found")
+
+    try:
+        with open(bots_config_path, "r") as f:
+            bots_config = json.load(f)
+
+        bots = bots_config.get("bots", [])
+        for b in bots:
+            if b.get("symbol", "").upper() == symbol:
+                return {
+                    "status": "already_exists",
+                    "symbol": symbol,
+                    "bot_id": b.get("name"),
+                    "client_id": b.get("client_id"),
+                    "message": f"Bot for {symbol} is already registered as {b.get('name')} (client_id: {b.get('client_id')})"
+                }
+
+        max_id = max([b.get("client_id", 0) for b in bots], default=2)
+        next_id = max(3, max_id + 1)
+        bot_id = f"{symbol.lower()}_sma"
+
+        new_bot_entry = {
+            "name": bot_id,
+            "symbol": symbol,
+            "client_id": next_id,
+            "script": "bots/UniversalSMABot.py",
+            "strategy": strategy,
+            "enabled": True,
+            "description": f"{symbol} SMA 5/20 trader ({strategy_track.lower()})"
+        }
+        bots.append(new_bot_entry)
+        bots_config["bots"] = bots
+
+        with open(bots_config_path, "w") as f:
+            json.dump(bots_config, f, indent=2)
+
+        target_dirs = [
+            os.path.join(os.path.dirname(bots_config_path), "bots")
+        ]
+        alt_bot_dir = os.path.join(os.path.dirname(__file__), "config", "bots")
+        if os.path.exists(alt_bot_dir) and alt_bot_dir not in target_dirs:
+            target_dirs.append(alt_bot_dir)
+
+        template_path = os.path.join(os.path.dirname(bots_config_path), "bots", "nvda.json")
+        bot_params = {}
+        if os.path.exists(template_path):
+            with open(template_path, "r") as f:
+                bot_params = json.load(f)
+        else:
+            bot_params = {
+                "symbol": symbol,
+                "capital": {"capital_per_bucket_long": capital_allocation / 2.0, "capital_per_bucket_short": 1000.0, "buckets_per_group": 2},
+                "atr_parameters": {"atr_period": 14, "trailing_stop_atr_multiplier": 2.0, "position_min_shares": 100},
+                "covered_calls": {"use_covered_calls": True, "call_expiration_days": 7 if strategy_track == "GROWTH" else 30}
+            }
+
+        bot_params["symbol"] = symbol
+        bot_params["description"] = f"{symbol} automated trader - {strategy_track} strategy"
+        if "capital" in bot_params:
+            bot_params["capital"]["capital_per_bucket_long"] = round(capital_allocation / 2.0, 2)
+        if "covered_calls" in bot_params:
+            if strategy_track == "INCOME":
+                bot_params["covered_calls"]["cc_mode"] = "INCOME"
+                bot_params["covered_calls"]["call_expiration_days"] = 30
+                bot_params["covered_calls"]["use_covered_calls"] = True
+            else:
+                bot_params["covered_calls"]["cc_mode"] = "TOTAL_RETURN"
+                bot_params["covered_calls"]["call_expiration_days"] = 7
+                bot_params["covered_calls"]["use_covered_calls"] = True
+
+        for b_dir in target_dirs:
+            try:
+                os.makedirs(b_dir, exist_ok=True)
+                target_json = os.path.join(b_dir, f"{symbol.lower()}.json")
+                with open(target_json, "w") as f:
+                    json.dump(bot_params, f, indent=2)
+            except Exception as w_err:
+                logger.warning(f"Could not write bot params to {b_dir}: {w_err}")
+
+        now_str = datetime.now(timezone.utc).isoformat()
+        try:
+            doc_ref = dashboard_data.stock_picks_ref.document("current")
+            doc = doc_ref.get()
+            if doc.exists:
+                data = doc.to_dict() or {}
+                for k in ["actionable_leads", "growth_picks", "income_picks"]:
+                    if k in data and isinstance(data[k], list):
+                        data[k] = [x for x in data[k] if (x.get("ticker") or x.get("symbol") or "").upper() != symbol]
+
+                already_accepted = data.get("already_accepted", [])
+                match = next((x for x in already_accepted if (x.get("ticker") or x.get("symbol") or "").upper() == symbol), None)
+                if match:
+                    match["status"] = "PROVISIONED"
+                    match["bot_id"] = bot_id
+                    match["client_id"] = next_id
+                    match["provisioned_at"] = now_str
+                    match["dashboard_link"] = f"/bot/{bot_id}"
+                    match["status_label"] = f"Bot Active (client_id: {next_id})"
+                else:
+                    already_accepted.append({
+                        "symbol": symbol,
+                        "ticker": symbol,
+                        "strategy_track": strategy_track,
+                        "status": "PROVISIONED",
+                        "bot_id": bot_id,
+                        "client_id": next_id,
+                        "provisioned_at": now_str,
+                        "dashboard_link": f"/bot/{bot_id}",
+                        "status_label": f"Bot Active (client_id: {next_id})"
+                    })
+                data["already_accepted"] = already_accepted
+                doc_ref.set(data)
+        except Exception as fs_err:
+            logger.warning(f"Could not update Firestore stock picks status: {fs_err}")
+
+        with _bot_config_cache["lock"]:
+            _bot_config_cache["config"] = None
+            _bot_config_cache["mtime"] = None
+        with _stock_picks_cache["lock"]:
+            _stock_picks_cache["data"] = None
+            _stock_picks_cache["timestamp"] = None
+
+        return {
+            "status": "success",
+            "bot_id": bot_id,
+            "client_id": next_id,
+            "symbol": symbol,
+            "message": f"Successfully provisioned bot {bot_id} (client_id: {next_id}) for {symbol}"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error provisioning bot for {symbol}")
+        raise HTTPException(status_code=500, detail=f"Failed to provision bot: {str(e)}")
+
 
 
 @app.get("/api/entry-decisions")

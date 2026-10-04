@@ -1551,60 +1551,155 @@ def compute_fundamental_score(ticker: str) -> Dict[str, Any]:
 
 
 # =============================================================================
+# EVIDENCE DOSSIER & XAI SYNTHESIS
+# =============================================================================
+
+def build_evidence_dossier(
+    ticker: str,
+    industry: str,
+    catalyst: str,
+    fundamentals: Dict[str, Any],
+    strategy_track: str = "GROWTH",
+    options_data: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    Build a multi-dimensional evidence dossier for a candidate stock.
+
+    Includes:
+    - Clickable SEC filing URL
+    - Financial health & solvency metrics
+    - Alternative data catalysts (USAspending awards, Form 4 insider purchases, Congress trades)
+    - Options yield metrics (if strategy_track == 'INCOME')
+    - 3 Bull Drivers + 3 Risk Warnings (XAI synthesis)
+    """
+    # 1. SEC Filing URL
+    sec_url = "https://www.sec.gov/edgar/searchedgar/companysearch"
+    try:
+        sec_map = get_sec_ticker_map()
+        cik = sec_map.get(ticker.upper())
+        if cik:
+            sec_url = f"https://www.sec.gov/edgar/browse/?CIK={cik}"
+    except Exception as e:
+        logger.debug(f"Could not build SEC URL for {ticker}: {e}")
+
+    # 2. Alternative Data (Contracts & Congress)
+    alt_data = {}
+    try:
+        from .alternative_data_client import fetch_alternative_catalysts
+        alt_data = fetch_alternative_catalysts(ticker)
+    except Exception as e:
+        logger.debug(f"Alternative data fetch failed for {ticker}: {e}")
+
+    contracts = alt_data.get("contracts", [])
+    congress_trades = alt_data.get("congress_trades", [])
+
+    # 3. Dynamic XAI Synthesis (3 Bull Drivers, 3 Risk Warnings)
+    bull_thesis = []
+
+    if strategy_track == "INCOME" and options_data:
+        my = options_data.get("monthly_yield_est")
+        if my is not None:
+            bull_thesis.append(f"Attractive monthly covered call premium yield of {my:.1f}% ({options_data.get('annualized_yield_est', 0):.1f}% annualized)")
+
+    if catalyst and "No news" not in catalyst and len(bull_thesis) < 3:
+        bull_thesis.append(f"Catalyst: {catalyst[:85]}")
+
+    rev_yoy = fundamentals.get("revenue_yoy")
+    if rev_yoy is not None and len(bull_thesis) < 3:
+        bull_thesis.append(f"Revenue growth of {rev_yoy * 100:.1f}% YoY with strong top-line momentum")
+    elif len(bull_thesis) < 3:
+        bull_thesis.append("Solid fundamental baseline with stable quarterly operations")
+
+    if contracts:
+        top_contract = contracts[0]
+        amt_str = f"${top_contract.get('amount', 0):,.0f}" if top_contract.get('amount') else "Federal"
+        bull_thesis.append(f"Awarded {amt_str} contract from {top_contract.get('agency', 'Gov')}")
+    elif congress_trades:
+        bull_thesis.append(f"Recent Congressional purchase disclosure by {congress_trades[0].get('representative', 'Member of Congress')}")
+    else:
+        insider = fundamentals.get("insider_shares_net")
+        if insider and insider > 0:
+            bull_thesis.append(f"Net positive insider buying of {insider:,.0f} shares")
+        else:
+            bull_thesis.append(f"High sector conviction in {industry}")
+
+    risk_warnings = []
+    de = fundamentals.get("debt_to_equity")
+    if de is not None and de > 150:
+        risk_warnings.append(f"Elevated Debt-to-Equity ratio ({de:.0f}%) requires debt service monitoring")
+    else:
+        risk_warnings.append("Subject to broader macro interest rate and market beta volatility")
+
+    cr = fundamentals.get("current_ratio")
+    if cr is not None and cr < 1.1:
+        risk_warnings.append(f"Current ratio is tight at {cr:.2f} (working capital constraint)")
+    else:
+        risk_warnings.append("Execution risk in delivering against backlog and operating guidance")
+
+    if strategy_track == "INCOME" and options_data:
+        dte = options_data.get("days_to_earnings")
+        if dte is not None and dte <= 30:
+            risk_warnings.append(f"Earnings scheduled in {dte} days - covered call assignment risk elevated")
+        else:
+            risk_warnings.append("Stock price upside capped by short call strike")
+    else:
+        risk_warnings.append("Fast momentum can experience sharp mean-reverting pullbacks")
+
+    # Determine Solvency Rating
+    cr = fundamentals.get("current_ratio")
+    de = fundamentals.get("debt_to_equity")
+    solvency = "Adequate"
+    if cr is not None and de is not None:
+        if cr >= 1.5 and de < 80:
+            solvency = "Pristine"
+        elif cr >= 1.2 and de < 150:
+            solvency = "Robust"
+        elif cr < 1.0 or de > 250:
+            solvency = "Distressed"
+
+    dossier = {
+        "sec_filing_url": sec_url,
+        "revenue_yoy": fundamentals.get("revenue_yoy"),
+        "net_income": fundamentals.get("net_income"),
+        "operating_income": fundamentals.get("operating_income"),
+        "gross_margin": fundamentals.get("gross_margin"),
+        "operating_margin": fundamentals.get("operating_margin"),
+        "debt_to_equity": fundamentals.get("debt_to_equity"),
+        "current_ratio": fundamentals.get("current_ratio"),
+        "solvency_rating": solvency,
+        "contracts": contracts,
+        "usaspending_contracts": contracts,
+        "contract_count": len(contracts),
+        "total_contract_value": alt_data.get("total_contract_value", 0),
+        "congress_trades": congress_trades,
+        "congressional_trades": congress_trades,
+        "congress_buy_count": len(congress_trades),
+        "bull_thesis": bull_thesis[:3],
+        "bull_drivers": bull_thesis[:3],
+        "risk_warnings": risk_warnings[:3],
+    }
+
+    if options_data:
+        dossier["options_yield_metrics"] = options_data
+        dossier.update({
+            "monthly_yield_est": options_data.get("monthly_yield_est"),
+            "annualized_yield_est": options_data.get("annualized_yield_est"),
+            "strike": options_data.get("strike"),
+            "open_interest": options_data.get("open_interest"),
+            "days_to_earnings": options_data.get("days_to_earnings"),
+            "earnings_risk_flag": options_data.get("earnings_risk_flag", False),
+        })
+
+    return dossier
+
+
+# =============================================================================
 # PICK SELECTION (Composite Scoring)
 # =============================================================================
 
 def score_candidates(ranked_news: List[Dict]) -> List[Dict]:
     """
-    Score candidate tickers and select top 5 picks.
-
-    This is the final step that combines news explosiveness with fundamentals:
-
-    Algorithm:
-    1. Filter news items with explosiveness >= 7.5 (only explosive news)
-    2. For each explosive news item:
-       a. Get candidate tickers for that industry
-       b. Score each candidate's fundamentals
-       c. Calculate composite: 60% explosive + 40% fundamental
-       d. Pick best ticker for that industry
-    3. Sort all picks by composite score
-    4. Return top 5
-
-    Composite Score Formula:
-        composite = (explosiveness × 6.0) + (fundamental_score × 0.4)
-
-    Example:
-        Explosiveness: 8.5
-        Fundamental: 75
-        Composite: (8.5 × 6.0) + (75 × 0.4) = 51.0 + 30.0 = 81.0
-
-    Args:
-        ranked_news: List of news items with explosiveness scores
-
-    Returns:
-        List of top 5 picks (sorted by composite score, highest first)
-        Each pick contains:
-        - industry: Industry sector
-        - ticker: Selected ticker symbol
-        - catalyst: News headline that triggered the pick
-        - explosiveness: News explosiveness score (0-10)
-        - fundamental_score: Fundamental analysis score (0-100)
-        - composite_score: Final score (explosiveness×6 + fundamental×0.4)
-        - revenue_yoy: Revenue growth rate
-        - net_income: Latest quarterly net income
-        - operating_income: Latest quarterly operating income
-        - gross_margin: Gross profit margin
-        - operating_margin: Operating profit margin
-        - debt_to_equity: Debt to equity ratio
-        - current_ratio: Current ratio
-        - eps_surprise: Earnings surprise percentage
-        - recommendation_mean: Analyst recommendation
-        - fundamental_reasons: Explanation of fundamental score
-        - rationale: Combined rationale for the pick
-
-    Note:
-        May return fewer than 5 picks if insufficient explosive news.
-        Returns empty list if no news items meet threshold.
+    Score candidate tickers and select top picks with Evidence Dossiers.
     """
     picks = []
 
@@ -1645,9 +1740,6 @@ def score_candidates(ranked_news: List[Dict]) -> List[Dict]:
                 fundamental_score = fundamentals.get('score', BASELINE_FUNDAMENTAL_SCORE)
 
                 # Calculate composite score: 60% explosiveness + 40% fundamentals
-                # Explosiveness (0-10) × 6.0 = 0-60 points
-                # Fundamentals (0-100) × 0.4 = 0-40 points
-                # Total range: 0-100 points
                 composite_score = (explosiveness * (EXPLOSIVENESS_WEIGHT * 10)) + \
                                 (fundamental_score * FUNDAMENTAL_WEIGHT)
 
@@ -1681,13 +1773,25 @@ def score_candidates(ranked_news: List[Dict]) -> List[Dict]:
 
         # Add the best pick for this industry
         if best_ticker:
+            catalyst_text = news_item.get('headline', '')
+            dossier = build_evidence_dossier(
+                ticker=best_ticker,
+                industry=industry,
+                catalyst=catalyst_text,
+                fundamentals=best_fundamentals,
+                strategy_track="GROWTH"
+            )
+
             pick = {
                 'industry': industry,
                 'ticker': best_ticker,
-                'catalyst': news_item.get('headline', ''),
+                'catalyst': catalyst_text,
                 'explosiveness': explosiveness,
                 'fundamental_score': best_fundamentals.get('score'),
                 'composite_score': round(best_score, 2),
+                'strategy_track': 'GROWTH',
+                'status': 'PENDING_REVIEW',
+                'evidence_dossier': dossier,
 
                 # Financial metrics (may be None if data unavailable)
                 'revenue_yoy': best_fundamentals.get('revenue_yoy'),
@@ -1706,13 +1810,12 @@ def score_candidates(ranked_news: List[Dict]) -> List[Dict]:
             }
             picks.append(pick)
 
-    # Sort by composite score (highest first) and return top 5
+    # Sort by composite score (highest first)
     picks.sort(key=lambda x: x['composite_score'], reverse=True)
-    top_5 = picks[:5]
 
     logger.info(
-        f"Selected {len(top_5)} picks from {len(picks)} candidates "
+        f"Generated {len(picks)} candidate picks "
         f"(filtered from {len(ranked_news)} news items)"
     )
 
-    return top_5
+    return picks
