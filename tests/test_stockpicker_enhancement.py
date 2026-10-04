@@ -9,7 +9,7 @@ Unit tests for StockPicker Enhancement:
 import os
 import json
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, mock_open
 from datetime import datetime, timezone, timedelta
 
 from stockpicker.core import build_evidence_dossier
@@ -247,3 +247,116 @@ def test_api_accept_and_provision_endpoints():
     assert data_reject["status"] == "success"
     assert data_reject["lead_status"] == "REJECTED"
     assert "cooldown_expires" in data_reject
+
+
+def test_generate_expert_parameter_advice_growth_and_income():
+    """Verify expert parameter calculations across volatility regimes and tracks."""
+    from stockpicker.parameter_advisor import generate_expert_parameter_advice
+
+    # 1. High Volatility Growth Asset
+    advice_growth = generate_expert_parameter_advice(
+        symbol="KTOS",
+        strategy_track="GROWTH",
+        capital_allocation=10000.0,
+        current_price=25.0,
+        est_atr_pct=0.035,  # 3.5% ATR -> High volatility
+        solvency_rating="Robust"
+    )
+    assert advice_growth["risk_tier"] == "High"
+    params_g = advice_growth["recommended_params"]
+    assert params_g["atr_parameters"]["trailing_stop_atr_multiplier"] == 2.8
+    # $5,000 bucket / $25 price = 200 -> capped at 100
+    assert params_g["atr_parameters"]["position_min_shares"] == 100
+    assert params_g["covered_calls"]["cc_mode"] == "TOTAL_RETURN"
+    assert params_g["covered_calls"]["call_expiration_days"] == 7
+    assert len(advice_growth["expert_rationale"]) == 4
+
+    # 2. Low Volatility Income Asset with High Share Price
+    advice_income = generate_expert_parameter_advice(
+        symbol="SPY",
+        strategy_track="INCOME",
+        capital_allocation=10000.0,
+        current_price=500.0,
+        est_atr_pct=0.010,  # 1.0% ATR -> Low volatility
+        solvency_rating="Pristine"
+    )
+    assert advice_income["risk_tier"] == "Low"
+    params_i = advice_income["recommended_params"]
+    assert params_i["atr_parameters"]["trailing_stop_atr_multiplier"] == 1.6
+    # $5,000 bucket / $500 price = 10 shares
+    assert params_i["atr_parameters"]["position_min_shares"] == 10
+    assert params_i["covered_calls"]["cc_mode"] == "INCOME"
+    assert params_i["covered_calls"]["call_expiration_days"] == 30
+    assert params_i["capital"]["capital_per_bucket_short"] == 0.0
+
+
+def test_api_parameter_advice_and_provision_failure_rollback(tmp_path):
+    """Verify GET parameter-advice endpoint and provisioning failure rollback with PROVISIONING_FAILED state."""
+    from fastapi.testclient import TestClient
+    from main import app, authenticated_sessions, dashboard_data
+
+    client = TestClient(app)
+    authenticated_sessions["test-session-adv"] = datetime.now() + timedelta(hours=1)
+    client.cookies.set("dashboard_session", "test-session-adv")
+
+    # Mock Firestore document
+    mock_doc = MagicMock()
+    mock_doc.exists = True
+    doc_data = {
+        "actionable_leads": [
+            {
+                "ticker": "FAILSYM",
+                "symbol": "FAILSYM",
+                "status": "PENDING_REVIEW",
+                "current_price": 50.0,
+                "est_atr_pct": 2.5
+            }
+        ],
+        "growth_picks": [],
+        "income_picks": [],
+        "already_accepted": []
+    }
+    mock_doc.to_dict.return_value = doc_data
+    mock_ref = MagicMock()
+    mock_ref.document.return_value.get.return_value = mock_doc
+    dashboard_data.stock_picks_ref = mock_ref
+
+    # 1. Test GET /api/stock-picks/parameter-advice
+    resp_adv = client.get("/api/stock-picks/parameter-advice?symbol=FAILSYM&strategy_track=GROWTH&capital_allocation=15000")
+    assert resp_adv.status_code == 200
+    adv_data = resp_adv.json()
+    assert adv_data["symbol"] == "FAILSYM"
+    assert "recommended_params" in adv_data
+    assert "expert_rationale" in adv_data
+
+    # 2. Test POST /api/stock-picks/provision-bot with failure during parameter write
+    fake_bots_json = tmp_path / "bots.json"
+    fake_bots_json.write_text(json.dumps({
+        "bots": [{"name": "existing_bot", "symbol": "EXIST", "client_id": 3, "enabled": True}]
+    }))
+
+    # Patch os.makedirs to raise PermissionError when creating bots directory
+    with patch("main._bot_config_cache", {"config": None, "mtime": None, "version": 0, "lock": MagicMock()}):
+        with patch("os.path.exists", return_value=True), \
+             patch("builtins.open", mock_open(read_data=fake_bots_json.read_text())), \
+             patch("os.makedirs", side_effect=PermissionError("Simulated disk write permission denied")):
+
+            resp_fail = client.post("/api/stock-picks/provision-bot", json={
+                "symbol": "FAILSYM",
+                "strategy_track": "GROWTH",
+                "capital_allocation": 10000
+            })
+
+            assert resp_fail.status_code == 500
+            err_json = resp_fail.json()
+            assert "Permission denied" in err_json["detail"] or "Simulated" in err_json["detail"]
+
+            # Verify Firestore was updated with PROVISIONING_FAILED status
+            mock_ref.document.return_value.set.assert_called()
+            saved_data = mock_ref.document.return_value.set.call_args[0][0]
+            lead_item = next(x for x in saved_data["actionable_leads"] if x["symbol"] == "FAILSYM")
+            assert lead_item["status"] == "PROVISIONING_FAILED"
+            assert "Permission denied" in lead_item["failure_reason"] or "Simulated" in lead_item["failure_reason"]
+            assert lead_item["failure_stage"] == "WRITING_BOT_PARAMS"
+            assert "suggested_action" in lead_item
+
