@@ -180,7 +180,7 @@ def test_mutation_kill_client_id_sequential_allocation():
 
 
 def test_mutation_kill_ticker_sanitization_regex():
-    """
+    r"""
     KILLS MUTANT: Relaxing the ticker validation regex r"^[A-Z0-9.\-]{1,10}$" to allow slashes or quotes.
     """
     safe_pattern = re.compile(r"^[A-Z0-9.\-]{1,10}$")
