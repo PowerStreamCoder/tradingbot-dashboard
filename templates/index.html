@@ -3,10 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>P&L Reporting - Trading Bots</title>
+    <title>P&L Reporting & Portfolio Statement - Trading Bots</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💰</text></svg>">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Base Styles -->
     <link rel="stylesheet" href="/static/css/bot_focus.css?v=2.9.1">
-    <link rel="stylesheet" href="/static/css/pnl-reporting.css">
+    <link rel="stylesheet" href="/static/css/pnl-reporting.css?v=3.0.0">
+    <!-- Chart.js for interactive charts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
     <div class="dashboard-container">
@@ -15,16 +22,17 @@
             <div class="header-left">
                 <h1>
                     <span class="bot-icon">💰</span>
-                    P&L Reporting
+                    P&L Reporting &amp; Portfolio Statement
+                    <span class="statement-account-pill">IBKR Master Account</span>
                 </h1>
                 <div class="bot-metadata">
                     <span class="metadata-item">
                         <span class="label">Purpose:</span>
-                        <span class="value">Aggregated performance, multi-timeframe P&amp;L reporting &amp; profit factor analytics</span>
+                        <span class="value">Institutional 4-tier statement, multi-bot attribution, friction waterfall &amp; risk analytics</span>
                     </span>
                     <span class="metadata-separator">|</span>
                     <span class="metadata-item">
-                        <span class="label">Bots:</span>
+                        <span class="label">Active Bots:</span>
                         <span class="value" id="activeBots">--</span>
                     </span>
                     <span class="metadata-separator">|</span>
@@ -33,6 +41,15 @@
                         <span class="value" id="lastUpdate">--</span>
                     </span>
                 </div>
+            </div>
+            <div class="header-right">
+                <div class="refresh-status">
+                    <span class="pulse-dot"></span>
+                    <span id="syncStatusText">Live Feed Connected</span>
+                </div>
+                <button class="btn btn-action" id="btnExportStatement" onclick="exportStatementCSV()">
+                    <span>📥</span> Export CSV
+                </button>
             </div>
         </header>
 
@@ -55,168 +72,303 @@
             </a>
         </nav>
 
-        <!-- P&L Statements Section -->
+        <!-- Main Content -->
         <div class="main-content">
-            <section class="section">
-                <div class="section-header">
-                    <h2>📊 Profit & Loss Statements</h2>
-                    <p class="section-subtitle">Real-time P&L tracking across all trading bots</p>
-                </div>
-
-                <!-- Bot Filter Bar -->
-                <div class="pnl-filter-bar">
-                    <label class="filter-label">Show P&L for:</label>
-                    <div class="bot-filter-container">
-                        <button class="bot-filter-button" id="botFilterButton">
-                            <span id="botFilterText">All Bots</span>
-                            <span class="dropdown-arrow">▼</span>
-                        </button>
-                        <div class="bot-filter-dropdown" id="botFilterDropdown" style="display: none;">
-                            <div class="filter-option">
-                                <label>
-                                    <input type="checkbox" id="allBotsCheckbox" checked>
-                                    <span>All Bots</span>
-                                </label>
-                            </div>
-                            <div class="filter-separator"></div>
-                            <div id="botCheckboxContainer">
-                                <!-- Individual bot checkboxes populated dynamically -->
-                            </div>
-                        </div>
+            <!-- Horizon & Scope Controls Card -->
+            <div class="statement-controls-card">
+                <div class="control-group">
+                    <span class="control-label">Period Horizon</span>
+                    <div class="timeline-tabs" id="timelineTabs">
+                        <button class="timeline-tab" data-period="1D" onclick="setStatementPeriod('1D')">Today (1D)</button>
+                        <button class="timeline-tab" data-period="1W" onclick="setStatementPeriod('1W')">1W</button>
+                        <button class="timeline-tab" data-period="1M" onclick="setStatementPeriod('1M')">1M</button>
+                        <button class="timeline-tab" data-period="QTD" onclick="setStatementPeriod('QTD')">QTD</button>
+                        <button class="timeline-tab active" data-period="YTD" onclick="setStatementPeriod('YTD')">YTD</button>
+                        <button class="timeline-tab" data-period="1Y" onclick="setStatementPeriod('1Y')">1 Year</button>
+                        <button class="timeline-tab" data-period="ALL" onclick="setStatementPeriod('ALL')">All Time</button>
                     </div>
                 </div>
 
-                <div class="pnl-grid">
-                    <!-- Day Statement -->
-                    <div class="pnl-card">
-                        <div class="pnl-card-header">
-                            <h3>Day Statement</h3>
-                            <input type="date" id="day-selector" class="date-selector">
+                <div class="control-group">
+                    <span class="control-label">Bot Attribution Scope</span>
+                    <div class="bot-scope-pills" id="botScopePills">
+                        <div class="bot-scope-pill active" data-scope="ALL" onclick="setBotScope('ALL')">
+                            <span class="scope-dot" style="background:#818cf8;"></span> All Bots Combined
                         </div>
-                        <table class="pnl-table">
-                            <thead>
-                                <tr>
-                                    <th>Metric</th>
-                                    <th id="day-bot1-header">--</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr>
-                                    <td class="metric-label">Number of Trades per day</td>
-                                    <td id="day-bot1-trades" class="metric-value">0</td>
-                                </tr>
-                                <tr>
-                                    <td class="metric-label">Profit Loss amount in USD per day</td>
-                                    <td id="day-bot1-pnl" class="pnl-value">+$0.00</td>
-                                </tr>
-                                <tr class="total-row">
-                                    <td class="metric-label">Total Number of Trades per day</td>
-                                    <td id="day-total-trades" class="metric-value">0</td>
-                                </tr>
-                                <tr class="total-row">
-                                    <td class="metric-label">Total Profit Loss amount in USD per day</td>
-                                    <td id="day-total-pnl" class="pnl-value">+$0.00</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <!-- Week Statement -->
-                    <div class="pnl-card">
-                        <div class="pnl-card-header">
-                            <h3>Week Statement</h3>
-                            <div class="date-selector-group">
-                                <select id="week-year-selector" class="date-selector">
-                                    <!-- Populated by JavaScript -->
-                                </select>
-                                <select id="week-selector" class="date-selector">
-                                    <!-- Populated by JavaScript -->
-                                </select>
-                            </div>
-                        </div>
-                        <table class="pnl-table">
-                            <thead>
-                                <tr>
-                                    <th>Metric</th>
-                                    <th id="week-bot1-header">--</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr>
-                                    <td class="metric-label">Number of Trades per week</td>
-                                    <td id="week-bot1-trades" class="metric-value">0</td>
-                                </tr>
-                                <tr>
-                                    <td class="metric-label">Profit Loss amount in USD per week</td>
-                                    <td id="week-bot1-pnl" class="pnl-value">+$0.00</td>
-                                </tr>
-                                <tr class="total-row">
-                                    <td class="metric-label">Total Number of Trades per week</td>
-                                    <td id="week-total-trades" class="metric-value">0</td>
-                                </tr>
-                                <tr class="total-row">
-                                    <td class="metric-label">Total Profit Loss amount in USD per week</td>
-                                    <td id="week-total-pnl" class="pnl-value">+$0.00</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <!-- Month Statement -->
-                    <div class="pnl-card">
-                        <div class="pnl-card-header">
-                            <h3>Month Statement</h3>
-                            <div class="date-selector-group">
-                                <select id="month-selector" class="date-selector">
-                                    <!-- Populated by JavaScript -->
-                                </select>
-                                <select id="month-year-selector" class="date-selector">
-                                    <!-- Populated by JavaScript -->
-                                </select>
-                            </div>
-                        </div>
-                        <table class="pnl-table">
-                            <thead>
-                                <tr>
-                                    <th>Metric</th>
-                                    <th id="month-bot1-header">--</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr>
-                                    <td class="metric-label">Number of Trades per month</td>
-                                    <td id="month-bot1-trades" class="metric-value">0</td>
-                                </tr>
-                                <tr>
-                                    <td class="metric-label">Profit Loss amount in USD per month</td>
-                                    <td id="month-bot1-pnl" class="pnl-value">+$0.00</td>
-                                </tr>
-                                <tr class="total-row">
-                                    <td class="metric-label">Total Number of Trades per Month</td>
-                                    <td id="month-total-trades" class="metric-value">0</td>
-                                </tr>
-                                <tr class="total-row">
-                                    <td class="metric-label">Total Profit Loss amount in USD per Month</td>
-                                    <td id="month-total-pnl" class="pnl-value">+$0.00</td>
-                                </tr>
-                            </tbody>
-                        </table>
                     </div>
                 </div>
-            </section>
+            </div>
+
+            <!-- Executive KPI Summary Grid -->
+            <div class="kpi-grid">
+                <div class="statement-kpi-card">
+                    <div class="kpi-card-header">
+                        <span class="kpi-card-title">Net Asset Value (NAV)</span>
+                        <span class="kpi-card-icon">💼</span>
+                    </div>
+                    <div class="kpi-card-value font-mono" id="kpiNav">$0.00</div>
+                    <div class="kpi-card-subtext">
+                        <span class="stat-badge pos" id="kpiNavGrowth">+0.0%</span>
+                        <span>Starting: <span id="kpiStartingNav" class="font-mono">$0.00</span></span>
+                    </div>
+                </div>
+
+                <div class="statement-kpi-card">
+                    <div class="kpi-card-header">
+                        <span class="kpi-card-title">Net Total P&L</span>
+                        <span class="kpi-card-icon">📈</span>
+                    </div>
+                    <div class="kpi-card-value font-mono" id="kpiTotalPnl">$0.00</div>
+                    <div class="kpi-card-subtext">
+                        <span class="stat-badge pos" id="kpiRealizedSplit">Realized: $0.00</span>
+                        <span>Unrealized: <span id="kpiUnrealizedSplit" class="font-mono">$0.00</span></span>
+                    </div>
+                </div>
+
+                <div class="statement-kpi-card">
+                    <div class="kpi-card-header">
+                        <span class="kpi-card-title">Profit Factor &amp; Win Rate</span>
+                        <span class="kpi-card-icon">🎯</span>
+                    </div>
+                    <div class="kpi-card-value font-mono" id="kpiProfitFactor">-- <span class="kpi-unit">(PF)</span></div>
+                    <div class="kpi-card-subtext">
+                        <span class="stat-badge pos" id="kpiWinRate">0.0% Win Rate</span>
+                        <span id="kpiTotalTrades">0 Trades</span>
+                    </div>
+                </div>
+
+                <div class="statement-kpi-card">
+                    <div class="kpi-card-header">
+                        <span class="kpi-card-title">Alpha vs S&amp;P 500 (SPY)</span>
+                        <span class="kpi-card-icon">🚀</span>
+                    </div>
+                    <div class="kpi-card-value font-mono" id="kpiAlpha">+0.0% Alpha</div>
+                    <div class="kpi-card-subtext">
+                        <span class="stat-badge neutral" id="kpiBotReturn">Bot: +0.0%</span>
+                        <span>SPY: <span id="kpiSpyReturn" class="font-mono">+0.0%</span></span>
+                    </div>
+                </div>
+
+                <div class="statement-kpi-card">
+                    <div class="kpi-card-header">
+                        <span class="kpi-card-title">Sharpe &amp; Max Drawdown</span>
+                        <span class="kpi-card-icon">🛡️</span>
+                    </div>
+                    <div class="kpi-card-value font-mono" id="kpiSharpe">-- <span class="kpi-unit">Sharpe</span></div>
+                    <div class="kpi-card-subtext">
+                        <span class="stat-badge neg" id="kpiDrawdown">-0.0% Max DD</span>
+                        <span>Sortino: <span id="kpiSortino" class="font-mono">--</span></span>
+                    </div>
+                </div>
+
+                <div class="statement-kpi-card">
+                    <div class="kpi-card-header">
+                        <span class="kpi-card-title">Free Cash &amp; Margin</span>
+                        <span class="kpi-card-icon">🏦</span>
+                    </div>
+                    <div class="kpi-card-value font-mono" id="kpiFreeCash">$0.00</div>
+                    <div class="kpi-card-subtext">
+                        <span class="stat-badge neutral" id="kpiCashBuffer">0.0% Buffer</span>
+                        <span>Margin Util: <span id="kpiMarginUtil" class="font-mono">0.0%</span></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Analytics Row 1: Cumulative Equity vs SPY + Cashflow Waterfall -->
+            <div class="analytics-row-two-col">
+                <div class="statement-panel">
+                    <div class="statement-panel-header">
+                        <div>
+                            <h3>📊 Cumulative Portfolio Growth vs Benchmark</h3>
+                            <p class="panel-subtitle">Time-Weighted Return (TWR) tracking multi-bot portfolio vs S&amp;P 500 (SPY)</p>
+                        </div>
+                        <div class="chart-legend-tags">
+                            <span class="legend-tag tag-bot">● Bot Portfolio</span>
+                            <span class="legend-tag tag-spy">--- SPY Benchmark</span>
+                        </div>
+                    </div>
+                    <div class="statement-chart-container">
+                        <canvas id="equityGrowthChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="statement-panel">
+                    <div class="statement-panel-header">
+                        <div>
+                            <h3>💧 Cash Flow &amp; Friction Waterfall</h3>
+                            <p class="panel-subtitle">Audited net cash generated after trading friction &amp; financing</p>
+                        </div>
+                        <span class="stat-badge pos">Audit Reconciled</span>
+                    </div>
+                    <div class="waterfall-container" id="waterfallContainer">
+                        <div class="waterfall-row">
+                            <div class="waterfall-left">
+                                <span class="waterfall-icon icon-pos">🟢</span>
+                                <div>
+                                    <div class="waterfall-title">Gross Trading Wins</div>
+                                    <div class="waterfall-desc" id="waterfallWinsCount">0 winning trades</div>
+                                </div>
+                            </div>
+                            <div class="waterfall-amount pos font-mono" id="waterfallGrossWins">+$0.00</div>
+                        </div>
+
+                        <div class="waterfall-row">
+                            <div class="waterfall-left">
+                                <span class="waterfall-icon icon-neg">🔴</span>
+                                <div>
+                                    <div class="waterfall-title">Gross Trading Losses</div>
+                                    <div class="waterfall-desc" id="waterfallLossesCount">0 losing trades</div>
+                                </div>
+                            </div>
+                            <div class="waterfall-amount neg font-mono" id="waterfallGrossLosses">-$0.00</div>
+                        </div>
+
+                        <div class="waterfall-row">
+                            <div class="waterfall-left">
+                                <span class="waterfall-icon icon-cyan">📜</span>
+                                <div>
+                                    <div class="waterfall-title">Covered Call Option Yield</div>
+                                    <div class="waterfall-desc">Net theta decay &amp; option credits</div>
+                                </div>
+                            </div>
+                            <div class="waterfall-amount pos font-mono" id="waterfallOptionYield">+$0.00</div>
+                        </div>
+
+                        <div class="waterfall-row">
+                            <div class="waterfall-left">
+                                <span class="waterfall-icon icon-amber">💸</span>
+                                <div>
+                                    <div class="waterfall-title">Commissions &amp; Routing Fees</div>
+                                    <div class="waterfall-desc">IBKR Pro execution &amp; regulatory fees</div>
+                                </div>
+                            </div>
+                            <div class="waterfall-amount neg font-mono" id="waterfallCommissions">-$0.00</div>
+                        </div>
+
+                        <div class="waterfall-row">
+                            <div class="waterfall-left">
+                                <span class="waterfall-icon icon-purple">🏦</span>
+                                <div>
+                                    <div class="waterfall-title">Net Financing &amp; Interest Carry</div>
+                                    <div class="waterfall-desc">Cash balance yield minus margin loan debit</div>
+                                </div>
+                            </div>
+                            <div class="waterfall-amount pos font-mono" id="waterfallFinancing">+$0.00</div>
+                        </div>
+
+                        <div class="waterfall-row waterfall-total">
+                            <div class="waterfall-left">
+                                <span class="waterfall-icon icon-indigo">💰</span>
+                                <div>
+                                    <div class="waterfall-title">Net Cash Generated</div>
+                                    <div class="waterfall-desc">External Deposits / Withdrawals: $0.00</div>
+                                </div>
+                            </div>
+                            <div class="waterfall-amount pos font-mono" id="waterfallNetCash">+$0.00</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Multi-Bot Attribution & Statement Ledger Table -->
+            <div class="statement-panel">
+                <div class="statement-panel-header">
+                    <div>
+                        <h3>🤖 Multi-Bot Performance Attribution &amp; Statement Ledger</h3>
+                        <p class="panel-subtitle">Audited return, win rate, expectancy, and cost attribution per autonomous agent</p>
+                    </div>
+                    <span class="stat-badge neutral" id="attributionCountBadge">0 Bots Tracked</span>
+                </div>
+                <div class="statement-table-responsive">
+                    <table class="statement-table" id="statementTable">
+                        <thead>
+                            <tr>
+                                <th class="sticky-col">Bot Identifier &amp; Strategy</th>
+                                <th>Allocation ($ / %)</th>
+                                <th>Status</th>
+                                <th>Trades (W / L)</th>
+                                <th>Win Rate</th>
+                                <th>Profit Factor</th>
+                                <th>Payoff (R:R)</th>
+                                <th>Gross P&amp;L</th>
+                                <th>Commissions</th>
+                                <th>Realized P&amp;L</th>
+                                <th>Unrealized P&amp;L</th>
+                                <th>Total Net P&amp;L</th>
+                                <th>Return (ROC %)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="statementTableBody">
+                            <tr>
+                                <td colspan="13" style="text-align:center; padding: 24px; color: var(--text-muted);">
+                                    Loading statement attribution records...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Analytics Row 2: Daily P&L Calendar Heatmap + Contribution Donut -->
+            <div class="analytics-row-two-col">
+                <div class="statement-panel">
+                    <div class="statement-panel-header">
+                        <div>
+                            <h3>📅 Daily Trading P&L Heatmap</h3>
+                            <p class="panel-subtitle">Distribution of daily net trading profits and losses across sessions</p>
+                        </div>
+                        <div class="heatmap-legend">
+                            <span>Loss</span>
+                            <span class="heat-chip chip-loss-h"></span>
+                            <span class="heat-chip chip-loss-l"></span>
+                            <span class="heat-chip chip-neutral"></span>
+                            <span class="heat-chip chip-gain-l"></span>
+                            <span class="heat-chip chip-gain-h"></span>
+                            <span>Profit</span>
+                        </div>
+                    </div>
+                    <div class="calendar-grid" id="calendarHeatmapGrid">
+                        <!-- Heatmap cells populated dynamically -->
+                    </div>
+                </div>
+
+                <div class="statement-panel">
+                    <div class="statement-panel-header">
+                        <div>
+                            <h3>🍩 P&L Contribution by Bot</h3>
+                            <p class="panel-subtitle">Relative share of total generated net profits</p>
+                        </div>
+                    </div>
+                    <div class="statement-donut-container">
+                        <canvas id="botContributionDonut"></canvas>
+                    </div>
+                    <div class="donut-summary-footer" id="donutSummaryFooter">
+                        <!-- Bot shares populated dynamically -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Automated Portfolio Insights & Risk Telemetry -->
+            <div class="statement-panel">
+                <div class="statement-panel-header">
+                    <div>
+                        <h3>💡 Automated Portfolio Insights &amp; Risk Guardrails</h3>
+                        <p class="panel-subtitle">Telemetry-driven observations calculated from execution history and risk metrics</p>
+                    </div>
+                    <span class="stat-badge pos">Guardrails Active</span>
+                </div>
+                <div class="insights-grid" id="riskInsightsGrid">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
         </div>
     </div>
 
-    <!-- Shared Utilities -->
+    <!-- Scripts -->
     <script src="/static/js/utils.js"></script>
     <script src="/static/js/pnl-utils.js"></script>
-
-    <!-- Configuration (must load before other scripts) -->
     <script src="/static/js/config.js?v=2.6.0"></script>
-
-    <!-- Dashboard Scripts -->
     <script src="/static/js/dashboard.js?v=2.6.0"></script>
-    <script src="/static/js/trade-charts.js?v=2.6.0"></script>
-    <script src="/static/js/pnl-reporting.js?v=2.6.0"></script>
+    <script src="/static/js/pnl-reporting.js?v=3.0.0"></script>
 </body>
 </html>

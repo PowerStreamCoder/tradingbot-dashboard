@@ -43,6 +43,10 @@ from slowapi.errors import RateLimitExceeded
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# P&L Statement Engine
+from services.pnl_statement_engine import aggregate_portfolio_pnl, PortfolioStatementResponse
+
+
 # Initialize rate limiter
 limiter = Limiter(key_func=get_remote_address)
 
@@ -834,6 +838,57 @@ async def pnl_reporting():
         return FileResponse(pnl_path)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="P&L Reporting page not found")
+
+@app.get("/api/pnl-statement", response_model=PortfolioStatementResponse)
+async def get_pnl_statement(
+    period: str = "YTD",
+    bot: str = "ALL",
+    benchmark: str = "SPY",
+    response: Response = None
+):
+    """
+    Get Institutional Multi-Bot P&L Statement and Portfolio Analytics.
+    Aggregates closed trades, active buckets, risk metrics, cashflow waterfall, and visual series.
+    """
+    try:
+        # Load trades using existing trade history logic (lookback 365 days)
+        trade_res = await get_all_trade_history(days=365, response=None)
+        trades_list = trade_res.get("trades", []) if isinstance(trade_res, dict) else []
+
+        # Load bot configs
+        configs = load_bot_configs().get("bots", [])
+
+        # Load bot overview data
+        bot_overview_raw = dashboard_data._load_bot_data() or {}
+
+        # Load account overview if exists in Firestore
+        account_overview = None
+        try:
+            acct_doc = dashboard_data.db.collection('account_overview').document('current').get()
+            if acct_doc.exists:
+                account_overview = acct_doc.to_dict()
+        except Exception:
+            pass
+
+        statement = aggregate_portfolio_pnl(
+            trades=trades_list,
+            bot_overview_data=bot_overview_raw,
+            bot_configs=configs,
+            account_overview_data=account_overview,
+            period=period,
+            bot_scope=bot,
+            benchmark_symbol=benchmark
+        )
+
+        if response:
+            cache_status = "HIT" if statement.data_quality.cached else "MISS"
+            response.headers["X-Cache-Status"] = f"{cache_status} (age: {statement.data_quality.cache_age_seconds}s)"
+
+        return statement
+    except Exception as e:
+        logger.error(f"Error generating P&L statement: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to generate P&L statement: {str(e)}")
+
 
 @app.get("/api/bot-configs")
 async def get_bot_configs():
