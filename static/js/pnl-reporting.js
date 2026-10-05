@@ -115,7 +115,7 @@ function renderExecutiveKPIs(kpis) {
     const kpiNavGrowth = document.getElementById('kpiNavGrowth');
     if (kpiNavGrowth) {
         kpiNavGrowth.textContent = formatPercent(kpis.nav_growth_pct, true);
-        kpiNavGrowth.className = `stat-badge ${kpis.nav_growth_pct >= 0 ? 'pos' : 'neg'}`;
+        kpiNavGrowth.className = `stat-badge ${kpis.nav_growth_pct > 0 ? 'pos' : (kpis.nav_growth_pct < 0 ? 'neg' : 'neutral')}`;
     }
 
     const kpiStartingNav = document.getElementById('kpiStartingNav');
@@ -131,7 +131,7 @@ function renderExecutiveKPIs(kpis) {
     const kpiRealizedSplit = document.getElementById('kpiRealizedSplit');
     if (kpiRealizedSplit) {
         kpiRealizedSplit.textContent = `Realized: ${formatCurrency(kpis.realized_pnl, true)}`;
-        kpiRealizedSplit.className = `stat-badge ${kpis.realized_pnl >= 0 ? 'pos' : 'neg'}`;
+        kpiRealizedSplit.className = `stat-badge ${kpis.realized_pnl > 0 ? 'pos' : (kpis.realized_pnl < 0 ? 'neg' : 'neutral')}`;
     }
 
     const kpiUnrealizedSplit = document.getElementById('kpiUnrealizedSplit');
@@ -148,8 +148,13 @@ function renderExecutiveKPIs(kpis) {
 
     const kpiWinRate = document.getElementById('kpiWinRate');
     if (kpiWinRate) {
-        kpiWinRate.textContent = `${kpis.win_rate_pct.toFixed(1)}% Win Rate`;
-        kpiWinRate.className = `stat-badge ${kpis.win_rate_pct >= 50 ? 'pos' : 'neg'}`;
+        if (kpis.total_trades === 0) {
+            kpiWinRate.textContent = '-- Win Rate';
+            kpiWinRate.className = 'stat-badge neutral';
+        } else {
+            kpiWinRate.textContent = `${kpis.win_rate_pct.toFixed(1)}% Win Rate`;
+            kpiWinRate.className = `stat-badge ${kpis.win_rate_pct >= 50 ? 'pos' : 'neg'}`;
+        }
     }
 
     const kpiTotalTrades = document.getElementById('kpiTotalTrades');
@@ -158,15 +163,20 @@ function renderExecutiveKPIs(kpis) {
     // Alpha vs Benchmark
     const kpiAlpha = document.getElementById('kpiAlpha');
     if (kpiAlpha) {
-        kpiAlpha.textContent = `${formatPercent(kpis.alpha_pct, true)} Alpha`;
-        kpiAlpha.className = `kpi-card-value font-mono ${kpis.alpha_pct >= 0 ? 'val-pos' : 'val-neg'}`;
+        if (kpis.total_trades === 0) {
+            kpiAlpha.textContent = '0.00% Alpha';
+            kpiAlpha.className = 'kpi-card-value font-mono';
+        } else {
+            kpiAlpha.textContent = `${formatPercent(kpis.alpha_pct, true)} Alpha`;
+            kpiAlpha.className = `kpi-card-value font-mono ${kpis.alpha_pct >= 0 ? 'val-pos' : 'val-neg'}`;
+        }
     }
 
     const kpiBotReturn = document.getElementById('kpiBotReturn');
     if (kpiBotReturn) kpiBotReturn.textContent = `Bot: ${formatPercent(kpis.nav_growth_pct, true)}`;
 
     const kpiSpyReturn = document.getElementById('kpiSpyReturn');
-    if (kpiSpyReturn) kpiSpyReturn.textContent = formatPercent(kpis.benchmark_return_pct, true);
+    if (kpiSpyReturn) kpiSpyReturn.textContent = `${kpis.benchmark_symbol || 'SPY'}: ${formatPercent(kpis.benchmark_return_pct, true)}`;
 
     // Sharpe & Drawdown
     const kpiSharpe = document.getElementById('kpiSharpe');
@@ -177,7 +187,13 @@ function renderExecutiveKPIs(kpis) {
 
     const kpiDrawdown = document.getElementById('kpiDrawdown');
     if (kpiDrawdown) {
-        kpiDrawdown.textContent = `${formatPercent(kpis.max_drawdown_pct)} Max DD`;
+        if (kpis.total_trades === 0) {
+            kpiDrawdown.textContent = '0.0% Max DD';
+            kpiDrawdown.className = 'stat-badge neutral';
+        } else {
+            kpiDrawdown.textContent = `${formatPercent(kpis.max_drawdown_pct)} Max DD`;
+            kpiDrawdown.className = `stat-badge ${kpis.max_drawdown_pct < -5 ? 'neg' : 'neutral'}`;
+        }
     }
 
     const kpiSortino = document.getElementById('kpiSortino');
