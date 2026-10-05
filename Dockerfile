@@ -16,6 +16,8 @@ COPY config ./config
 COPY static ./static
 COPY templates ./templates
 COPY stockpicker ./stockpicker
+COPY services ./services
+
 
 # Expose port
 EXPOSE 8080
