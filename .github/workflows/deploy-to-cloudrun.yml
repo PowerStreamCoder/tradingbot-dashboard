@@ -57,7 +57,9 @@ jobs:
           test -f Dockerfile || (echo "❌ Dockerfile not found" && exit 1)
           test -d static || (echo "❌ static/ not found" && exit 1)
           test -d templates || (echo "❌ templates/ not found" && exit 1)
+          test -d services || (echo "❌ services/ not found" && exit 1)
           echo "✅ All required files present"
+
 
   deploy:
     name: Deploy to Cloud Run
