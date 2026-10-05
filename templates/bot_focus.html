@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title id="pageTitle">Bot Focus - SMA Bot Dashboard</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/css/bot_focus.css?v=2.9.1">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
@@ -166,9 +168,37 @@
                     <div class="tile-header">
                         <h2>Price Chart: <span id="chartSymbol">--</span> 1h</h2>
                         <div class="chart-controls">
-                            <button class="chart-btn active">Indicators</button>
-                            <!-- Trades button removed - trade markers feature not implemented -->
+                            <button class="chart-btn active" id="btnToggleIndicators" title="Toggle all SMA indicator lines">⚡ Indicators</button>
+                            <div class="chart-bar-range-group" role="group" aria-label="Bar Range">
+                                <button class="chart-range-btn" data-bars="50" title="Last 50 bars">50b</button>
+                                <button class="chart-range-btn active" data-bars="100" title="Last 100 bars">100b</button>
+                                <button class="chart-range-btn" data-bars="200" title="Last 200 bars">200b</button>
+                            </div>
                         </div>
+                    </div>
+                    <!-- Interactive Indicator Pill Badges -->
+                    <div class="chart-indicator-bar" id="chartIndicatorBar">
+                        <button class="indicator-pill pill-price active" id="pillPrice" data-dataset="0" title="Toggle Price line">
+                            <span class="indicator-dot"></span>
+                            <span class="indicator-name">Price</span>
+                            <span class="indicator-val font-mono" id="pillPriceVal">--</span>
+                        </button>
+                        <button class="indicator-pill pill-sma5 active" id="pillSma5" data-dataset="1" title="Toggle SMA 5 momentum line">
+                            <span class="indicator-dot"></span>
+                            <span class="indicator-name">SMA 5</span>
+                            <span class="indicator-val font-mono" id="pillSma5Val">--</span>
+                        </button>
+                        <button class="indicator-pill pill-sma20 active" id="pillSma20" data-dataset="2" title="Toggle SMA 20 baseline line">
+                            <span class="indicator-dot"></span>
+                            <span class="indicator-name">SMA 20</span>
+                            <span class="indicator-val font-mono" id="pillSma20Val">--</span>
+                        </button>
+                        <button class="indicator-pill pill-sma200 active" id="pillSma200" data-dataset="3" title="Toggle SMA 200 regime line">
+                            <span class="indicator-dot"></span>
+                            <span class="indicator-name">SMA 200</span>
+                            <span class="indicator-val font-mono" id="pillSma200Val">--</span>
+                        </button>
+                        <div class="chart-crosshair-time font-mono" id="chartHoverTime"></div>
                     </div>
                     <div class="chart-container">
                         <canvas id="priceChart"></canvas>

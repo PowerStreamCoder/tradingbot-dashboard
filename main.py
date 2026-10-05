@@ -2811,8 +2811,8 @@ async def get_historical_bars(symbol: str, bars: int = 50):
         if not stored_bars:
             return []
 
-        # Return the requested number of most recent bars (default 50, max 100)
-        requested_bars = min(bars, 100)
+        # Return the requested number of most recent bars (default 50, max 250)
+        requested_bars = min(bars, 250)
         result = stored_bars[-requested_bars:] if len(stored_bars) > requested_bars else stored_bars
 
         print(f"Returning {len(result)} historical bars for {symbol} (from IBKR via Firestore)")
