@@ -566,15 +566,18 @@ function formatDecisionBadge(decision, engine, status) {
 function formatStatusBadge(status) {
     const s = String(status || '').toLowerCase().trim();
     if (s === 'applied') {
-        return `<span class="chip chip-applied">● Applied</span>`;
+        return `<span class="dash-status-pill success"><span class="status-pulse green"></span>Applied</span>`;
     }
-    if (s === 'reverted') {
-        return `<span class="chip chip-reverted">✕ Reverted</span>`;
+    if (s === 'reverted' || s === 'rollback') {
+        return `<span class="dash-status-pill danger"><span class="status-pulse red"></span>Reverted</span>`;
+    }
+    if (s === 'pending' || s === 'pending_review') {
+        return `<span class="dash-status-pill pending"><span class="status-pulse amber"></span>Pending</span>`;
     }
     if (s === 'stale') {
-        return `<span class="chip chip-neutral">⊘ Stale</span>`;
+        return `<span class="dash-status-pill neutral"><span class="status-pulse neutral"></span>Stale</span>`;
     }
-    return chip(status, status || '—');
+    return `<span class="dash-status-pill neutral">${escapeHtml(status || '—')}</span>`;
 }
 
 function formatTimestamp(ts) {
@@ -747,11 +750,60 @@ function filterLedger() {
 }
 window.filterLedger = filterLedger;
 
+function updateLedgerEngineBadges(changes) {
+    const allCount = changes.length;
+    const decoderCount = changes.filter(c => String(c.engine || '').toLowerCase() === 'decoder').length;
+    const adaptiveCount = changes.filter(c => String(c.engine || '').toLowerCase() === 'adaptive').length;
+    const learningCount = changes.filter(c => String(c.engine || '').toLowerCase() === 'learning').length;
+    const operatorCount = changes.filter(c => String(c.engine || '').toLowerCase() === 'operator').length;
+
+    const bAll = document.getElementById('badge-engine-all');
+    if (bAll) bAll.textContent = allCount;
+    const bDec = document.getElementById('badge-engine-decoder');
+    if (bDec) bDec.textContent = decoderCount;
+    const bAdp = document.getElementById('badge-engine-adaptive');
+    if (bAdp) bAdp.textContent = adaptiveCount;
+    const bLrn = document.getElementById('badge-engine-learning');
+    if (bLrn) bLrn.textContent = learningCount;
+    const bOp = document.getElementById('badge-engine-operator');
+    if (bOp) bOp.textContent = operatorCount;
+}
+
+function selectLedgerEngineTab(btn, engine) {
+    document.querySelectorAll('#ledger-engine-tabs .dash-tab-btn').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    const select = document.getElementById('ledger-engine-filter');
+    if (select) select.value = engine;
+    filterLedger();
+}
+window.selectLedgerEngineTab = selectLedgerEngineTab;
+
+function handleLedgerSearch(val) {
+    const clearBtn = document.getElementById('ledger-search-clear-btn');
+    if (clearBtn) clearBtn.style.display = val ? 'flex' : 'none';
+    filterLedger();
+}
+window.handleLedgerSearch = handleLedgerSearch;
+
+function clearLedgerSearch() {
+    const input = document.getElementById('ledger-search');
+    if (input) input.value = '';
+    const clearBtn = document.getElementById('ledger-search-clear-btn');
+    if (clearBtn) clearBtn.style.display = 'none';
+    filterLedger();
+}
+window.clearLedgerSearch = clearLedgerSearch;
+
 function resetLedgerFilters() {
     const searchInput = document.getElementById('ledger-search');
     if (searchInput) searchInput.value = '';
+    const clearBtn = document.getElementById('ledger-search-clear-btn');
+    if (clearBtn) clearBtn.style.display = 'none';
     const engineSelect = document.getElementById('ledger-engine-filter');
     if (engineSelect) engineSelect.value = '';
+    document.querySelectorAll('#ledger-engine-tabs .dash-tab-btn').forEach(b => {
+        b.classList.toggle('active', b.getAttribute('data-engine') === '');
+    });
     const symbolSelect = document.getElementById('ledger-symbol-filter');
     if (symbolSelect) symbolSelect.value = '';
     filterLedger();
@@ -776,6 +828,7 @@ async function loadLedger() {
         rawLedgerData = changes;
         document.getElementById('stat-ledger').textContent = changes.length;
 
+        updateLedgerEngineBadges(changes);
         populateLedgerSymbolOptions(changes);
         filterLedger();
     } catch (error) {
@@ -1036,8 +1089,35 @@ function filterAdaptiveActions() {
     renderAdaptiveTable(filtered);
 }
 
+function selectAdaptiveStatusTab(btn, status) {
+    document.querySelectorAll('#adaptive-status-tabs .dash-tab-btn').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    const select = document.getElementById('adaptive-status-filter');
+    if (select) select.value = status;
+    filterAdaptiveActions();
+}
+window.selectAdaptiveStatusTab = selectAdaptiveStatusTab;
+
+function handleAdaptiveSearch(val) {
+    const clearBtn = document.getElementById('adaptive-search-clear-btn');
+    if (clearBtn) clearBtn.style.display = val ? 'flex' : 'none';
+    filterAdaptiveActions();
+}
+window.handleAdaptiveSearch = handleAdaptiveSearch;
+
+function clearAdaptiveSearch() {
+    const input = document.getElementById('adaptive-search');
+    if (input) input.value = '';
+    const clearBtn = document.getElementById('adaptive-search-clear-btn');
+    if (clearBtn) clearBtn.style.display = 'none';
+    filterAdaptiveActions();
+}
+window.clearAdaptiveSearch = clearAdaptiveSearch;
+
 function resetAdaptiveFilters() {
     const searchInput = document.getElementById('adaptive-search');
+    const clearBtn = document.getElementById('adaptive-search-clear-btn');
+    if (clearBtn) clearBtn.style.display = 'none';
     const actionSelect = document.getElementById('adaptive-action-filter');
     const symSelect = document.getElementById('adaptive-symbol-filter');
     const statusSelect = document.getElementById('adaptive-status-filter');
@@ -1047,9 +1127,14 @@ function resetAdaptiveFilters() {
     if (symSelect) symSelect.value = '';
     if (statusSelect) statusSelect.value = '';
 
+    document.querySelectorAll('#adaptive-status-tabs .dash-tab-btn').forEach(b => {
+        b.classList.toggle('active', b.getAttribute('data-status') === '');
+    });
+
     selectedActionFilter = '';
     filterAdaptiveActions();
 }
+window.resetAdaptiveFilters = resetAdaptiveFilters;
 
 function renderAdaptiveTable(actions = null) {
     const tbody = document.getElementById('adaptive-body');
@@ -1138,7 +1223,7 @@ function renderAdaptiveTable(actions = null) {
                 <span class="regime-badge regime-${escapeHtml(macroRegime.toLowerCase())}">${escapeHtml(macroRegime)}</span>
             </td>
             <td class="status-cell">
-                ${resolved ? '<span class="status-chip status-chip-resolved">✅ Resolved</span>' : '<span class="status-chip status-chip-pending">⏳ In-Flight</span>'}
+                ${resolved ? '<span class="dash-status-pill success"><span class="status-pulse green"></span>Resolved</span>' : '<span class="dash-status-pill pending"><span class="status-pulse amber"></span>In-Flight</span>'}
             </td>
             <td class="pnl-cell">
                 ${pnlHtml}

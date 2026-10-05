@@ -10,8 +10,8 @@
 </head>
 <body>
     <div class="dashboard-container">
-        <!-- Header -->
-        <header class="bot-header">
+        <!-- Bot Focus Header -->
+        <header class="bot-header" id="botFocusHeader">
             <!-- Mode Indicator Badge (always visible) -->
             <div class="mode-indicator">
                 <span id="modeBadge" class="mode-badge paper">📝 PAPER MODE</span>
@@ -68,21 +68,37 @@
             </div>
         </header>
 
+        <!-- Stock Picker Header (displayed when Stock Picker tab is active) -->
+        <header class="bot-header stock-picker-header" id="stockPickerHeader" style="display: none;">
+            <div class="header-left">
+                <h1>
+                    <span class="bot-icon">📊</span>
+                    Stock Picker
+                </h1>
+                <div class="bot-metadata">
+                    <span class="metadata-item">
+                        <span class="label">Purpose:</span>
+                        <span class="value">Dual-track growth equity &amp; covered call income screener, evidence dossier &amp; bot provisioning</span>
+                    </span>
+                </div>
+            </div>
+        </header>
+
         <!-- Navigation Bar -->
         <nav class="nav-bar">
-            <a href="/bot-focus" class="nav-link active">
+            <a href="/bot-focus" class="nav-link active" id="navLinkBotFocus" onclick="showBotFocusTab(event)">
                 🎯 Bot Focus
             </a>
             <a href="/pnl-reporting" class="nav-link">
                 💰 P&L Reporting
             </a>
             <a href="/learning-review" class="nav-link">
-                🧠 Learning & Analysis
+                🧠 Learning &amp; Analysis
             </a>
             <a href="/governance-review" class="nav-link">
                 ⚖️ Governance Review
             </a>
-            <a href="#" class="nav-link" onclick="showStockPickerTab(event)">
+            <a href="#" class="nav-link" id="navLinkStockPicker" onclick="showStockPickerTab(event)">
                 📊 Stock Picker
             </a>
         </nav>
@@ -420,6 +436,43 @@
                 <h2>Trade History</h2>
                 <span class="trade-count" id="tradeCount">Last 25 trades</span>
             </div>
+
+            <!-- Trade History Filter Toolbar -->
+            <div class="dash-toolbar" style="margin-bottom: 15px;">
+                <div class="dash-filter-group" role="tablist" id="trade-history-tabs">
+                    <button class="dash-tab-btn active" data-filter="all" onclick="filterTradeHistoryTab(this, 'all')">
+                        <span class="dash-tab-icon">🌐</span>
+                        <span>All</span>
+                        <span class="dash-tab-badge" id="th-badge-all">0</span>
+                    </button>
+                    <button class="dash-tab-btn" data-filter="wins" onclick="filterTradeHistoryTab(this, 'wins')">
+                        <span class="dash-tab-icon">🟢</span>
+                        <span>Profitable</span>
+                        <span class="dash-tab-badge green" id="th-badge-wins">0</span>
+                    </button>
+                    <button class="dash-tab-btn" data-filter="losses" onclick="filterTradeHistoryTab(this, 'losses')">
+                        <span class="dash-tab-icon">🔴</span>
+                        <span>Losses</span>
+                        <span class="dash-tab-badge red" id="th-badge-losses">0</span>
+                    </button>
+                    <button class="dash-tab-btn" data-filter="longs" onclick="filterTradeHistoryTab(this, 'longs')">
+                        <span class="dash-tab-icon">📈</span>
+                        <span>Longs</span>
+                        <span class="dash-tab-badge" id="th-badge-longs">0</span>
+                    </button>
+                    <button class="dash-tab-btn" data-filter="shorts" onclick="filterTradeHistoryTab(this, 'shorts')">
+                        <span class="dash-tab-icon">📉</span>
+                        <span>Shorts</span>
+                        <span class="dash-tab-badge" id="th-badge-shorts">0</span>
+                    </button>
+                </div>
+                <div class="dash-search-box">
+                    <span class="dash-search-icon">🔍</span>
+                    <input type="text" id="trade-history-search" class="dash-search-input" placeholder="Search seq, reason, side..." oninput="handleTradeHistorySearch(this.value)">
+                    <button id="trade-history-search-clear-btn" class="dash-search-clear" onclick="clearTradeHistorySearch()" title="Clear search" style="display: none;">✕</button>
+                </div>
+            </div>
+
             <div class="table-container">
                 <table class="data-table">
                     <thead>
@@ -705,17 +758,23 @@
     <script src="/static/js/stock_picker.js?v=3.0.0"></script>
 
     <script>
-    // Toggle Stock Picker tab visibility and hide bot-specific bars
+    // Toggle Stock Picker tab visibility and display dedicated Stock Picker header
     function showStockPickerTab(event) {
         if (event) event.preventDefault();
 
         // Mark body with stock-picker-mode
         document.body.classList.add('stock-picker-mode');
 
-        // Hide all bot-specific sections, header bar, and market-clock risk strip
-        document.querySelectorAll('.main-content, .main-grid, .market-clock, .bot-header, section:not(#stock-picker-section)').forEach(el => {
+        // Hide all bot-specific sections, bot focus header bar, and market-clock risk strip
+        document.querySelectorAll('.main-content, .main-grid, .market-clock, #botFocusHeader, section:not(#stock-picker-section)').forEach(el => {
             el.style.display = 'none';
         });
+
+        // Show stock picker title header
+        const stockPickerHeader = document.getElementById('stockPickerHeader');
+        if (stockPickerHeader) {
+            stockPickerHeader.style.display = 'flex';
+        }
 
         // Show stock picker section
         const stockPickerSection = document.getElementById('stock-picker-section');
@@ -724,15 +783,65 @@
 
             // Update nav active state
             document.querySelectorAll('.nav-link').forEach(link => link.classList.remove('active'));
-            const stockPickerLink = document.querySelector('.nav-link[onclick*="showStockPickerTab"]');
+            const stockPickerLink = document.getElementById('navLinkStockPicker') || document.querySelector('.nav-link[onclick*="showStockPickerTab"]');
             if (stockPickerLink) {
                 stockPickerLink.classList.add('active');
             } else if (event && event.target) {
                 event.target.classList.add('active');
             }
 
+            // Update page title
+            const pageTitleEl = document.getElementById('pageTitle');
+            if (pageTitleEl) pageTitleEl.textContent = 'Stock Picker - Trading Bot Dashboard';
+            document.title = 'Stock Picker - Trading Bot Dashboard';
+
+            // Update URL without reload so browser history & refresh keep tab intact
+            if (window.history && window.history.replaceState) {
+                const newUrl = new URL(window.location);
+                newUrl.searchParams.set('show', 'stockpicker');
+                window.history.replaceState({}, '', newUrl);
+            }
+
             // Load stock picks
             startStockPickerRefresh();
+        }
+    }
+
+    // Switch back to Bot Focus view cleanly
+    function showBotFocusTab(event) {
+        if (document.body.classList.contains('stock-picker-mode')) {
+            if (event) event.preventDefault();
+            document.body.classList.remove('stock-picker-mode');
+
+            // Hide stock picker elements
+            const stockPickerHeader = document.getElementById('stockPickerHeader');
+            if (stockPickerHeader) stockPickerHeader.style.display = 'none';
+            const stockPickerSection = document.getElementById('stock-picker-section');
+            if (stockPickerSection) stockPickerSection.style.display = 'none';
+
+            // Show bot focus elements
+            const botFocusHeader = document.getElementById('botFocusHeader');
+            if (botFocusHeader) botFocusHeader.style.display = 'flex';
+            document.querySelectorAll('.market-clock, .main-content, .main-grid').forEach(el => {
+                el.style.display = '';
+            });
+
+            // Update nav active state
+            document.querySelectorAll('.nav-link').forEach(link => link.classList.remove('active'));
+            const botFocusLink = document.getElementById('navLinkBotFocus') || document.querySelector('.nav-link[href="/bot-focus"]');
+            if (botFocusLink) botFocusLink.classList.add('active');
+
+            // Restore page title
+            const pageTitleEl = document.getElementById('pageTitle');
+            if (pageTitleEl) pageTitleEl.textContent = 'Bot Focus - SMA Bot Dashboard';
+            document.title = 'Bot Focus - SMA Bot Dashboard';
+
+            // Update URL without reload
+            if (window.history && window.history.replaceState) {
+                const newUrl = new URL(window.location);
+                newUrl.searchParams.delete('show');
+                window.history.replaceState({}, '', newUrl);
+            }
         }
     }
 
@@ -746,15 +855,19 @@
     </script>
 
     <style>
-    /* Ensure bot tabstrip and header are completely hidden when in Stock Picker mode */
+    /* Stock Picker view mode header & layout rules:
+       Keeps top title tile and navigation bar in the exact same position across pages */
     body.stock-picker-mode .market-clock,
-    body.stock-picker-mode .bot-header {
+    body.stock-picker-mode #botFocusHeader {
         display: none !important;
     }
 
-    body.stock-picker-mode .nav-bar {
-        margin-top: 10px;
-        margin-bottom: 20px;
+    body.stock-picker-mode #stockPickerHeader {
+        display: flex !important;
+    }
+
+    body:not(.stock-picker-mode) #stockPickerHeader {
+        display: none !important;
     }
 
     /* Stock Picker Toolbar & Segmented Filter Tabs */

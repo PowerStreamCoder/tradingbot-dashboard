@@ -79,24 +79,55 @@
             </ul>
         </div>
 
-        <!-- Filters -->
-        <div class="filters-section">
-            <label>Filter by:</label>
-            <select id="filter-priority">
-                <option value="all">All Priorities</option>
-                <option value="high">High Priority</option>
-                <option value="medium">Medium Priority</option>
-                <option value="low">Low Priority</option>
-            </select>
-            <select id="filter-type">
-                <option value="all">All Types</option>
-                <option value="eliminate">Eliminate (Loss Patterns)</option>
-                <option value="amplify">Amplify (Winning Setups)</option>
-                <option value="config_change">Config Change (Noise Stop Tuning)</option>
-                <option value="new_rule">New Rule</option>
-            </select>
+        <!-- Modernized Findings Toolbar & Segmented Tabs -->
+        <div class="dash-toolbar">
+            <div class="dash-filter-group" role="tablist" id="learning-priority-tabs">
+                <button class="dash-tab-btn active" data-priority="all" onclick="selectLearningPriorityTab(this, 'all')">
+                    <span class="dash-tab-icon">🌐</span>
+                    <span>All Priorities</span>
+                    <span class="dash-tab-badge" id="badge-learning-all">0</span>
+                </button>
+                <button class="dash-tab-btn" data-priority="high" onclick="selectLearningPriorityTab(this, 'high')">
+                    <span class="dash-tab-icon">🔥</span>
+                    <span>High Priority</span>
+                    <span class="dash-tab-badge red" id="badge-learning-high">0</span>
+                </button>
+                <button class="dash-tab-btn" data-priority="medium" onclick="selectLearningPriorityTab(this, 'medium')">
+                    <span class="dash-tab-icon">⚡</span>
+                    <span>Medium</span>
+                    <span class="dash-tab-badge amber" id="badge-learning-medium">0</span>
+                </button>
+                <button class="dash-tab-btn" data-priority="low" onclick="selectLearningPriorityTab(this, 'low')">
+                    <span class="dash-tab-icon">ℹ️</span>
+                    <span>Low</span>
+                    <span class="dash-tab-badge green" id="badge-learning-low">0</span>
+                </button>
+            </div>
 
-            <button onclick="loadFindings()">Refresh</button>
+            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                <div class="dash-search-box">
+                    <span class="dash-search-icon">🔍</span>
+                    <input type="text" id="learning-search" class="dash-search-input" placeholder="Search title, symbol, rule, ID..." oninput="handleLearningSearch(this.value)">
+                    <button id="learning-search-clear-btn" class="dash-search-clear" onclick="clearLearningSearch()" title="Clear search" style="display: none;">✕</button>
+                </div>
+                <select id="filter-type" onchange="filterFindings()" style="padding: 8px 12px; border-radius: 8px; background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(255, 255, 255, 0.12); color: #f8fafc; font-size: 0.88em;">
+                    <option value="all">All Types</option>
+                    <option value="eliminate">Eliminate (Loss Patterns)</option>
+                    <option value="amplify">Amplify (Winning Setups)</option>
+                    <option value="config_change">Config Change (Noise Stop Tuning)</option>
+                    <option value="new_rule">New Rule</option>
+                </select>
+                <!-- Native hidden select for programmatic backwards compatibility -->
+                <select id="filter-priority" style="display: none;" onchange="filterFindings()">
+                    <option value="all">All Priorities</option>
+                    <option value="high">High Priority</option>
+                    <option value="medium">Medium Priority</option>
+                    <option value="low">Low Priority</option>
+                </select>
+                <button class="dash-btn dash-btn-primary" onclick="loadFindings()">
+                    <span>🔄</span> Refresh
+                </button>
+            </div>
         </div>
 
         <!-- Findings Container -->

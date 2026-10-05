@@ -65,8 +65,11 @@ async function loadFindings() {
  * @param {Array} findings - Array of finding objects
  */
 function updateStats(findings) {
-    const pending = findings.filter(f => f.status === 'pending_review').length;
-    const high = findings.filter(f => f.priority === 'high').length;
+    const pendingList = findings.filter(f => f.status === 'pending_review');
+    const pending = pendingList.length;
+    const high = pendingList.filter(f => f.priority === 'high').length;
+    const med = pendingList.filter(f => f.priority === 'medium').length;
+    const low = pendingList.filter(f => f.priority === 'low').length;
 
     let potentialSavings = 0;
     findings.forEach(f => {
@@ -78,6 +81,15 @@ function updateStats(findings) {
     document.getElementById('stat-pending').textContent = pending;
     document.getElementById('stat-high').textContent = high;
     document.getElementById('stat-savings').textContent = `$${potentialSavings.toFixed(0)}`;
+
+    const bAll = document.getElementById('badge-learning-all');
+    if (bAll) bAll.textContent = pending;
+    const bHigh = document.getElementById('badge-learning-high');
+    if (bHigh) bHigh.textContent = high;
+    const bMed = document.getElementById('badge-learning-medium');
+    if (bMed) bMed.textContent = med;
+    const bLow = document.getElementById('badge-learning-low');
+    if (bLow) bLow.textContent = low;
 
     // Find most recent finding
     if (findings.length > 0) {
@@ -91,6 +103,36 @@ function updateStats(findings) {
     }
 }
 
+function selectLearningPriorityTab(btn, priority) {
+    document.querySelectorAll('#learning-priority-tabs .dash-tab-btn').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    const select = document.getElementById('filter-priority');
+    if (select) select.value = priority;
+    renderFindings(allFindings);
+}
+window.selectLearningPriorityTab = selectLearningPriorityTab;
+
+function handleLearningSearch(val) {
+    const clearBtn = document.getElementById('learning-search-clear-btn');
+    if (clearBtn) clearBtn.style.display = val ? 'flex' : 'none';
+    renderFindings(allFindings);
+}
+window.handleLearningSearch = handleLearningSearch;
+
+function clearLearningSearch() {
+    const input = document.getElementById('learning-search');
+    if (input) input.value = '';
+    const clearBtn = document.getElementById('learning-search-clear-btn');
+    if (clearBtn) clearBtn.style.display = 'none';
+    renderFindings(allFindings);
+}
+window.clearLearningSearch = clearLearningSearch;
+
+function filterFindings() {
+    renderFindings(allFindings);
+}
+window.filterFindings = filterFindings;
+
 /**
  * Render filtered findings
  * @param {Array} findings - Array of finding objects
@@ -101,6 +143,7 @@ function renderFindings(findings) {
     // Apply filters
     const priorityFilter = document.getElementById('filter-priority').value;
     const typeFilter = document.getElementById('filter-type').value;
+    const searchQuery = (document.getElementById('learning-search')?.value || '').toLowerCase().trim();
 
     let filtered = findings.filter(f => f.status === 'pending_review');
 
@@ -112,11 +155,23 @@ function renderFindings(findings) {
         filtered = filtered.filter(f => f.type === typeFilter);
     }
 
+    if (searchQuery) {
+        filtered = filtered.filter(f => {
+            const title = String(f.title || '').toLowerCase();
+            const id = String(f.finding_id || '').toLowerCase();
+            const desc = String(f.description || '').toLowerCase();
+            const type = String(f.type || '').toLowerCase();
+            const rule = String(f.proposed_rule?.name || f.proposed_rule?.rule || '').toLowerCase();
+            return title.includes(searchQuery) || id.includes(searchQuery) || desc.includes(searchQuery) || type.includes(searchQuery) || rule.includes(searchQuery);
+        });
+    }
+
     if (filtered.length === 0) {
         container.innerHTML = `
-            <div class="empty-state">
-                <h2>🎉 All clear!</h2>
-                <p>No pending learning candidates at the moment.</p>
+            <div class="dash-empty-state">
+                <div class="dash-empty-icon">🎉</div>
+                <div class="dash-empty-title">All clear!</div>
+                <div class="dash-empty-desc">No matching pending learning candidates found.</div>
             </div>
         `;
         return;
@@ -134,8 +189,11 @@ function renderFindings(findings) {
                     <div class="finding-id">${escapeHtml(finding.finding_id)}</div>
                 </div>
                 <div class="badges">
-                    <span class="badge ${escapeHtml(finding.priority)}">${escapeHtml(finding.priority)}</span>
-                    <span class="badge ${escapeHtml(finding.type)}">${escapeHtml(String(finding.type || '').replace(/_/g, ' '))}</span>
+                    <span class="dash-status-pill ${escapeHtml(finding.priority)}">
+                        <span class="status-pulse ${finding.priority === 'high' ? 'red' : (finding.priority === 'medium' ? 'amber' : 'green')}"></span>
+                        ${escapeHtml(finding.priority.toUpperCase())}
+                    </span>
+                    <span class="dash-status-pill neutral">${escapeHtml(String(finding.type || '').replace(/_/g, ' ').toUpperCase())}</span>
                 </div>
             </div>
 
@@ -160,15 +218,15 @@ function renderFindings(findings) {
                 ></textarea>
             </div>
 
-            <div class="actions">
-                <button class="btn-action btn-approve" onclick="handleDecision('${escapeHtml(finding.finding_id)}', 'approved')">
+            <div class="actions" style="display: flex; gap: 10px; margin-top: 15px; flex-wrap: wrap;">
+                <button class="dash-btn dash-btn-success" onclick="handleDecision('${escapeHtml(finding.finding_id)}', 'approved')">
                     ✓ Approve & Apply
                 </button>
-                <button class="btn-action btn-modify" onclick="handleDecision('${escapeHtml(finding.finding_id)}', 'modified')">
+                <button class="dash-btn dash-btn-secondary" onclick="handleDecision('${escapeHtml(finding.finding_id)}', 'modified')">
                     ✎ Request Modification
                 </button>
-                <button class="btn-action btn-reject" onclick="handleDecision('${escapeHtml(finding.finding_id)}', 'rejected')">
-                    ✗ Reject
+                <button class="dash-btn dash-btn-danger" onclick="handleDecision('${escapeHtml(finding.finding_id)}', 'rejected')">
+                    ✕ Reject
                 </button>
             </div>
         </div>

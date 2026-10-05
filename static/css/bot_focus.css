@@ -2141,3 +2141,393 @@ td.loss {
         justify-content: space-between;
     }
 }
+
+/* ==========================================================================
+   Unified Dashboard Design System (Matching Stock Picker Aesthetics)
+   Provides consistent segmented tabs, live badges, search bars, status pulses,
+   and modern glassmorphic cards across all dashboard sections.
+   ========================================================================== */
+
+/* Enhanced Toolbar Layout */
+.dash-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 18px;
+    flex-wrap: wrap;
+}
+
+/* Segmented Filter Pills Container */
+.dash-filter-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(15, 23, 42, 0.75);
+    padding: 4px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.35);
+    flex-wrap: wrap;
+}
+
+/* Individual Segmented Tab Button */
+.dash-tab-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 14px;
+    border-radius: 7px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: #94a3b8;
+    font-size: 0.88em;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    user-select: none;
+    text-decoration: none;
+}
+
+.dash-tab-btn:hover {
+    color: #f8fafc;
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.dash-tab-btn.active {
+    background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+    color: #ffffff;
+    border-color: rgba(56, 189, 248, 0.35);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    font-weight: 600;
+}
+
+.dash-tab-icon {
+    font-size: 1.05em;
+    display: inline-block;
+}
+
+/* Tab Badge with Live Count */
+.dash-tab-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1px 7px;
+    border-radius: 10px;
+    font-size: 0.78em;
+    font-weight: 600;
+    background: rgba(255, 255, 255, 0.1);
+    color: #cbd5e1;
+    min-width: 18px;
+    line-height: 1.4;
+    transition: all 0.2s ease;
+}
+
+.dash-tab-btn.active .dash-tab-badge {
+    background: #0284c7;
+    color: #ffffff;
+}
+
+.dash-tab-badge.green {
+    background: rgba(16, 185, 129, 0.2);
+    color: #34d399;
+}
+
+.dash-tab-btn.active .dash-tab-badge.green {
+    background: #10b981;
+    color: #ffffff;
+}
+
+.dash-tab-badge.amber {
+    background: rgba(245, 158, 11, 0.2);
+    color: #fbbf24;
+}
+
+.dash-tab-btn.active .dash-tab-badge.amber {
+    background: #f59e0b;
+    color: #ffffff;
+}
+
+.dash-tab-badge.red {
+    background: rgba(239, 68, 68, 0.2);
+    color: #fca5a5;
+}
+
+.dash-tab-btn.active .dash-tab-badge.red {
+    background: #ef4444;
+    color: #ffffff;
+}
+
+/* Modern Interactive Search Box */
+.dash-search-box {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.dash-search-icon {
+    position: absolute;
+    left: 12px;
+    color: #64748b;
+    pointer-events: none;
+    font-size: 14px;
+}
+
+.dash-search-input {
+    padding: 8px 34px 8px 36px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(15, 23, 42, 0.85);
+    color: #f8fafc;
+    font-size: 0.88em;
+    width: 260px;
+    outline: none;
+    transition: all 0.2s ease;
+}
+
+.dash-search-input:focus {
+    border-color: #38bdf8;
+    background: rgba(15, 23, 42, 0.98);
+    box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.18);
+    width: 290px;
+}
+
+.dash-search-input::placeholder {
+    color: #64748b;
+}
+
+.dash-search-clear {
+    position: absolute;
+    right: 10px;
+    background: none;
+    border: none;
+    color: #64748b;
+    font-size: 14px;
+    cursor: pointer;
+    padding: 3px 6px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.15s ease;
+}
+
+.dash-search-clear:hover {
+    color: #f1f5f9;
+}
+
+/* Status Pills with Pulses */
+.dash-status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 11px;
+    border-radius: 20px;
+    font-size: 0.78em;
+    font-weight: 600;
+    white-space: nowrap;
+    line-height: 1.2;
+}
+
+.dash-status-pill.pending {
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.dash-status-pill.success,
+.dash-status-pill.applied,
+.dash-status-pill.resolved,
+.dash-status-pill.approved {
+    background: rgba(16, 185, 129, 0.18);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.45);
+}
+
+.dash-status-pill.info,
+.dash-status-pill.active {
+    background: rgba(59, 130, 246, 0.18);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.45);
+}
+
+.dash-status-pill.danger,
+.dash-status-pill.failed,
+.dash-status-pill.rejected,
+.dash-status-pill.rollback {
+    background: rgba(239, 68, 68, 0.18);
+    color: #fca5a5;
+    border: 1px solid rgba(239, 68, 68, 0.45);
+}
+
+.dash-status-pill.neutral,
+.dash-status-pill.closed {
+    background: rgba(148, 163, 184, 0.15);
+    color: #94a3b8;
+    border: 1px solid rgba(148, 163, 184, 0.3);
+}
+
+/* Glowing Pulse Dots */
+.status-pulse {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+}
+
+.status-pulse.amber {
+    background: #f59e0b;
+    box-shadow: 0 0 6px #f59e0b;
+    animation: pulseAmber 2s infinite;
+}
+
+.status-pulse.green {
+    background: #10b981;
+    box-shadow: 0 0 6px #10b981;
+    animation: pulseGreen 2.5s infinite;
+}
+
+.status-pulse.blue {
+    background: #3b82f6;
+    box-shadow: 0 0 6px #3b82f6;
+    animation: pulseBlue 2.5s infinite;
+}
+
+.status-pulse.red {
+    background: #ef4444;
+    box-shadow: 0 0 6px #ef4444;
+}
+
+.status-pulse.neutral {
+    background: #94a3b8;
+    box-shadow: none;
+}
+
+@keyframes pulseAmber {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.85); }
+}
+
+@keyframes pulseGreen {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.85); }
+}
+
+@keyframes pulseBlue {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.85); }
+}
+
+/* Modern Gradient Action Buttons */
+.dash-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 7px 15px;
+    border-radius: 6px;
+    font-size: 0.85em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    text-decoration: none;
+    border: none;
+    user-select: none;
+}
+
+.dash-btn-primary {
+    background: linear-gradient(135deg, #0284c7 0%, #0ea5e9 100%);
+    color: #ffffff;
+    box-shadow: 0 3px 10px rgba(14, 165, 233, 0.3);
+}
+
+.dash-btn-primary:hover {
+    background: linear-gradient(135deg, #0369a1 0%, #0284c7 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 5px 14px rgba(14, 165, 233, 0.45);
+}
+
+.dash-btn-success {
+    background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+    color: #ffffff;
+    box-shadow: 0 3px 10px rgba(16, 185, 129, 0.3);
+}
+
+.dash-btn-success:hover {
+    background: linear-gradient(135deg, #047857 0%, #059669 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 5px 14px rgba(16, 185, 129, 0.45);
+}
+
+.dash-btn-danger {
+    background: rgba(239, 68, 68, 0.14);
+    color: #f87171;
+    border: 1px solid rgba(239, 68, 68, 0.35);
+}
+
+.dash-btn-danger:hover {
+    background: rgba(239, 68, 68, 0.25);
+    color: #fca5a5;
+    border-color: #ef4444;
+    transform: translateY(-1px);
+}
+
+.dash-btn-secondary {
+    background: rgba(255, 255, 255, 0.06);
+    color: #cbd5e1;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.dash-btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+    transform: translateY(-1px);
+}
+
+/* Modern Empty State */
+.dash-empty-state {
+    text-align: center;
+    padding: 48px 20px;
+    color: #94a3b8;
+}
+
+.dash-empty-icon {
+    font-size: 2.4em;
+    margin-bottom: 12px;
+    display: inline-block;
+    opacity: 0.85;
+}
+
+.dash-empty-title {
+    font-size: 1.15em;
+    font-weight: 600;
+    color: #f1f5f9;
+    margin-bottom: 6px;
+}
+
+.dash-empty-desc {
+    font-size: 0.88em;
+    color: #64748b;
+    max-width: 440px;
+    margin: 0 auto;
+    line-height: 1.45;
+}
+
+/* Modern Table Polish Across All Pages */
+.data-table tbody tr {
+    transition: background-color 0.15s ease;
+}
+
+.data-table tbody tr:hover {
+    background-color: rgba(56, 189, 248, 0.04);
+}
+
+.data-table th {
+    font-size: 11px;
+    letter-spacing: 0.6px;
+    color: #94a3b8;
+    text-transform: uppercase;
+    font-weight: 600;
+}
+

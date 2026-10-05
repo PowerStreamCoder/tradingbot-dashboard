@@ -67,14 +67,18 @@
         </div>
 
         <!-- Filters -->
-        <div class="filters-section">
-            <label>Refresh:</label>
-            <select id="refresh-interval">
-                <option value="30000">30s</option>
-                <option value="60000" selected>60s</option>
-                <option value="300000">5m</option>
-            </select>
-            <button onclick="loadAll()">Refresh Now</button>
+        <div class="filters-section" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <label style="color: var(--text-muted); font-size: 13px;">Refresh Interval:</label>
+                <select id="refresh-interval" style="padding: 6px 12px; border-radius: 6px; background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(255, 255, 255, 0.12); color: #f8fafc; font-size: 0.88em;">
+                    <option value="30000">30s</option>
+                    <option value="60000" selected>60s</option>
+                    <option value="300000">5m</option>
+                </select>
+            </div>
+            <button class="dash-btn dash-btn-primary" onclick="loadAll()">
+                <span>🔄</span> Refresh Now
+            </button>
         </div>
 
         <!-- Exit Governance -->
@@ -112,28 +116,56 @@
         </section>
 
         <!-- Ledger Controls & Filters -->
-        <div class="ledger-toolbar">
-            <div class="ledger-search-box">
-                <span class="search-icon">🔍</span>
-                <input type="text" id="ledger-search" placeholder="Search parameters, fields, or symbols..." oninput="filterLedger()">
+        <div class="dash-toolbar">
+            <div class="dash-filter-group" role="tablist" id="ledger-engine-tabs">
+                <button class="dash-tab-btn active" data-engine="" onclick="selectLedgerEngineTab(this, '')">
+                    <span class="dash-tab-icon">🌐</span>
+                    <span>All Engines</span>
+                    <span class="dash-tab-badge" id="badge-engine-all">0</span>
+                </button>
+                <button class="dash-tab-btn" data-engine="decoder" onclick="selectLedgerEngineTab(this, 'decoder')">
+                    <span class="dash-tab-icon">⚡</span>
+                    <span>Exit Decoder (L1)</span>
+                    <span class="dash-tab-badge blue" id="badge-engine-decoder">0</span>
+                </button>
+                <button class="dash-tab-btn" data-engine="adaptive" onclick="selectLedgerEngineTab(this, 'adaptive')">
+                    <span class="dash-tab-icon">🛡️</span>
+                    <span>Adaptive (L0)</span>
+                    <span class="dash-tab-badge amber" id="badge-engine-adaptive">0</span>
+                </button>
+                <button class="dash-tab-btn" data-engine="learning" onclick="selectLedgerEngineTab(this, 'learning')">
+                    <span class="dash-tab-icon">🧠</span>
+                    <span>Learning (L2)</span>
+                    <span class="dash-tab-badge green" id="badge-engine-learning">0</span>
+                </button>
+                <button class="dash-tab-btn" data-engine="operator" onclick="selectLedgerEngineTab(this, 'operator')">
+                    <span class="dash-tab-icon">👤</span>
+                    <span>Operator</span>
+                    <span class="dash-tab-badge" id="badge-engine-operator">0</span>
+                </button>
             </div>
-            <div class="ledger-filter-group">
-                <label for="ledger-engine-filter">Engine:</label>
-                <select id="ledger-engine-filter" onchange="filterLedger()">
+
+            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                <div class="dash-search-box">
+                    <span class="dash-search-icon">🔍</span>
+                    <input type="text" id="ledger-search" class="dash-search-input" placeholder="Search parameters, fields, symbols..." oninput="handleLedgerSearch(this.value)">
+                    <button id="ledger-search-clear-btn" class="dash-search-clear" onclick="clearLedgerSearch()" title="Clear search" style="display: none;">✕</button>
+                </div>
+                <div class="ledger-filter-group" style="margin: 0;">
+                    <select id="ledger-symbol-filter" onchange="filterLedger()" style="padding: 8px 12px; border-radius: 8px; background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(255, 255, 255, 0.12); color: #f8fafc; font-size: 0.88em;">
+                        <option value="">All Symbols</option>
+                    </select>
+                </div>
+                <!-- Native hidden select maintained for programmatic compatibility -->
+                <select id="ledger-engine-filter" style="display: none;" onchange="filterLedger()">
                     <option value="">All Engines</option>
                     <option value="decoder">Exit Decoder (L1)</option>
                     <option value="adaptive">Adaptive Engine (L0)</option>
                     <option value="learning">Learning Engine (L2)</option>
                     <option value="operator">Operator (Manual)</option>
                 </select>
+                <button class="dash-btn dash-btn-secondary" onclick="resetLedgerFilters()">Reset</button>
             </div>
-            <div class="ledger-filter-group">
-                <label for="ledger-symbol-filter">Symbol:</label>
-                <select id="ledger-symbol-filter" onchange="filterLedger()">
-                    <option value="">All Symbols</option>
-                </select>
-            </div>
-            <button class="btn-reset-filter" onclick="resetLedgerFilters()">Reset</button>
         </div>
 
         <div class="table-card">
@@ -193,32 +225,41 @@
             <div id="adaptive-stats" class="adaptive-stats"></div>
 
             <!-- Search and Filter Toolbar -->
-            <div class="ledger-toolbar adaptive-toolbar">
-                <div class="ledger-search-box">
-                    <span class="search-icon">🔍</span>
-                    <input type="text" id="adaptive-search" placeholder="Search action, trigger reason, symbol, position ID..." oninput="filterAdaptiveActions()">
+            <div class="dash-toolbar adaptive-toolbar" style="margin-top: 14px;">
+                <div class="dash-filter-group" role="tablist" id="adaptive-status-tabs">
+                    <button class="dash-tab-btn active" data-status="" onclick="selectAdaptiveStatusTab(this, '')">
+                        <span class="dash-tab-icon">🌐</span>
+                        <span>All Actions</span>
+                    </button>
+                    <button class="dash-tab-btn" data-status="pending" onclick="selectAdaptiveStatusTab(this, 'pending')">
+                        <span class="dash-tab-icon">⏳</span>
+                        <span>In-Flight / Pending</span>
+                    </button>
+                    <button class="dash-tab-btn" data-status="resolved" onclick="selectAdaptiveStatusTab(this, 'resolved')">
+                        <span class="dash-tab-icon">✅</span>
+                        <span>Resolved</span>
+                    </button>
                 </div>
-                <div class="ledger-filter-group">
-                    <label for="adaptive-action-filter">Action:</label>
-                    <select id="adaptive-action-filter" onchange="filterAdaptiveActions()">
+
+                <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                    <div class="dash-search-box">
+                        <span class="dash-search-icon">🔍</span>
+                        <input type="text" id="adaptive-search" class="dash-search-input" placeholder="Search reason, symbol, action..." oninput="handleAdaptiveSearch(this.value)">
+                        <button id="adaptive-search-clear-btn" class="dash-search-clear" onclick="clearAdaptiveSearch()" title="Clear search" style="display: none;">✕</button>
+                    </div>
+                    <select id="adaptive-action-filter" onchange="filterAdaptiveActions()" style="padding: 8px 12px; border-radius: 8px; background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(255, 255, 255, 0.12); color: #f8fafc; font-size: 0.88em;">
                         <option value="">All Actions</option>
                     </select>
-                </div>
-                <div class="ledger-filter-group">
-                    <label for="adaptive-symbol-filter">Symbol:</label>
-                    <select id="adaptive-symbol-filter" onchange="filterAdaptiveActions()">
+                    <select id="adaptive-symbol-filter" onchange="filterAdaptiveActions()" style="padding: 8px 12px; border-radius: 8px; background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(255, 255, 255, 0.12); color: #f8fafc; font-size: 0.88em;">
                         <option value="">All Symbols</option>
                     </select>
-                </div>
-                <div class="ledger-filter-group">
-                    <label for="adaptive-status-filter">Status:</label>
-                    <select id="adaptive-status-filter" onchange="filterAdaptiveActions()">
+                    <select id="adaptive-status-filter" style="display: none;" onchange="filterAdaptiveActions()">
                         <option value="">All Statuses</option>
                         <option value="pending">⏳ Pending Close</option>
                         <option value="resolved">✅ Resolved</option>
                     </select>
+                    <button class="dash-btn dash-btn-secondary" onclick="resetAdaptiveFilters()">Reset</button>
                 </div>
-                <button class="btn-reset-filter" onclick="resetAdaptiveFilters()">Reset</button>
             </div>
 
             <!-- Table of Actions -->
