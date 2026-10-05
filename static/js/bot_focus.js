@@ -1548,23 +1548,58 @@ async function checkCommandResult() {
     }
 }
 
+// Chart State
+let activeBarRange = 100;
+let allIndicatorsVisible = true;
+let latestBarValues = { price: null, sma5: null, sma20: null, sma200: null, time: '' };
+
 /**
- * Handle chart control button clicks
- * @param {Event} e - Click event
- * @param {number} index - Button index (0=Indicators, 1=Trades)
+ * Calculate simple moving average with specified period
+ */
+function calculateSMA(data, period) {
+    const sma = [];
+    for (let i = 0; i < data.length; i++) {
+        if (i < period - 1) {
+            sma.push(null);
+        } else {
+            let sum = 0;
+            for (let j = 0; j < period; j++) {
+                sum += data[i - j];
+            }
+            sma.push(Number((sum / period).toFixed(2)));
+        }
+    }
+    return sma;
+}
+
+/**
+ * Update indicator pill badge values in the chart header
+ */
+function updateIndicatorPillValues(price, s5, s20, s200, timeStr) {
+    const pEl = document.getElementById('pillPriceVal');
+    const s5El = document.getElementById('pillSma5Val');
+    const s20El = document.getElementById('pillSma20Val');
+    const s200El = document.getElementById('pillSma200Val');
+    const tEl = document.getElementById('chartHoverTime');
+
+    if (pEl) pEl.textContent = (price !== null && price !== undefined) ? '$' + Number(price).toFixed(2) : '--';
+    if (s5El) s5El.textContent = (s5 !== null && s5 !== undefined) ? '$' + Number(s5).toFixed(2) : '--';
+    if (s20El) s20El.textContent = (s20 !== null && s20 !== undefined) ? '$' + Number(s20).toFixed(2) : '--';
+    if (s200El) s200El.textContent = (s200 !== null && s200 !== undefined) ? '$' + Number(s200).toFixed(2) : '--';
+    if (tEl && timeStr) tEl.textContent = timeStr;
+}
+
+/**
+ * Handle chart control button clicks (legacy compatibility)
  */
 function handleChartButtonClick(e, index) {
-    const btn = e.currentTarget;
-    const wasActive = btn.classList.contains('active');
-
-    switch(index) {
-        case 0: // Indicators button
-            btn.classList.toggle('active');
-            const showIndicators = btn.classList.contains('active');
-            console.log(`Indicators button clicked: ${showIndicators ? 'SHOW' : 'HIDE'} SMA lines`);
-            toggleChartIndicators(showIndicators);
-            break;
-        // Trades button removed - trade markers feature not implemented
+    if (index === 0) {
+        const masterBtn = document.getElementById('btnToggleIndicators');
+        if (masterBtn) {
+            masterBtn.click();
+        } else {
+            toggleChartIndicators(!allIndicatorsVisible);
+        }
     }
 }
 
@@ -1573,75 +1608,162 @@ function handleChartButtonClick(e, index) {
  */
 function toggleChartIndicators(show) {
     if (!priceChart) return;
+    allIndicatorsVisible = show;
 
-    // Toggle SMA 5, SMA 20, and SMA 200 datasets
-    priceChart.data.datasets[1].hidden = !show; // SMA 5
-    priceChart.data.datasets[2].hidden = !show; // SMA 20
-    priceChart.data.datasets[3].hidden = !show; // SMA 200
+    [1, 2, 3].forEach(idx => {
+        if (priceChart.data.datasets[idx]) {
+            priceChart.data.datasets[idx].hidden = !show;
+        }
+    });
+
+    document.querySelectorAll('.indicator-pill').forEach(pill => {
+        const dsIdx = parseInt(pill.getAttribute('data-dataset'));
+        if (dsIdx > 0) {
+            pill.classList.toggle('dimmed', !show);
+        }
+    });
+
+    const masterBtn = document.getElementById('btnToggleIndicators');
+    if (masterBtn) masterBtn.classList.toggle('active', show);
+
     priceChart.update();
 }
 
 /**
- * Initialize the price chart using Chart.js
+ * Initialize interactive chart controls (pills, range buttons, master toggle)
+ */
+function initChartInteractiveControls() {
+    // 1. Master toggle indicators button
+    const masterBtn = document.getElementById('btnToggleIndicators');
+    if (masterBtn) {
+        masterBtn.onclick = () => {
+            allIndicatorsVisible = !allIndicatorsVisible;
+            masterBtn.classList.toggle('active', allIndicatorsVisible);
+            [1, 2, 3].forEach(idx => {
+                if (priceChart && priceChart.data.datasets[idx]) {
+                    priceChart.data.datasets[idx].hidden = !allIndicatorsVisible;
+                }
+            });
+            document.querySelectorAll('.indicator-pill').forEach(pill => {
+                const dsIdx = parseInt(pill.getAttribute('data-dataset'));
+                if (dsIdx > 0) {
+                    pill.classList.toggle('dimmed', !allIndicatorsVisible);
+                }
+            });
+            if (priceChart) priceChart.update();
+        };
+    }
+
+    // 2. Individual indicator pills
+    document.querySelectorAll('.indicator-pill').forEach(pill => {
+        pill.onclick = () => {
+            const dsIdx = parseInt(pill.getAttribute('data-dataset'));
+            if (!priceChart || !priceChart.data.datasets[dsIdx]) return;
+
+            const isCurrentlyHidden = priceChart.data.datasets[dsIdx].hidden;
+            priceChart.data.datasets[dsIdx].hidden = !isCurrentlyHidden;
+            pill.classList.toggle('dimmed', !isCurrentlyHidden);
+
+            if (masterBtn) {
+                const anySmaVisible = [1, 2, 3].some(i => !priceChart.data.datasets[i].hidden);
+                masterBtn.classList.toggle('active', anySmaVisible);
+                allIndicatorsVisible = anySmaVisible;
+            }
+
+            priceChart.update();
+        };
+    });
+
+    // 3. Range buttons (50b, 100b, 200b)
+    document.querySelectorAll('.chart-range-btn').forEach(btn => {
+        btn.onclick = () => {
+            document.querySelectorAll('.chart-range-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            activeBarRange = parseInt(btn.getAttribute('data-bars')) || 100;
+            updateChartData(activeBarRange);
+        };
+    });
+}
+
+/**
+ * Initialize the price chart using Chart.js with smooth aesthetics & indicators
  */
 function initializeChart() {
-    const ctx = document.getElementById('priceChart');
-    if (!ctx) return;
+    const canvas = document.getElementById('priceChart');
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    const gradient = ctx.createLinearGradient(0, 0, 0, 320);
+    gradient.addColorStop(0, 'rgba(56, 189, 248, 0.32)');
+    gradient.addColorStop(0.6, 'rgba(56, 189, 248, 0.05)');
+    gradient.addColorStop(1, 'rgba(13, 17, 33, 0.0)');
 
     priceChart = new Chart(ctx, {
         type: 'line',
         data: {
-            labels: [], // Timestamps
+            labels: [],
             datasets: [
                 {
                     label: 'Price',
                     data: [],
-                    borderColor: '#4299e1',
-                    backgroundColor: 'rgba(66, 153, 225, 0.1)',
+                    borderColor: '#38bdf8',
+                    backgroundColor: gradient,
                     borderWidth: 2.5,
-                    pointRadius: 0,
-                    pointHoverRadius: 5,
-                    pointHoverBackgroundColor: '#4299e1',
-                    pointHoverBorderColor: '#ffffff',
-                    pointHoverBorderWidth: 2,
-                    tension: 0.1,
                     fill: true,
+                    tension: 0.35,
+                    pointRadius: 0,
+                    pointHoverRadius: 6,
+                    pointHoverBackgroundColor: '#38bdf8',
+                    pointHoverBorderColor: '#ffffff',
+                    pointHoverBorderWidth: 2
                 },
                 {
                     label: 'SMA 5',
                     data: [],
-                    borderColor: '#48bb78',
+                    borderColor: '#10b981',
                     backgroundColor: 'transparent',
                     borderWidth: 2,
+                    borderDash: [5, 4],
+                    fill: false,
+                    tension: 0.3,
                     pointRadius: 0,
-                    pointHoverRadius: 4,
-                    borderDash: [8, 4],
-                    hidden: false,  // Initially visible
-                    tension: 0.2,
+                    pointHoverRadius: 5,
+                    pointHoverBackgroundColor: '#10b981',
+                    pointHoverBorderColor: '#ffffff',
+                    pointHoverBorderWidth: 1.5,
+                    hidden: false
                 },
                 {
                     label: 'SMA 20',
                     data: [],
-                    borderColor: '#ed8936',
+                    borderColor: '#f59e0b',
                     backgroundColor: 'transparent',
                     borderWidth: 2,
+                    borderDash: [5, 4],
+                    fill: false,
+                    tension: 0.3,
                     pointRadius: 0,
-                    pointHoverRadius: 4,
-                    borderDash: [8, 4],
-                    hidden: false,  // Initially visible
-                    tension: 0.2,
+                    pointHoverRadius: 5,
+                    pointHoverBackgroundColor: '#f59e0b',
+                    pointHoverBorderColor: '#ffffff',
+                    pointHoverBorderWidth: 1.5,
+                    hidden: false
                 },
                 {
                     label: 'SMA 200',
                     data: [],
-                    borderColor: '#9f7aea',  // Purple for regime indicator
+                    borderColor: '#a855f7',
                     backgroundColor: 'transparent',
-                    borderWidth: 2,
+                    borderWidth: 2.2,
+                    borderDash: [8, 5],
+                    fill: false,
+                    tension: 0.3,
                     pointRadius: 0,
-                    pointHoverRadius: 4,
-                    borderDash: [12, 6],  // Longer dashes to distinguish from SMA5/20
-                    hidden: false,  // Initially visible
-                    tension: 0.2,
+                    pointHoverRadius: 5,
+                    pointHoverBackgroundColor: '#a855f7',
+                    pointHoverBorderColor: '#ffffff',
+                    pointHoverBorderWidth: 1.5,
+                    hidden: false
                 }
             ]
         },
@@ -1650,40 +1772,42 @@ function initializeChart() {
             maintainAspectRatio: false,
             interaction: {
                 intersect: false,
-                mode: 'index',
+                mode: 'index'
+            },
+            onHover: (event, activeElements) => {
+                if (activeElements && activeElements.length > 0) {
+                    const idx = activeElements[0].index;
+                    const p = priceChart.data.datasets[0].data[idx];
+                    const s5 = priceChart.data.datasets[1].data[idx];
+                    const s20 = priceChart.data.datasets[2].data[idx];
+                    const s200 = priceChart.data.datasets[3].data[idx];
+                    const t = priceChart.data.labels[idx];
+                    updateIndicatorPillValues(p, s5, s20, s200, t);
+                }
             },
             plugins: {
-                legend: {
-                    display: true,
-                    position: 'top',
-                    labels: {
-                        color: '#a0aec0',
-                        font: {
-                            size: 12,
-                            family: 'Inter, system-ui, sans-serif'
-                        },
-                        padding: 15,
-                        usePointStyle: true,
-                        pointStyle: 'circle'
-                    }
-                },
+                legend: { display: false },
                 tooltip: {
                     enabled: true,
-                    backgroundColor: 'rgba(30, 36, 66, 0.95)',
-                    titleColor: '#e2e8f0',
-                    bodyColor: '#a0aec0',
-                    borderColor: '#4299e1',
+                    backgroundColor: '#0d1326',
+                    titleColor: '#f8fafc',
+                    bodyColor: '#cbd5e1',
+                    borderColor: 'rgba(56, 189, 248, 0.35)',
                     borderWidth: 1,
                     padding: 12,
+                    cornerRadius: 8,
                     displayColors: true,
+                    boxPadding: 4,
+                    titleFont: { family: 'JetBrains Mono, monospace', size: 12, weight: 'bold' },
+                    bodyFont: { family: 'JetBrains Mono, monospace', size: 11 },
                     callbacks: {
                         label: function(context) {
                             let label = context.dataset.label || '';
-                            if (label) {
-                                label += ': ';
-                            }
-                            if (context.parsed.y !== null) {
+                            if (label) label += ': ';
+                            if (context.parsed.y !== null && context.parsed.y !== undefined) {
                                 label += '$' + context.parsed.y.toFixed(2);
+                            } else {
+                                label += '--';
                             }
                             return label;
                         }
@@ -1693,47 +1817,51 @@ function initializeChart() {
             scales: {
                 x: {
                     grid: {
-                        color: '#2d3748',
-                        drawBorder: false,
-                        lineWidth: 1,
+                        color: 'rgba(255, 255, 255, 0.04)',
+                        drawBorder: false
                     },
                     ticks: {
-                        color: '#a0aec0',
-                        font: {
-                            size: 11,
-                            family: 'Inter, system-ui, sans-serif'
-                        },
+                        color: '#94a3b8',
+                        font: { family: 'JetBrains Mono, monospace', size: 11 },
                         maxRotation: 0,
-                        autoSkipPadding: 10
+                        autoSkipPadding: 16
                     }
                 },
                 y: {
                     position: 'right',
                     grid: {
-                        color: '#2d3748',
-                        drawBorder: false,
-                        lineWidth: 1,
+                        color: 'rgba(255, 255, 255, 0.04)',
+                        drawBorder: false
                     },
                     ticks: {
-                        color: '#a0aec0',
-                        font: {
-                            size: 11,
-                            family: 'Inter, system-ui, sans-serif'
-                        },
-                        callback: function(value) {
-                            return '$' + value.toFixed(2);
-                        },
+                        color: '#94a3b8',
+                        font: { family: 'JetBrains Mono, monospace', size: 11 },
+                        callback: function(v) { return '$' + v.toFixed(2); },
                         padding: 8
                     },
-                    beginAtZero: false  // Don't force Y-axis to start at 0
+                    beginAtZero: false
                 }
             },
             animation: {
-                duration: 750,
-                easing: 'easeInOutQuart'
+                duration: 600,
+                easing: 'easeOutQuart'
             }
         }
     });
+
+    // Reset pill values when mouse leaves canvas
+    canvas.addEventListener('mouseleave', () => {
+        updateIndicatorPillValues(
+            latestBarValues.price,
+            latestBarValues.sma5,
+            latestBarValues.sma20,
+            latestBarValues.sma200,
+            latestBarValues.time
+        );
+    });
+
+    // Initialize pill and range controls
+    initChartInteractiveControls();
 }
 
 /**
@@ -1745,9 +1873,10 @@ async function fetchInitialData() {
             updateBotOverview(),
             updateBotStatus(),
             updateTradesData(),
-            updateTradeHistory(),  // NEW: Load trade history table
+            updateTradeHistory(),  // Load trade history table
             updateLogsData(),
             updateSwitchButtonText(),  // Load current profile
+            updateChartData(activeBarRange),  // Immediate smooth chart render
         ]);
     } catch (error) {
         console.error('Error fetching initial data:', error);
@@ -2567,103 +2696,124 @@ async function updateTradesData() {
 
 /**
  * Update chart data
+ * @param {number} barCount - Number of bars to display (default: activeBarRange)
  */
-async function updateChartData() {
+async function updateChartData(barCount) {
+    if (!barCount) barCount = activeBarRange || 100;
     try {
-        // Fetch historical bars from API (increased to 200 for SMA 200 visibility)
-        const response = await fetch(CONFIG.apiEndpoints.historicalBars(CONFIG.symbol, 200));
-        let bars = await response.json();
+        const symbol = CONFIG.symbol || 'IWM';
+        const url = CONFIG.apiEndpoints.historicalBars(symbol, barCount);
+        const response = await fetch(url);
+        let bars = [];
 
-        if (!bars || bars.length === 0) {
-            console.warn('No historical bar data from API, using synthetic data');
-            // Generate synthetic data around current price for display
-            const currentPrice = window.latestBotData?.currentPrice || 204;
-            bars = generateSyntheticBars(currentPrice, 50);
+        if (response.ok) {
+            const json = await response.json();
+            if (Array.isArray(json)) {
+                bars = json;
+            }
         }
 
-        // Extract data for chart including SMA values from bars
+        // Fallback if no bars from API
+        if (!bars || bars.length === 0) {
+            console.warn(`No historical bar data for ${symbol}, using currentPrice synthetic baseline`);
+            const currentPrice = window.latestBotData?.currentPrice || 282.38;
+            bars = generateSyntheticBars(currentPrice, barCount);
+        }
+
+        // Compute client-side SMAs as fallback for any missing values
+        const closePrices = bars.map(b => Number(b.close || b.price || 0));
+        const calcSma5 = calculateSMA(closePrices, 5);
+        const calcSma20 = calculateSMA(closePrices, 20);
+        const calcSma200 = calculateSMA(closePrices, Math.min(200, Math.max(50, Math.floor(closePrices.length * 0.8))));
+
         const labels = [];
         const prices = [];
         const sma5 = [];
         const sma20 = [];
-        const sma200 = [];  // SMA200 for regime detection
+        const sma200 = [];
 
-        bars.forEach(bar => {
-            // Format timestamp for display
-            const date = new Date(bar.timestamp);
-            const timeStr = date.toLocaleTimeString('en-US', {
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: false
-            });
+        // Check if bars span across multiple days
+        let spansMultipleDays = false;
+        if (bars.length > 1) {
+            const firstD = new Date(bars[0].timestamp).toDateString();
+            const lastD = new Date(bars[bars.length - 1].timestamp).toDateString();
+            spansMultipleDays = (firstD !== lastD);
+        }
+
+        bars.forEach((bar, idx) => {
+            const d = new Date(bar.timestamp);
+            let timeStr;
+            if (spansMultipleDays) {
+                const month = d.toLocaleDateString('en-US', { month: 'short' });
+                const day = d.getDate();
+                const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+                timeStr = `${month} ${day} ${time}`;
+            } else {
+                timeStr = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+            }
+
             labels.push(timeStr);
-            prices.push(bar.close);
-            // SMA values are pre-calculated by the bot's trading strategy on 1-hour bars
-            // and stored in Firestore. Dashboard does NOT recalculate - it displays the
-            // EXACT SMA values that the bot uses for trading decisions.
-            sma5.push(bar.sma5 || null);
-            sma20.push(bar.sma20 || null);
-            sma200.push(bar.sma200 || null);  // SMA200 added for regime-based entry logic
+            const closeVal = Number(bar.close);
+            prices.push(closeVal);
+
+            // Use bot pre-calculated SMA if present and valid, otherwise client-calculated fallback
+            const s5Val = (bar.sma5 !== null && bar.sma5 !== undefined) ? Number(bar.sma5) : calcSma5[idx];
+            const s20Val = (bar.sma20 !== null && bar.sma20 !== undefined) ? Number(bar.sma20) : calcSma20[idx];
+            const s200Val = (bar.sma200 !== null && bar.sma200 !== undefined) ? Number(bar.sma200) : calcSma200[idx];
+
+            sma5.push(s5Val !== null && s5Val !== undefined ? Number(s5Val.toFixed(2)) : null);
+            sma20.push(s20Val !== null && s20Val !== undefined ? Number(s20Val.toFixed(2)) : null);
+            sma200.push(s200Val !== null && s200Val !== undefined ? Number(s200Val.toFixed(2)) : null);
         });
 
-        // Add empty data points to push current price to 98% of chart width
-        // Calculate how many empty points to add (2% of total displayed points)
-        const emptyPointsCount = Math.ceil(labels.length * 0.0204); // 2/98 = 0.0204
-        for (let i = 0; i < emptyPointsCount; i++) {
-            labels.push(''); // Empty label for future time slots
-            prices.push(null); // Null to not draw line
-            sma5.push(null); // Extend SMA5 with nulls
-            sma20.push(null); // Extend SMA20 with nulls
-            sma200.push(null); // Extend SMA200 with nulls
+        // Store latest bar values for legend pill display
+        const lastIdx = prices.length - 1;
+        if (lastIdx >= 0) {
+            latestBarValues = {
+                price: prices[lastIdx],
+                sma5: sma5[lastIdx],
+                sma20: sma20[lastIdx],
+                sma200: sma200[lastIdx],
+                time: labels[lastIdx]
+            };
+            updateIndicatorPillValues(
+                latestBarValues.price,
+                latestBarValues.sma5,
+                latestBarValues.sma20,
+                latestBarValues.sma200,
+                latestBarValues.time
+            );
         }
 
         if (priceChart) {
-            // Store current zoom/pan state if needed
-            const wasZoomed = priceChart.options.scales.y.min !== undefined;
-
-            // Update chart data
             priceChart.data.labels = labels;
             priceChart.data.datasets[0].data = prices;
             priceChart.data.datasets[1].data = sma5;
             priceChart.data.datasets[2].data = sma20;
-            priceChart.data.datasets[3].data = sma200;  // SMA200 dataset
+            priceChart.data.datasets[3].data = sma200;
 
-            // Calculate Y-axis range from actual price data ONLY (not including padding nulls)
-            // This ensures scale stays consistent when toggling indicators
+            // Compute Y-axis bounds across all visible datasets
             let minPrice = Infinity;
             let maxPrice = -Infinity;
 
-            // Only check the original data before we added empty padding points
-            const actualPrices = prices.slice(0, prices.length - emptyPointsCount);
-            const actualSma5 = sma5.slice(0, prices.length - emptyPointsCount);
-            const actualSma20 = sma20.slice(0, prices.length - emptyPointsCount);
-            const actualSma200 = sma200.slice(0, prices.length - emptyPointsCount);
-
-            // Check all four datasets (only actual data, not nulls)
-            [actualPrices, actualSma5, actualSma20, actualSma200].forEach(dataset => {
-                dataset.forEach(value => {
-                    if (value !== null && value !== undefined && !isNaN(value)) {
-                        minPrice = Math.min(minPrice, value);
-                        maxPrice = Math.max(maxPrice, value);
+            [prices, sma5, sma20, sma200].forEach(dataset => {
+                dataset.forEach(val => {
+                    if (val !== null && val !== undefined && !isNaN(val)) {
+                        minPrice = Math.min(minPrice, val);
+                        maxPrice = Math.max(maxPrice, val);
                     }
                 });
             });
 
-            // Set explicit Y-axis bounds with 2% padding
             if (minPrice !== Infinity && maxPrice !== -Infinity) {
                 const range = maxPrice - minPrice;
-                const padding = range * 0.02;
-                priceChart.options.scales.y.min = minPrice - padding;
-                priceChart.options.scales.y.max = maxPrice + padding;
-
-                console.log(`Y-axis locked: $${(minPrice - padding).toFixed(2)} to $${(maxPrice + padding).toFixed(2)}`);
+                const padding = Math.max(range * 0.04, 0.25);
+                priceChart.options.scales.y.min = Number((minPrice - padding).toFixed(2));
+                priceChart.options.scales.y.max = Number((maxPrice + padding).toFixed(2));
             }
 
-            // Update chart with animation only on first load
-            const updateMode = wasZoomed ? 'none' : 'active';
-            priceChart.update(updateMode);
-
-            console.log(`Chart updated: ${prices.length} bars (${emptyPointsCount} padding), Y-axis: $${minPrice.toFixed(2)}-$${maxPrice.toFixed(2)}, SMA5: ${sma5.filter(v => v !== null).length} points, SMA20: ${sma20.filter(v => v !== null).length} points`);
+            priceChart.update();
+            console.log(`Chart updated: ${prices.length} bars, Y-range: $${minPrice.toFixed(2)}-$${maxPrice.toFixed(2)}, Latest Price: $${prices[prices.length - 1]}`);
         }
 
     } catch (error) {
@@ -2678,18 +2828,19 @@ async function updateChartData() {
 function generateSyntheticBars(currentPrice, count) {
     const bars = [];
     const now = new Date();
+    let price = currentPrice || 282.38;
 
     for (let i = count - 1; i >= 0; i--) {
-        const timestamp = new Date(now.getTime() - (i * 5 * 60 * 1000)); // 5 min bars
-        const variance = (Math.random() - 0.5) * 2; // Random walk
-        const price = currentPrice + variance;
+        const timestamp = new Date(now.getTime() - (i * 60 * 60 * 1000)); // 1-hour intervals
+        const variance = (Math.random() - 0.49) * 0.8;
+        price = Math.max(10, price + variance);
 
         bars.push({
             timestamp: timestamp.toISOString(),
-            open: price - 0.2,
-            high: price + 0.5,
-            low: price - 0.5,
-            close: price,
+            open: Number((price - 0.2).toFixed(2)),
+            high: Number((price + 0.45).toFixed(2)),
+            low: Number((price - 0.4).toFixed(2)),
+            close: Number(price.toFixed(2)),
             volume: Math.floor(Math.random() * 500000) + 100000
         });
     }
