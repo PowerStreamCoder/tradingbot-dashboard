@@ -5,18 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title id="pageTitle">Bot Focus - SMA Bot Dashboard</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>">
-    <link rel="stylesheet" href="/static/css/bot_focus.css?v=2.9.0">
+    <link rel="stylesheet" href="/static/css/bot_focus.css?v=2.9.1">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
     <div class="dashboard-container">
         <!-- Bot Focus Header -->
         <header class="bot-header" id="botFocusHeader">
-            <!-- Mode Indicator Badge (always visible) -->
-            <div class="mode-indicator">
-                <span id="modeBadge" class="mode-badge paper">📝 PAPER MODE</span>
-            </div>
-
             <div class="header-left">
                 <h1>
                     <span class="bot-icon">📈</span>
@@ -59,6 +54,9 @@
                 </div>
             </div>
             <div class="header-right">
+                <div class="mode-indicator">
+                    <span id="modeBadge" class="mode-badge paper">📝 PAPER MODE</span>
+                </div>
                 <button id="pauseBotBtn" class="btn btn-danger">
                     <span>⏸</span> Pause Bot
                 </button>
@@ -98,7 +96,7 @@
             <a href="/governance-review" class="nav-link">
                 ⚖️ Governance Review
             </a>
-            <a href="#" class="nav-link" id="navLinkStockPicker" onclick="showStockPickerTab(event)">
+            <a href="/bot-focus?show=stockpicker" class="nav-link" id="navLinkStockPicker" onclick="showStockPickerTab(event)">
                 📊 Stock Picker
             </a>
         </nav>
