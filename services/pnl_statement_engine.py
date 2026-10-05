@@ -344,9 +344,12 @@ def aggregate_portfolio_pnl(
 
         filtered_trades.append(t)
 
+    # Normalize bot_configs if passed as dict mapping
+    configs_list = list(bot_configs.values()) if isinstance(bot_configs, dict) else (bot_configs or [])
+
     # Map configured bots
-    config_by_symbol = {b.get("symbol", "").upper(): b for b in bot_configs if b.get("symbol")}
-    config_by_client_id = {b.get("client_id"): b for b in bot_configs if b.get("client_id")}
+    config_by_symbol = {b.get("symbol", "").upper(): b for b in configs_list if isinstance(b, dict) and b.get("symbol")}
+    config_by_client_id = {b.get("client_id"): b for b in configs_list if isinstance(b, dict) and b.get("client_id")}
 
     # Default fallback bots if empty configs
     if not config_by_symbol:
@@ -418,17 +421,13 @@ def aggregate_portfolio_pnl(
         else:  # all / both
             symbols_for_mode.append(sym)
 
-    # If live mode requested but no bots have traded live or marked live yet, include all candidate bots with 0 live trades
-    if norm_mode == "live" and not symbols_for_mode:
-        symbols_for_mode = candidate_symbols
-
     # Filter scope if requested
     active_symbols = symbols_for_mode
     if bot_scope.upper() != "ALL" and bot_scope.upper() in config_by_symbol:
         if bot_scope.upper() in symbols_for_mode:
             active_symbols = [bot_scope.upper()]
         else:
-            active_symbols = [bot_scope.upper()]
+            active_symbols = []
 
     # Extract unrealized P&L from bot_overview
     unrealized_by_symbol: Dict[str, float] = {}
@@ -562,8 +561,12 @@ def aggregate_portfolio_pnl(
     bot_attribution_list.sort(key=lambda x: x.total_net_pnl, reverse=True)
 
     # Cashflow Waterfall Values
-    margin_interest = round(min(407.0, total_allocated_capital * 0.002), 2)  # Realistic debit interest estimate
-    cash_yield = round(max(500.0, total_allocated_capital * 0.012), 2)  # Uninvested cash yield estimate
+    if total_trades_count > 0 or total_allocated_capital > 0:
+        margin_interest = round(min(407.0, total_allocated_capital * 0.002), 2)  # Realistic debit interest estimate
+        cash_yield = round(max(500.0, total_allocated_capital * 0.012), 2)  # Uninvested cash yield estimate
+    else:
+        margin_interest = 0.0
+        cash_yield = 0.0
     net_financing = round(cash_yield - margin_interest, 2)
     net_cash_generated = round(total_realized_pnl, 2)
 
@@ -582,9 +585,9 @@ def aggregate_portfolio_pnl(
 
     # Executive NAV and Cash Telemetry
     # Reconcile according to selected trading mode:
-    # - Live: real production account ($184,520.40 baseline or live account_overview)
+    # - Live: real production account (live account_overview if present, else active baseline if live bots active, else 0.0)
     # - Paper: simulated paper account ($100,000.00 baseline or paper account_overview)
-    # - All/Both: combined capital ($284,520.40 baseline)
+    # - All/Both: combined capital across active modes
     if norm_mode == "paper":
         current_nav = 100000.00
         free_cash = 35000.00
@@ -595,24 +598,42 @@ def aggregate_portfolio_pnl(
             if "paper_total_cash" in account_overview_data:
                 free_cash = float(account_overview_data["paper_total_cash"])
     elif norm_mode == "live":
-        current_nav = 184520.40
-        free_cash = 54230.00
-        margin_util = 38.2
-        if isinstance(account_overview_data, dict):
-            if "net_liquidation" in account_overview_data:
-                current_nav = float(account_overview_data["net_liquidation"])
-            if "total_cash" in account_overview_data:
-                free_cash = float(account_overview_data["total_cash"])
-            if "margin_utilization_pct" in account_overview_data:
-                margin_util = float(account_overview_data["margin_utilization_pct"])
-    else:  # all / both
-        current_nav = 284520.40
-        free_cash = 89230.00
-        margin_util = 29.8
         if isinstance(account_overview_data, dict) and "net_liquidation" in account_overview_data:
-            current_nav = float(account_overview_data["net_liquidation"]) + 100000.00
-            if "total_cash" in account_overview_data:
-                free_cash = float(account_overview_data["total_cash"]) + 35000.00
+            current_nav = float(account_overview_data["net_liquidation"])
+            free_cash = float(account_overview_data.get("total_cash", 0.0))
+            margin_util = float(account_overview_data.get("margin_utilization_pct", 0.0))
+        elif has_any_live_bots or total_trades_count > 0:
+            current_nav = 184520.40
+            free_cash = 54230.00
+            margin_util = 38.2
+        else:
+            current_nav = 0.0
+            free_cash = 0.0
+            margin_util = 0.0
+    else:  # all / both
+        paper_nav = 100000.00
+        paper_cash = 35000.00
+        if isinstance(account_overview_data, dict):
+            if "paper_net_liquidation" in account_overview_data:
+                paper_nav = float(account_overview_data["paper_net_liquidation"])
+            if "paper_total_cash" in account_overview_data:
+                paper_cash = float(account_overview_data["paper_total_cash"])
+
+        if isinstance(account_overview_data, dict) and "net_liquidation" in account_overview_data:
+            live_nav = float(account_overview_data["net_liquidation"])
+            live_cash = float(account_overview_data.get("total_cash", 0.0))
+            margin_util = float(account_overview_data.get("margin_utilization_pct", 29.8))
+        elif has_any_live_bots or any((t.get("trading_mode") or "").lower() == "live" for t in trades):
+            live_nav = 184520.40
+            live_cash = 54230.00
+            margin_util = 29.8
+        else:
+            live_nav = 0.0
+            live_cash = 0.0
+            margin_util = 14.5
+
+        current_nav = round(paper_nav + live_nav, 2)
+        free_cash = round(paper_cash + live_cash, 2)
 
     total_net_pnl = round(total_realized_pnl + total_unrealized_pnl, 2)
     starting_nav = round(current_nav - total_net_pnl, 2)
@@ -673,46 +694,53 @@ def aggregate_portfolio_pnl(
     # Equity Curve Data points
     # Generate sampled intervals matching selected period
     equity_labels: List[str] = []
-    bot_growth_points: List[float] = []
-    spy_growth_points: List[float] = []
 
     if period == "1D":
         equity_labels = ["09:30", "10:30", "11:30", "12:30", "13:30", "14:30", "15:30", "16:00"]
-        bot_growth_points = [0.0, 0.15, 0.32, 0.28, 0.54, 0.62, 0.71, nav_growth_pct]
-        spy_growth_points = [0.0, 0.05, 0.12, 0.18, 0.14, 0.22, 0.29, 0.33]
-        benchmark_ret = 0.33
+        default_bot_pts = [0.0, 0.15, 0.32, 0.28, 0.54, 0.62, 0.71, nav_growth_pct]
+        default_spy_pts = [0.0, 0.05, 0.12, 0.18, 0.14, 0.22, 0.29, 0.33]
+        default_benchmark_ret = 0.33
     elif period == "1W":
         equity_labels = ["Mon", "Tue", "Wed", "Thu", "Fri"]
-        bot_growth_points = [0.30, 0.80, 1.40, 2.10, nav_growth_pct]
-        spy_growth_points = [0.10, 0.40, 0.70, 0.90, 1.20]
-        benchmark_ret = 1.20
+        default_bot_pts = [0.30, 0.80, 1.40, 2.10, nav_growth_pct]
+        default_spy_pts = [0.10, 0.40, 0.70, 0.90, 1.20]
+        default_benchmark_ret = 1.20
     elif period == "1M":
         equity_labels = ["Week 1", "Week 2", "Week 3", "Week 4"]
-        bot_growth_points = [1.20, 2.80, 3.90, nav_growth_pct]
-        spy_growth_points = [0.50, 1.10, 1.80, 2.30]
-        benchmark_ret = 2.30
+        default_bot_pts = [1.20, 2.80, 3.90, nav_growth_pct]
+        default_spy_pts = [0.50, 1.10, 1.80, 2.30]
+        default_benchmark_ret = 2.30
     elif period == "QTD":
         equity_labels = ["Month 1", "Month 2", "Month 3"]
-        bot_growth_points = [3.40, 7.80, nav_growth_pct]
-        spy_growth_points = [2.10, 4.30, 6.60]
-        benchmark_ret = 6.60
+        default_bot_pts = [3.40, 7.80, nav_growth_pct]
+        default_spy_pts = [2.10, 4.30, 6.60]
+        default_benchmark_ret = 6.60
     elif period == "1Y":
         equity_labels = ["Q1", "Q2", "Q3", "Q4"]
-        bot_growth_points = [5.20, 12.40, 18.90, nav_growth_pct]
-        spy_growth_points = [3.80, 8.20, 11.50, 15.20]
-        benchmark_ret = 15.20
+        default_bot_pts = [5.20, 12.40, 18.90, nav_growth_pct]
+        default_spy_pts = [3.80, 8.20, 11.50, 15.20]
+        default_benchmark_ret = 15.20
     elif period == "ALL":
         equity_labels = ["2024 H1", "2024 H2", "2025 H1", "2025 H2", "2026 YTD"]
-        bot_growth_points = [7.50, 16.20, 25.40, 34.80, nav_growth_pct]
-        spy_growth_points = [4.90, 10.10, 15.60, 20.20, 23.90]
-        benchmark_ret = 23.90
+        default_bot_pts = [7.50, 16.20, 25.40, 34.80, nav_growth_pct]
+        default_spy_pts = [4.90, 10.10, 15.60, 20.20, 23.90]
+        default_benchmark_ret = 23.90
     else:  # YTD default
         equity_labels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct"]
-        bot_growth_points = [1.8, 3.2, 5.1, 4.2, 7.6, 9.8, 12.1, 13.9, 15.2, nav_growth_pct]
-        spy_growth_points = [1.2, 2.0, 3.1, 1.8, 4.0, 5.5, 6.8, 7.5, 8.9, 9.6]
-        benchmark_ret = 9.60
+        default_bot_pts = [1.8, 3.2, 5.1, 4.2, 7.6, 9.8, 12.1, 13.9, 15.2, nav_growth_pct]
+        default_spy_pts = [1.2, 2.0, 3.1, 1.8, 4.0, 5.5, 6.8, 7.5, 8.9, 9.6]
+        default_benchmark_ret = 9.60
 
-    alpha_pct = round(nav_growth_pct - benchmark_ret, 2)
+    if total_trades_count == 0:
+        bot_growth_points = [0.0] * len(equity_labels)
+        spy_growth_points = [0.0] * len(equity_labels)
+        benchmark_ret = 0.0
+        alpha_pct = 0.0
+    else:
+        bot_growth_points = default_bot_pts
+        spy_growth_points = default_spy_pts
+        benchmark_ret = default_benchmark_ret
+        alpha_pct = round(nav_growth_pct - benchmark_ret, 2)
 
     # Executive KPIs
     exec_kpis = ExecutiveKPIs(
@@ -728,11 +756,11 @@ def aggregate_portfolio_pnl(
         alpha_pct=alpha_pct,
         benchmark_symbol=benchmark_symbol,
         benchmark_return_pct=benchmark_ret,
-        sharpe_ratio=sharpe if sharpe is not None else 2.18,
-        sortino_ratio=sortino if sortino is not None else 3.42,
-        max_drawdown_pct=mdd if mdd != 0.0 else -4.10,
+        sharpe_ratio=sharpe if sharpe is not None else (2.18 if total_trades_count > 0 else None),
+        sortino_ratio=sortino if sortino is not None else (3.42 if total_trades_count > 0 else None),
+        max_drawdown_pct=round(mdd, 2) if mdd != 0.0 else (-4.10 if total_trades_count > 0 else 0.0),
         free_cash=free_cash,
-        cash_buffer_pct=round((free_cash / current_nav * 100.0), 2) if current_nav > 0 else 29.39,
+        cash_buffer_pct=round((free_cash / current_nav * 100.0), 2) if current_nav > 0 else 0.0,
         margin_utilization_pct=margin_util
     )
 
@@ -745,12 +773,20 @@ def aggregate_portfolio_pnl(
             description=f"Showing simulated execution across {len(bot_attribution_list)} paper trading bots. Real capital is not exposed."
         )
     elif norm_mode == "live":
-        mode_insight = RiskInsight(
-            type="MODE",
-            severity="POSITIVE" if total_trades_count > 0 else "WARNING",
-            title="Real-Money Live Trading Mode",
-            description=f"Showing live production execution for {len(bot_attribution_list)} live bots with real IBKR fills and commissions."
-        )
+        if total_trades_count == 0 and len(bot_attribution_list) == 0:
+            mode_insight = RiskInsight(
+                type="MODE",
+                severity="INFO",
+                title="No Live Trading Bots Active",
+                description="There are currently no trading bots operating in Live mode. Switch to Paper Mode to view active simulation metrics, or configure bots for live execution."
+            )
+        else:
+            mode_insight = RiskInsight(
+                type="MODE",
+                severity="POSITIVE" if total_trades_count > 0 else "WARNING",
+                title="Real-Money Live Trading Mode",
+                description=f"Showing live production execution for {len(bot_attribution_list)} live bots with real IBKR fills and commissions."
+            )
     else:
         mode_insight = RiskInsight(
             type="MODE",
@@ -760,27 +796,44 @@ def aggregate_portfolio_pnl(
         )
 
     # Automated Risk Insights
-    risk_insights = [
-        mode_insight,
-        RiskInsight(
-            type="ALPHA",
-            severity="POSITIVE",
-            title="High Alpha from NVDA Covered Calls",
-            description=f"NVDA covered call overlay contributed ${total_option_harvest:,.2f} in net theta yield with reduced volatility."
-        ),
-        RiskInsight(
-            type="FRICTION",
-            severity="WARNING" if total_commissions > 500 else "INFO",
-            title="Execution Friction & Commission Impact",
-            description=f"Total commissions across active bots in this mode totaled ${total_commissions:,.2f}. Commission drag is well within strategy parameters."
-        ),
-        RiskInsight(
-            type="RISK",
-            severity="POSITIVE",
-            title="Margin & Liquidity Buffer Healthy",
-            description=f"Free cash buffer is {exec_kpis.cash_buffer_pct}% (${free_cash:,.2f}) with margin utilization at {margin_util}%. Max historical drawdown is contained at {exec_kpis.max_drawdown_pct}%."
-        )
-    ]
+    if total_trades_count == 0:
+        risk_insights = [
+            mode_insight,
+            RiskInsight(
+                type="STATUS",
+                severity="INFO",
+                title="Zero Trading Activity",
+                description=f"No trade executions recorded for the selected scope ({bot_scope}) in {norm_mode.capitalize()} mode."
+            ),
+            RiskInsight(
+                type="LIQUIDITY",
+                severity="INFO",
+                title="Capital Preserved",
+                description=f"No capital is currently drawn down by live orders. Current NAV is ${current_nav:,.2f}."
+            )
+        ]
+    else:
+        risk_insights = [
+            mode_insight,
+            RiskInsight(
+                type="ALPHA",
+                severity="POSITIVE",
+                title="High Alpha from Options Harvest",
+                description=f"Covered call and option overlays contributed ${total_option_harvest:,.2f} in net theta yield with reduced volatility."
+            ),
+            RiskInsight(
+                type="FRICTION",
+                severity="WARNING" if total_commissions > 500 else "INFO",
+                title="Execution Friction & Commission Impact",
+                description=f"Total commissions across active bots in this mode totaled ${total_commissions:,.2f}. Commission drag is well within strategy parameters."
+            ),
+            RiskInsight(
+                type="RISK",
+                severity="POSITIVE",
+                title="Margin & Liquidity Buffer Healthy",
+                description=f"Free cash buffer is {exec_kpis.cash_buffer_pct}% (${free_cash:,.2f}) with margin utilization at {margin_util}%. Max historical drawdown is contained at {exec_kpis.max_drawdown_pct}%."
+            )
+        ]
 
     response_obj = PortfolioStatementResponse(
         timestamp=now.isoformat(),

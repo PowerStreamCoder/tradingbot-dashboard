@@ -321,3 +321,57 @@ def test_mutation_kill_cache_key_trading_mode_collision():
     with pytest.raises(AssertionError):
         assert m_paper != m_live
 
+
+def test_mutation_kill_live_zero_trade_mock_metric_fallbacks():
+    """
+    KILLS MUTANT 11: Injecting mock metrics (Sharpe=2.18, Sortino=3.42, MaxDD=-4.10,
+    Alpha=-9.60%, NAV=184520.40) when 0 live trades and 0 live bots exist.
+    """
+    from services.pnl_statement_engine import aggregate_portfolio_pnl
+
+    configs = {
+        "NVDA": {"symbol": "NVDA", "clientId": 4, "trading_mode": "paper"},
+        "IWM": {"symbol": "IWM", "clientId": 3, "trading_mode": "paper"}
+    }
+    # Only paper trades exist
+    trades = [
+        {"timestamp": "2026-10-01T14:30:00Z", "symbol": "NVDA", "botId": 4, "profitLoss": 500.0, "trading_mode": "paper"}
+    ]
+
+    st = aggregate_portfolio_pnl(
+        trades=trades,
+        bot_overview_data={},
+        bot_configs=configs,
+        mode="live"
+    )
+
+    # 1. Total trades must be 0 and attribution empty
+    assert st.executive_kpis.total_trades == 0
+    assert len(st.bot_attribution) == 0
+
+    # 2. NAV & Cash must NOT be mock $184,520.40 or $54,230.00
+    assert st.executive_kpis.nav == 0.0
+    assert st.executive_kpis.free_cash == 0.0
+
+    # 3. Alpha must NOT be penalized to negative benchmark (-9.60%)
+    assert st.executive_kpis.alpha_pct == 0.0
+    assert st.executive_kpis.benchmark_return_pct == 0.0
+
+    # 4. Risk ratios must NOT fallback to mock 2.18, 3.42, or -4.10
+    assert st.executive_kpis.sharpe_ratio is None
+    assert st.executive_kpis.sortino_ratio is None
+    assert st.executive_kpis.max_drawdown_pct == 0.0
+
+    # Mutant: mock fallback restoration
+    mutant_sharpe = 2.18
+    mutant_alpha = -9.60
+    mutant_nav = 184520.40
+
+    with pytest.raises(AssertionError):
+        assert st.executive_kpis.sharpe_ratio == mutant_sharpe
+    with pytest.raises(AssertionError):
+        assert st.executive_kpis.alpha_pct == mutant_alpha
+    with pytest.raises(AssertionError):
+        assert st.executive_kpis.nav == mutant_nav
+
+

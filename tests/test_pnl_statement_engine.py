@@ -232,6 +232,45 @@ class TestPnLStatementEngine(unittest.TestCase):
         self.assertEqual(l1.executive_kpis.realized_pnl, 300.0)
         self.assertFalse(l1.data_quality.cached)
 
+    def test_live_mode_zero_state(self):
+        # Scenario matching current production: trades exist but only in paper mode
+        paper_only_trades = [
+            {"timestamp": "2026-10-01T14:30:00Z", "symbol": "NVDA", "botId": 4, "profitLoss": 500.0, "trading_mode": "paper"},
+            {"timestamp": "2026-10-02T14:30:00Z", "symbol": "IWM", "botId": 3, "profitLoss": -100.0, "trading_mode": "paper"}
+        ]
+
+        st_live = aggregate_portfolio_pnl(
+            trades=paper_only_trades,
+            bot_overview_data={},
+            bot_configs=self.mock_configs,
+            period="YTD",
+            bot_scope="ALL",
+            mode="live",
+            now=self.now
+        )
+
+        self.assertEqual(st_live.trading_mode, "live")
+        self.assertEqual(len(st_live.bot_attribution), 0)
+        self.assertEqual(st_live.executive_kpis.total_trades, 0)
+        self.assertEqual(st_live.executive_kpis.realized_pnl, 0.0)
+        self.assertEqual(st_live.executive_kpis.unrealized_pnl, 0.0)
+        self.assertEqual(st_live.executive_kpis.total_net_pnl, 0.0)
+        self.assertEqual(st_live.executive_kpis.nav, 0.0)
+        self.assertEqual(st_live.executive_kpis.starting_nav, 0.0)
+        self.assertEqual(st_live.executive_kpis.free_cash, 0.0)
+        self.assertEqual(st_live.executive_kpis.margin_utilization_pct, 0.0)
+        self.assertEqual(st_live.executive_kpis.cash_buffer_pct, 0.0)
+        self.assertEqual(st_live.executive_kpis.alpha_pct, 0.0)
+        self.assertEqual(st_live.executive_kpis.benchmark_return_pct, 0.0)
+        self.assertIsNone(st_live.executive_kpis.sharpe_ratio)
+        self.assertIsNone(st_live.executive_kpis.sortino_ratio)
+        self.assertEqual(st_live.executive_kpis.max_drawdown_pct, 0.0)
+        self.assertEqual(st_live.cashflow_waterfall.margin_interest_paid, 0.0)
+        self.assertEqual(st_live.cashflow_waterfall.cash_yield_earned, 0.0)
+        self.assertTrue(all(pt == 0.0 for pt in st_live.equity_curve.portfolio_returns_pct))
+        self.assertTrue(all(pt == 0.0 for pt in st_live.equity_curve.benchmark_returns_pct))
+        self.assertEqual(st_live.risk_insights[0].title, "No Live Trading Bots Active")
+
 
 if __name__ == '__main__':
     unittest.main()
