@@ -22,6 +22,7 @@ let rawStockPickerData = null;
 let currentTrackFilter = 'all';
 let selectedSymbolForAction = null;
 let selectedTrackForAction = null;
+let spSearchQuery = '';
 
 
 // =============================================================================
@@ -165,8 +166,9 @@ async function loadStockPicks() {
     if (tbody && !rawStockPickerData) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="8" style="text-align:center; padding: 20px; color: #95a5a6;">
-                    ⏳ Loading dual-track stock picks...
+                <td colspan="8" class="sp-table-loading">
+                    <div class="sp-spinner"></div>
+                    <div style="margin-top: 8px;">Loading dual-track stock picks...</div>
                 </td>
             </tr>
         `;
@@ -189,9 +191,9 @@ async function loadStockPicks() {
         if (tbody) {
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="8" style="text-align:center; color: #ef4444; padding: 20px;">
+                    <td colspan="8" style="text-align:center; color: #ef4444; padding: 30px;">
                         <strong>Failed to load stock picks</strong><br>
-                        <span style="font-size: 0.9em;">${error.message}</span>
+                        <span style="font-size: 0.9em; color: #94a3b8; margin-top: 4px; display: inline-block;">${error.message}</span>
                     </td>
                 </tr>
             `;
@@ -203,17 +205,33 @@ function filterStockPicks(filterType) {
     currentTrackFilter = filterType;
     document.querySelectorAll('.sp-tab-btn').forEach(btn => {
         btn.classList.remove('active');
-        btn.style.background = '#1a202c';
-        btn.style.color = '#cbd5e0';
+        btn.setAttribute('aria-selected', 'false');
     });
 
     const activeBtn = document.getElementById(`sp-filter-${filterType}`);
     if (activeBtn) {
         activeBtn.classList.add('active');
-        activeBtn.style.background = '#2d3748';
-        activeBtn.style.color = '#ffffff';
+        activeBtn.setAttribute('aria-selected', 'true');
     }
 
+    renderStockPicksTable();
+}
+
+function handleStockPickerSearch(query) {
+    spSearchQuery = (query || '').toLowerCase().trim();
+    const clearBtn = document.getElementById('sp-search-clear-btn');
+    if (clearBtn) {
+        clearBtn.style.display = spSearchQuery ? 'block' : 'none';
+    }
+    renderStockPicksTable();
+}
+
+function clearStockPickerSearch() {
+    spSearchQuery = '';
+    const input = document.getElementById('sp-search-input');
+    if (input) input.value = '';
+    const clearBtn = document.getElementById('sp-search-clear-btn');
+    if (clearBtn) clearBtn.style.display = 'none';
     renderStockPicksTable();
 }
 
@@ -226,6 +244,7 @@ function updateStockPickerMetrics(data) {
     const growthCount = data.summary?.growth_actionable_count ?? (data.growth_picks ? data.growth_picks.length : 0);
     const incomeCount = data.summary?.income_actionable_count ?? (data.income_picks ? data.income_picks.length : 0);
     const acceptedCount = data.summary?.already_accepted_count ?? (data.already_accepted ? data.already_accepted.length : 0);
+    const totalCount = growthCount + incomeCount + acceptedCount;
 
     const elGrowth = document.getElementById('sp-growth-count');
     if (elGrowth) elGrowth.textContent = growthCount;
@@ -235,6 +254,16 @@ function updateStockPickerMetrics(data) {
 
     const elAccepted = document.getElementById('sp-accepted-count');
     if (elAccepted) elAccepted.textContent = acceptedCount;
+
+    // Update filter pill badges
+    const elTabAll = document.getElementById('sp-tab-all-num');
+    if (elTabAll) elTabAll.textContent = totalCount;
+
+    const elTabGrowth = document.getElementById('sp-tab-growth-num');
+    if (elTabGrowth) elTabGrowth.textContent = growthCount;
+
+    const elTabIncome = document.getElementById('sp-tab-income-num');
+    if (elTabIncome) elTabIncome.textContent = incomeCount;
 
     const elTabAccepted = document.getElementById('sp-tab-accepted-num');
     if (elTabAccepted) elTabAccepted.textContent = acceptedCount;
@@ -311,132 +340,176 @@ function renderStockPicksTable() {
         listToRender = [...growthList, ...incomeList, ...alreadyAccepted];
     }
 
+    // Filter by search query if active
+    if (spSearchQuery) {
+        listToRender = listToRender.filter(pick => {
+            const sym = (pick.ticker || pick.symbol || '').toLowerCase();
+            const ind = (pick.industry || pick.evidence_dossier?.industry || '').toLowerCase();
+            const cat = (pick.catalyst || pick.fundamental_reasons || '').toLowerCase();
+            const track = (pick.strategy_track || '').toLowerCase();
+            return sym.includes(spSearchQuery) || ind.includes(spSearchQuery) || cat.includes(spSearchQuery) || track.includes(spSearchQuery);
+        });
+    }
+
     if (!listToRender || listToRender.length === 0) {
-        tbody.innerHTML = `
-            <tr>
-                <td colspan="8" style="text-align:center; padding: 40px; color: #94a3b8;">
-                    <div style="font-size: 1.1em; margin-bottom: 8px;">No candidates in this view</div>
-                    <div style="font-size: 0.9em; color: #38bdf8;">Click "▶️ Run Now" to scan fresh market opportunities</div>
-                </td>
-            </tr>
-        `;
+        if (spSearchQuery) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="8" class="sp-empty-state">
+                        <div class="sp-empty-icon">🔍</div>
+                        <div class="sp-empty-title">No Candidates Matching "${spSearchQuery}"</div>
+                        <div class="sp-empty-desc">No stocks found matching your keyword. Try clearing the filter or searching for another symbol.</div>
+                        <button class="sp-empty-cta" onclick="clearStockPickerSearch()">✕ Clear Search Filter</button>
+                    </td>
+                </tr>
+            `;
+        } else {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="8" class="sp-empty-state">
+                        <div class="sp-empty-icon">🎯</div>
+                        <div class="sp-empty-title">No candidates in this view</div>
+                        <div class="sp-empty-desc">Scan the dual-track market universe to identify fresh growth momentum and covered call opportunities.</div>
+                        <button class="sp-empty-cta" onclick="runStockPickerNow()">▶️ Run StockPicker Scan</button>
+                    </td>
+                </tr>
+            `;
+        }
         return;
     }
 
     tbody.innerHTML = listToRender.map((pick, index) => {
         const rank = index + 1;
-        const sym = pick.ticker || pick.symbol || '-';
+        const sym = (pick.ticker || pick.symbol || '-').toUpperCase();
         const track = pick.strategy_track || 'GROWTH';
         const score = pick.composite_score != null ? pick.composite_score.toFixed(1) : (pick.score != null ? pick.score.toFixed(1) : '-');
         const status = pick.status || 'PENDING_REVIEW';
         const catalyst = pick.catalyst || pick.fundamental_reasons || 'Algorithmically identified opportunity';
         const dossier = pick.evidence_dossier || {};
+        const industry = pick.industry || dossier.industry || '';
 
         const trackBadge = track === 'INCOME'
-            ? `<span style="background: rgba(16,185,129,0.15); color: #34d399; border: 1px solid #059669; padding: 3px 8px; border-radius: 12px; font-size: 0.75em; font-weight: 600;">🛡️ Income</span>`
-            : `<span style="background: rgba(129,140,248,0.15); color: #a5b4fc; border: 1px solid #4f46e5; padding: 3px 8px; border-radius: 12px; font-size: 0.75em; font-weight: 600;">🚀 Growth</span>`;
+            ? `<span class="sp-track-badge income"><span class="track-icon">🛡️</span> Income</span>`
+            : `<span class="sp-track-badge growth"><span class="track-icon">🚀</span> Growth</span>`;
 
         let statusBadge = '';
         let actionButtons = '';
 
         if (status === 'PROVISIONED') {
-            const botId = pick.bot_id || `${sym.lower()}_sma`;
-            statusBadge = `<span style="background: rgba(16,185,129,0.2); color: #10b981; border: 1px solid #10b981; padding: 4px 10px; border-radius: 12px; font-size: 0.8em; font-weight: 600;">🤖 ${pick.status_label || 'Bot Active'}</span>`;
+            const botId = pick.bot_id || `${sym.toLowerCase()}_sma`;
+            statusBadge = `<span class="sp-status-pill provisioned"><span class="status-pulse green"></span> 🤖 ${pick.status_label || 'Bot Active'}</span>`;
             actionButtons = `
-                <a href="${pick.dashboard_link || `/bot/${botId}`}" style="display: inline-block; padding: 6px 12px; border-radius: 6px; background: #3b82f6; color: white; text-decoration: none; font-size: 0.85em; font-weight: 600;">
-                    📊 View Bot Focus
+                <a href="${pick.dashboard_link || `/bot/${botId}`}" class="sp-btn sp-btn-view">
+                    <span>📊</span> View Bot
                 </a>
             `;
         } else if (status === 'ACCEPTED') {
-            statusBadge = `<span style="background: rgba(59,130,246,0.2); color: #60a5fa; border: 1px solid #3b82f6; padding: 4px 10px; border-radius: 12px; font-size: 0.8em; font-weight: 600;">🔵 Accepted</span>`;
+            statusBadge = `<span class="sp-status-pill accepted"><span class="status-pulse blue"></span> 🔵 Accepted</span>`;
             actionButtons = `
-                <button onclick="openAcceptModal('${sym}', '${track}')" style="padding: 6px 12px; border-radius: 6px; border: none; background: #10b981; color: white; font-size: 0.85em; font-weight: 600; cursor: pointer;">
-                    🚀 Provision Bot
+                <button onclick="openAcceptModal('${sym}', '${track}')" class="sp-btn sp-btn-accept">
+                    <span>🚀</span> Provision
                 </button>
             `;
         } else if (status === 'PROVISIONING_FAILED') {
-            statusBadge = `<span style="background: rgba(239,68,68,0.25); color: #fca5a5; border: 1px solid #ef4444; padding: 4px 10px; border-radius: 12px; font-size: 0.8em; font-weight: 600;">⚠️ Provisioning Failed</span>`;
+            statusBadge = `<span class="sp-status-pill failed"><span class="status-pulse red"></span> ⚠️ Failed</span>`;
             actionButtons = `
                 <div style="display: flex; flex-direction: column; gap: 4px; align-items: center;">
-                    <button onclick="openAcceptModal('${sym}', '${track}')" title="Retry Provisioning" style="padding: 4px 8px; border-radius: 5px; border: 1px solid #f59e0b; background: rgba(245,158,11,0.2); color: #fbbf24; font-size: 0.78em; font-weight: 600; cursor: pointer;">
+                    <button onclick="openAcceptModal('${sym}', '${track}')" title="Retry Provisioning" class="sp-btn sp-btn-retry">
                         🔄 Retry
                     </button>
-                    <button onclick="openRejectModal('${sym}')" title="Reject candidate" style="padding: 3px 8px; border-radius: 5px; border: 1px solid #ef4444; background: transparent; color: #f87171; font-size: 0.75em; cursor: pointer;">
-                        ❌ Reject
+                    <button onclick="openRejectModal('${sym}')" title="Reject candidate" class="sp-btn sp-btn-reject" style="padding: 2px 8px; font-size: 0.74em;">
+                        ✕ Pass
                     </button>
                 </div>
             `;
         } else if (status === 'REJECTED') {
-            statusBadge = `<span style="background: rgba(239,68,68,0.2); color: #f87171; border: 1px solid #ef4444; padding: 4px 10px; border-radius: 12px; font-size: 0.8em; font-weight: 600;">🔴 Rejected</span>`;
-            actionButtons = `<span style="font-size: 0.8em; color: #94a3b8;">In 7-day cooldown</span>`;
+            statusBadge = `<span class="sp-status-pill rejected">🔴 Cooldown</span>`;
+            actionButtons = `<span class="sp-muted-text">7d Cooldown</span>`;
         } else {
             // PENDING_REVIEW
-            statusBadge = `<span style="background: rgba(245,158,11,0.2); color: #fbbf24; border: 1px solid #f59e0b; padding: 4px 10px; border-radius: 12px; font-size: 0.8em; font-weight: 600;">🟡 Actionable Lead</span>`;
+            statusBadge = `<span class="sp-status-pill pending"><span class="status-pulse amber"></span> 🟡 Actionable</span>`;
             actionButtons = `
-                <div style="display: flex; gap: 6px; justify-content: center;">
-                    <button onclick="openAcceptModal('${sym}', '${track}')" title="Accept & Provision Bot" style="padding: 5px 10px; border-radius: 5px; border: none; background: #10b981; color: white; font-size: 0.8em; font-weight: 600; cursor: pointer;">
-                        ✅ Accept
+                <div class="sp-actions-cell">
+                    <button onclick="openAcceptModal('${sym}', '${track}')" title="Accept & Provision Bot" class="sp-btn sp-btn-accept">
+                        <span>✅</span> Accept
                     </button>
-                    <button onclick="openRejectModal('${sym}')" title="Reject candidate" style="padding: 5px 10px; border-radius: 5px; border: none; background: #ef4444; color: white; font-size: 0.8em; font-weight: 600; cursor: pointer;">
-                        ❌ Reject
+                    <button onclick="openRejectModal('${sym}')" title="Reject candidate" class="sp-btn sp-btn-reject">
+                        <span>✕</span> Pass
                     </button>
                 </div>
             `;
         }
 
+        // Score Pill Styling
+        let scoreClass = 'score-high';
+        const numScore = parseFloat(score);
+        if (isNaN(numScore) || numScore < 70) scoreClass = 'score-low';
+        else if (numScore < 80) scoreClass = 'score-med';
+
         const metricsHtml = formatPickMetrics(pick);
 
         return `
-            <tr style="border-bottom: 1px solid #334155;">
-                <td style="text-align: center; padding: 12px 6px;"><strong>${rank}</strong></td>
-                <td style="padding: 12px 8px;">${trackBadge}</td>
-                <td style="text-align: center; padding: 12px 8px;"><strong style="color: #38bdf8; font-size: 1.1em;">${sym}</strong></td>
-                <td style="text-align: right; font-weight: 700; color: #10b981; padding: 12px 8px;">
-                    ${score}
-                    ${pick.is_degraded ? `
-                        <div style="margin-top: 3px;">
-                            <span style="background: rgba(245,158,11,0.2); color: #fbbf24; border: 1px solid #f59e0b; padding: 1px 6px; border-radius: 8px; font-size: 0.68em; font-weight: 600; display: inline-block;" title="${(pick.degradation_warnings || []).join('; ') || 'Data feeds partial'}">
+            <tr class="sp-row">
+                <td style="text-align: center;">
+                    <span class="sp-rank-badge">${rank}</span>
+                </td>
+                <td>${trackBadge}</td>
+                <td style="text-align: center;">
+                    <div class="sp-ticker-cell">
+                        <span class="sp-ticker-symbol">${sym}</span>
+                        ${industry ? `<span class="sp-ticker-industry" title="${industry}">${industry}</span>` : ''}
+                    </div>
+                </td>
+                <td style="text-align: center;">
+                    <div class="sp-score-wrapper">
+                        <div class="sp-score-pill ${scoreClass}">
+                            <span>${score}</span>
+                        </div>
+                        ${pick.is_degraded ? `
+                            <span class="sp-degraded-tag" title="${(pick.degradation_warnings || []).join('; ') || 'Data feeds partial'}">
                                 ⚠️ Degraded
                             </span>
-                        </div>
-                    ` : ''}
+                        ` : ''}
+                    </div>
                 </td>
-                <td style="text-align: center; padding: 12px 8px;">
+                <td style="text-align: center;">
                     ${statusBadge}
                 </td>
-                <td style="padding: 12px 10px; font-size: 0.9em; max-width: 320px;" title="${catalyst}">
-                    ${catalyst.length > 80 ? catalyst.substring(0, 80) + '...' : catalyst}
-                    ${status === 'PROVISIONING_FAILED' ? `
-                        <div style="margin-top: 6px; padding: 6px 8px; background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.3); border-radius: 6px; font-size: 0.78em; color: #fca5a5;">
-                            <div><strong>Stage:</strong> ${pick.failure_stage || 'CONFIG'}</div>
-                            <div><strong>Reason:</strong> ${pick.failure_reason || 'Provisioning script error'}</div>
-                            <div style="color: #94a3b8; margin-top: 2px;">💡 ${pick.suggested_action || 'Review permissions and retry.'}</div>
-                        </div>
-                    ` : ''}
+                <td>
+                    <div class="sp-thesis-cell">
+                        <div class="sp-thesis-text" title="${catalyst}">${catalyst}</div>
+                        ${status === 'PROVISIONING_FAILED' ? `
+                            <div class="sp-failure-box">
+                                <div><strong>Stage:</strong> ${pick.failure_stage || 'CONFIG'} | <strong>Reason:</strong> ${pick.failure_reason || 'Provisioning script error'}</div>
+                                <div class="sp-failure-action">💡 ${pick.suggested_action || 'Review permissions and retry.'}</div>
+                            </div>
+                        ` : ''}
+                    </div>
                 </td>
-                <td style="padding: 12px 10px; font-size: 0.85em;">
-                    <div>${metricsHtml}</div>
-                    <div style="margin-top: 4px;">
-                        <button onclick="toggleDossier('${sym}')" style="background: transparent; border: 1px solid #475569; color: #38bdf8; border-radius: 4px; padding: 2px 8px; font-size: 0.8em; cursor: pointer;">
-                            🔍 Evidence Dossier
+                <td>
+                    <div class="sp-metrics-cell">
+                        <div class="sp-metrics-chips">${metricsHtml}</div>
+                        <button class="sp-dossier-toggle-btn" id="dossier-btn-${sym}" onclick="toggleDossier('${sym}')">
+                            <span>🔍 Evidence Dossier</span>
+                            <span class="dossier-arrow" id="dossier-arrow-${sym}">▾</span>
                         </button>
                     </div>
                 </td>
-                <td style="text-align: center; padding: 12px 8px;">
+                <td style="text-align: center;">
                     ${actionButtons}
                 </td>
             </tr>
             <tr id="dossier-row-${sym}" style="display: none;">
                 <td colspan="8" style="padding: 0;">
                     <div class="dossier-drawer">
-                        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; padding-bottom: 8px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 10px; margin-bottom: 12px;">
                             <div>
-                                <strong style="color: #38bdf8; font-size: 1.05em;">Multi-Dimensional Evidence Dossier: ${sym}</strong>
-                                <span style="margin-left: 10px; font-size: 0.85em; color: #94a3b8;">${dossier.industry || pick.industry || ''}</span>
+                                <strong style="color: #38bdf8; font-size: 1.05em; letter-spacing: 0.03em;">Multi-Dimensional Evidence Dossier: ${sym}</strong>
+                                <span style="margin-left: 10px; font-size: 0.85em; color: #94a3b8;">${industry}</span>
                             </div>
                             <div>
-                                <a href="${dossier.sec_filing_url || 'https://www.sec.gov/edgar/searchedgar/companysearch'}" target="_blank" rel="noopener noreferrer" style="color: #38bdf8; text-decoration: underline; font-weight: 600; font-size: 0.85em;">
-                                    🔗 Clickable SEC EDGAR Filing
+                                <a href="${dossier.sec_filing_url || 'https://www.sec.gov/edgar/searchedgar/companysearch'}" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 6px; background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.35); color: #38bdf8; text-decoration: none; font-weight: 600; font-size: 0.82em; transition: all 0.2s;">
+                                    <span>🔗 Clickable SEC EDGAR Filing ↗</span>
                                 </a>
                             </div>
                         </div>
@@ -445,7 +518,7 @@ function renderStockPicksTable() {
                             <!-- Bull Drivers -->
                             <div class="dossier-card">
                                 <h4 style="color: #34d399;">🐂 Key Bull Drivers</h4>
-                                <ul style="margin: 0; padding-left: 18px; font-size: 0.85em; color: #f1f5f9;">
+                                <ul style="margin: 0; padding-left: 18px; font-size: 0.85em; color: #f1f5f9; line-height: 1.5;">
                                     ${(dossier.bull_drivers || ['Strong revenue growth momentum', 'Institutional order flow alignment']).map(d => `<li style="margin-bottom: 4px;">${d}</li>`).join('')}
                                 </ul>
                             </div>
@@ -453,7 +526,7 @@ function renderStockPicksTable() {
                             <!-- Risk Warnings -->
                             <div class="dossier-card">
                                 <h4 style="color: #f87171;">⚠️ Key Risk Warnings</h4>
-                                <ul style="margin: 0; padding-left: 18px; font-size: 0.85em; color: #f1f5f9;">
+                                <ul style="margin: 0; padding-left: 18px; font-size: 0.85em; color: #f1f5f9; line-height: 1.5;">
                                     ${(dossier.risk_warnings || ['Market regime volatility sensitivity', 'Macro cyclical exposure']).map(r => `<li style="margin-bottom: 4px;">${r}</li>`).join('')}
                                 </ul>
                             </div>
@@ -461,11 +534,11 @@ function renderStockPicksTable() {
                             <!-- Alternative Data & Solvency -->
                             <div class="dossier-card">
                                 <h4 style="color: #38bdf8;">🏛️ Alternative Data & Catalysts</h4>
-                                <div style="font-size: 0.85em; color: #cbd5e1;">
+                                <div style="font-size: 0.85em; color: #cbd5e1; line-height: 1.6;">
                                     <div><strong>USAspending Awards:</strong> ${(dossier.usaspending_contracts && dossier.usaspending_contracts.length) ? `${dossier.usaspending_contracts.length} active awards` : 'No recent public federal awards'}</div>
-                                    <div style="margin-top: 4px;"><strong>Congressional Trading:</strong> ${(dossier.congressional_trades && dossier.congressional_trades.length) ? `${dossier.congressional_trades.length} filings detected` : 'Neutral insider/congressional flow'}</div>
-                                    <div style="margin-top: 4px;"><strong>Solvency Rating:</strong> ${dossier.solvency_rating || 'Adequate'}</div>
-                                    <div style="margin-top: 4px;"><strong>Data Quality:</strong> <span style="font-weight: 600; color: ${dossier.data_quality === 'FULL' ? '#34d399' : (dossier.data_quality === 'PARTIAL' ? '#fbbf24' : '#f87171')};">${dossier.data_quality || (pick.is_degraded ? 'PARTIAL' : 'FULL')}</span></div>
+                                    <div><strong>Congressional Trading:</strong> ${(dossier.congressional_trades && dossier.congressional_trades.length) ? `${dossier.congressional_trades.length} filings detected` : 'Neutral insider/congressional flow'}</div>
+                                    <div><strong>Solvency Rating:</strong> ${dossier.solvency_rating || 'Adequate'}</div>
+                                    <div><strong>Data Quality:</strong> <span style="font-weight: 600; color: ${dossier.data_quality === 'FULL' ? '#34d399' : (dossier.data_quality === 'PARTIAL' ? '#fbbf24' : '#f87171')};">${dossier.data_quality || (pick.is_degraded ? 'PARTIAL' : 'FULL')}</span></div>
                                 </div>
                             </div>
 
@@ -494,8 +567,17 @@ function renderStockPicksTable() {
 
 function toggleDossier(sym) {
     const row = document.getElementById(`dossier-row-${sym}`);
+    const arrow = document.getElementById(`dossier-arrow-${sym}`);
     if (row) {
-        row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
+        const isOpen = row.style.display !== 'none';
+        row.style.display = isOpen ? 'none' : 'table-row';
+        if (arrow) {
+            if (isOpen) {
+                arrow.classList.remove('open');
+            } else {
+                arrow.classList.add('open');
+            }
+        }
     }
 }
 
@@ -503,31 +585,31 @@ function formatPickMetrics(pick) {
     const metrics = [];
     if (pick.strategy_track === 'INCOME') {
         if (pick.monthly_yield_est != null) {
-            metrics.push(`<span style="color: #10b981; font-weight: 600;">Monthly: ${pick.monthly_yield_est}%</span>`);
+            metrics.push(`<span class="sp-metric-chip" style="color: #10b981; font-weight: 600;">Yield: ${pick.monthly_yield_est}%/mo</span>`);
         }
         if (pick.annualized_yield_est != null) {
-            metrics.push(`<span>Ann: ${pick.annualized_yield_est}%</span>`);
+            metrics.push(`<span class="sp-metric-chip">Ann: ${pick.annualized_yield_est}%</span>`);
         }
         if (pick.implied_volatility != null) {
-            metrics.push(`<span>IV: ${pick.implied_volatility}%</span>`);
+            metrics.push(`<span class="sp-metric-chip">IV: ${pick.implied_volatility}%</span>`);
         }
     } else {
         if (pick.revenue_yoy != null) {
             const revPercent = (pick.revenue_yoy * 100).toFixed(0);
             const revColor = pick.revenue_yoy > 0 ? '#10b981' : '#ef4444';
-            metrics.push(`<span style="color: ${revColor}">Rev: ${revPercent}%</span>`);
+            metrics.push(`<span class="sp-metric-chip" style="color: ${revColor}">Rev: ${revPercent}%</span>`);
         }
         if (pick.gross_margin != null) {
-            metrics.push(`GM: ${(pick.gross_margin * 100).toFixed(0)}%`);
+            metrics.push(`<span class="sp-metric-chip">GM: ${(pick.gross_margin * 100).toFixed(0)}%</span>`);
         }
         if (pick.debt_to_equity != null) {
             const de = pick.debt_to_equity.toFixed(0);
             const deColor = pick.debt_to_equity < 100 ? '#10b981' : (pick.debt_to_equity > 250 ? '#ef4444' : '#94a3b8');
-            metrics.push(`<span style="color: ${deColor}">D/E: ${de}</span>`);
+            metrics.push(`<span class="sp-metric-chip" style="color: ${deColor}">D/E: ${de}</span>`);
         }
     }
 
-    return metrics.length > 0 ? metrics.join(' | ') : '-';
+    return metrics.length > 0 ? metrics.join('') : '<span class="sp-muted-text">-</span>';
 }
 
 
