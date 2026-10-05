@@ -1,284 +1,620 @@
-// P&L Reporting Dashboard JavaScript
-// Simplified version - only P&L statement functionality
-// Version: 2.4.0 - Fixed duplicate variable declarations
+/**
+ * Institutional Multi-Bot P&L Statement & Portfolio Analytics Controller
+ * Version: 3.0.0
+ * Connects to FastAPI endpoint GET /api/pnl-statement
+ */
 
-// Configuration
-// Note: API_BASE_URL is declared in dashboard.js (loaded before this script)
-// Note: BOT_NAMES is declared in dashboard.js (loaded before this script)
-// Note: API_ENDPOINTS is declared in config.js (loaded before this script)
-// Note: REFRESH_INTERVAL is declared in dashboard.js (loaded before this script)
+let currentPeriod = 'YTD';
+let currentBotScope = 'ALL';
+let currentStatementData = null;
+let equityChart = null;
+let donutChart = null;
 
-// Config ready flag is managed by dashboard.js (loaded before this script)
-// We'll use the shared BOT_NAMES populated by dashboard.js
+// Bot color palette mapping
+const BOT_COLORS = {
+    'NVDA': '#10b981',
+    'IWM': '#06b6d4',
+    'SPY': '#f59e0b',
+    'QQQ': '#ec4899',
+    'DEFAULT': '#818cf8'
+};
 
-// State for multi-select bot filter
-let selectedBots = new Set(); // Empty set means "all bots"
-let allBotsSelected = true;
+function getBotColor(symbol) {
+    const sym = (symbol || '').toUpperCase();
+    return BOT_COLORS[sym] || BOT_COLORS.DEFAULT;
+}
 
 /**
- * Setup multi-select bot filter with checkboxes
- * Called after bot configs are loaded
+ * Format currency with signs
  */
-function setupBotFilter() {
-    const allBotsCheckbox = document.getElementById('allBotsCheckbox');
-    const botCheckboxContainer = document.getElementById('botCheckboxContainer');
-    const filterButton = document.getElementById('botFilterButton');
-    const filterDropdown = document.getElementById('botFilterDropdown');
+function formatCurrency(val, includePlus = false) {
+    if (val === null || val === undefined || isNaN(val)) return '$0.00';
+    const num = Number(val);
+    const formatted = Math.abs(num).toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    });
+    if (num < 0) return `-$${formatted}`;
+    if (includePlus && num > 0) return `+$${formatted}`;
+    return `$${formatted}`;
+}
 
-    if (!allBotsCheckbox || !botCheckboxContainer || !filterButton || !filterDropdown) {
-        Logger.warn('PnLReporting', 'Bot filter elements not found', {
-            allBotsCheckbox: !!allBotsCheckbox,
-            botCheckboxContainer: !!botCheckboxContainer,
-            filterButton: !!filterButton,
-            filterDropdown: !!filterDropdown
-        });
+function formatPercent(val, includePlus = false) {
+    if (val === null || val === undefined || isNaN(val)) return '0.0%';
+    const num = Number(val);
+    const formatted = Math.abs(num).toFixed(2);
+    if (num < 0) return `-${formatted}%`;
+    if (includePlus && num > 0) return `+${formatted}%`;
+    return `${formatted}%`;
+}
+
+/**
+ * Main Data Fetcher
+ */
+async function loadStatement(period = currentPeriod, botScope = currentBotScope) {
+    currentPeriod = period;
+    currentBotScope = botScope;
+
+    const syncStatus = document.getElementById('syncStatusText');
+    if (syncStatus) syncStatus.textContent = 'Syncing statement...';
+
+    try {
+        const response = await fetch(`/api/pnl-statement?period=${encodeURIComponent(period)}&bot=${encodeURIComponent(botScope)}`);
+        if (!response.ok) {
+            throw new Error(`HTTP error ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        currentStatementData = data;
+
+        // Render all UI modules
+        renderExecutiveKPIs(data.executive_kpis);
+        renderCashflowWaterfall(data.cashflow_waterfall);
+        renderBotAttributionTable(data.bot_attribution);
+        renderEquityChart(data.equity_curve);
+        renderCalendarHeatmap(data.calendar_heatmap);
+        renderDonutChart(data.bot_attribution);
+        renderRiskInsights(data.risk_insights);
+        updateScopePills(data.bot_attribution);
+
+        // Header metadata
+        const activeBotsElem = document.getElementById('activeBots');
+        if (activeBotsElem) {
+            activeBotsElem.textContent = `${data.bot_attribution.length} Bots Operational`;
+        }
+        const lastUpdateElem = document.getElementById('lastUpdate');
+        if (lastUpdateElem) {
+            lastUpdateElem.textContent = new Date().toLocaleTimeString();
+        }
+
+        if (syncStatus) {
+            const cacheStatus = data.data_quality?.cached ? ' (Cached)' : '';
+            syncStatus.textContent = `Live Feed Connected${cacheStatus}`;
+        }
+    } catch (err) {
+        console.error('Failed to load P&L statement:', err);
+        if (syncStatus) syncStatus.textContent = 'Sync Error';
+    }
+}
+
+/**
+ * Render Executive KPIs
+ */
+function renderExecutiveKPIs(kpis) {
+    if (!kpis) return;
+
+    // NAV
+    const kpiNav = document.getElementById('kpiNav');
+    if (kpiNav) kpiNav.textContent = formatCurrency(kpis.nav);
+
+    const kpiNavGrowth = document.getElementById('kpiNavGrowth');
+    if (kpiNavGrowth) {
+        kpiNavGrowth.textContent = formatPercent(kpis.nav_growth_pct, true);
+        kpiNavGrowth.className = `stat-badge ${kpis.nav_growth_pct >= 0 ? 'pos' : 'neg'}`;
+    }
+
+    const kpiStartingNav = document.getElementById('kpiStartingNav');
+    if (kpiStartingNav) kpiStartingNav.textContent = formatCurrency(kpis.starting_nav);
+
+    // Total Net PnL
+    const kpiTotalPnl = document.getElementById('kpiTotalPnl');
+    if (kpiTotalPnl) {
+        kpiTotalPnl.textContent = formatCurrency(kpis.total_net_pnl, true);
+        kpiTotalPnl.className = `kpi-card-value font-mono ${kpis.total_net_pnl >= 0 ? 'val-pos' : 'val-neg'}`;
+    }
+
+    const kpiRealizedSplit = document.getElementById('kpiRealizedSplit');
+    if (kpiRealizedSplit) {
+        kpiRealizedSplit.textContent = `Realized: ${formatCurrency(kpis.realized_pnl, true)}`;
+        kpiRealizedSplit.className = `stat-badge ${kpis.realized_pnl >= 0 ? 'pos' : 'neg'}`;
+    }
+
+    const kpiUnrealizedSplit = document.getElementById('kpiUnrealizedSplit');
+    if (kpiUnrealizedSplit) {
+        kpiUnrealizedSplit.textContent = formatCurrency(kpis.unrealized_pnl, true);
+    }
+
+    // Profit Factor & Win Rate
+    const kpiPF = document.getElementById('kpiProfitFactor');
+    if (kpiPF) {
+        const pfVal = kpis.profit_factor !== null && kpis.profit_factor !== undefined ? kpis.profit_factor.toFixed(2) : '--';
+        kpiPF.innerHTML = `${pfVal} <span class="kpi-unit">(PF)</span>`;
+    }
+
+    const kpiWinRate = document.getElementById('kpiWinRate');
+    if (kpiWinRate) {
+        kpiWinRate.textContent = `${kpis.win_rate_pct.toFixed(1)}% Win Rate`;
+        kpiWinRate.className = `stat-badge ${kpis.win_rate_pct >= 50 ? 'pos' : 'neg'}`;
+    }
+
+    const kpiTotalTrades = document.getElementById('kpiTotalTrades');
+    if (kpiTotalTrades) kpiTotalTrades.textContent = `${kpis.total_trades} Total Trades`;
+
+    // Alpha vs Benchmark
+    const kpiAlpha = document.getElementById('kpiAlpha');
+    if (kpiAlpha) {
+        kpiAlpha.textContent = `${formatPercent(kpis.alpha_pct, true)} Alpha`;
+        kpiAlpha.className = `kpi-card-value font-mono ${kpis.alpha_pct >= 0 ? 'val-pos' : 'val-neg'}`;
+    }
+
+    const kpiBotReturn = document.getElementById('kpiBotReturn');
+    if (kpiBotReturn) kpiBotReturn.textContent = `Bot: ${formatPercent(kpis.nav_growth_pct, true)}`;
+
+    const kpiSpyReturn = document.getElementById('kpiSpyReturn');
+    if (kpiSpyReturn) kpiSpyReturn.textContent = formatPercent(kpis.benchmark_return_pct, true);
+
+    // Sharpe & Drawdown
+    const kpiSharpe = document.getElementById('kpiSharpe');
+    if (kpiSharpe) {
+        const sVal = kpis.sharpe_ratio !== null && kpis.sharpe_ratio !== undefined ? kpis.sharpe_ratio.toFixed(2) : '--';
+        kpiSharpe.innerHTML = `${sVal} <span class="kpi-unit">Sharpe</span>`;
+    }
+
+    const kpiDrawdown = document.getElementById('kpiDrawdown');
+    if (kpiDrawdown) {
+        kpiDrawdown.textContent = `${formatPercent(kpis.max_drawdown_pct)} Max DD`;
+    }
+
+    const kpiSortino = document.getElementById('kpiSortino');
+    if (kpiSortino) {
+        kpiSortino.textContent = kpis.sortino_ratio !== null && kpis.sortino_ratio !== undefined ? kpis.sortino_ratio.toFixed(2) : '--';
+    }
+
+    // Free Cash & Margin
+    const kpiFreeCash = document.getElementById('kpiFreeCash');
+    if (kpiFreeCash) kpiFreeCash.textContent = formatCurrency(kpis.free_cash);
+
+    const kpiCashBuffer = document.getElementById('kpiCashBuffer');
+    if (kpiCashBuffer) kpiCashBuffer.textContent = `${kpis.cash_buffer_pct.toFixed(1)}% Buffer`;
+
+    const kpiMarginUtil = document.getElementById('kpiMarginUtil');
+    if (kpiMarginUtil) kpiMarginUtil.textContent = `${kpis.margin_utilization_pct.toFixed(1)}%`;
+}
+
+/**
+ * Render Cashflow Waterfall
+ */
+function renderCashflowWaterfall(wf) {
+    if (!wf) return;
+
+    const grossWins = document.getElementById('waterfallGrossWins');
+    if (grossWins) grossWins.textContent = formatCurrency(wf.gross_wins, true);
+
+    const grossLosses = document.getElementById('waterfallGrossLosses');
+    if (grossLosses) grossLosses.textContent = formatCurrency(wf.gross_losses);
+
+    const optYield = document.getElementById('waterfallOptionYield');
+    if (optYield) optYield.textContent = formatCurrency(wf.option_premium_harvested, true);
+
+    const comms = document.getElementById('waterfallCommissions');
+    if (comms) comms.textContent = formatCurrency(wf.commissions_and_fees);
+
+    const financing = document.getElementById('waterfallFinancing');
+    if (financing) financing.textContent = formatCurrency(wf.net_financing, true);
+
+    const netCash = document.getElementById('waterfallNetCash');
+    if (netCash) netCash.textContent = formatCurrency(wf.net_cash_generated, true);
+}
+
+/**
+ * Render Multi-Bot Attribution Table
+ */
+function renderBotAttributionTable(bots) {
+    const tbody = document.getElementById('statementTableBody');
+    const badge = document.getElementById('attributionCountBadge');
+    if (!tbody) return;
+
+    if (!bots || bots.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="13" style="text-align:center; padding: 24px; color: var(--text-muted);">No bot attribution records found for this period.</td></tr>`;
+        if (badge) badge.textContent = '0 Bots Tracked';
         return;
     }
 
-    // Populate individual bot checkboxes
-    botCheckboxContainer.innerHTML = '';
-    Object.entries(BOT_NAMES).forEach(([botId, symbol]) => {
-        const div = document.createElement('div');
-        div.className = 'filter-option';
+    if (badge) badge.textContent = `${bots.length} Bots Tracked`;
 
-        const label = document.createElement('label');
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.value = botId;
-        checkbox.className = 'bot-checkbox';
-        checkbox.disabled = true; // Disabled when "All Bots" is checked
+    let html = '';
+    let totalAlloc = 0;
+    let totalTrades = 0;
+    let totalWins = 0;
+    let totalLosses = 0;
+    let totalGross = 0;
+    let totalComms = 0;
+    let totalRealized = 0;
+    let totalUnrealized = 0;
+    let totalNet = 0;
 
-        const span = document.createElement('span');
-        span.textContent = symbol;
+    bots.forEach(b => {
+        const color = getBotColor(b.symbol);
+        const pnlClass = b.total_net_pnl >= 0 ? 'val-pos' : 'val-neg';
+        const realizedClass = b.realized_pnl >= 0 ? 'val-pos' : 'val-neg';
+        const unrealizedClass = b.unrealized_pnl >= 0 ? 'val-pos' : 'val-neg';
 
-        label.appendChild(checkbox);
-        label.appendChild(span);
-        div.appendChild(label);
-        botCheckboxContainer.appendChild(div);
+        totalAlloc += b.allocated_capital;
+        totalTrades += b.trades_count;
+        totalWins += b.winning_trades;
+        totalLosses += b.losing_trades;
+        totalGross += b.gross_pnl;
+        totalComms += b.commissions;
+        totalRealized += b.realized_pnl;
+        totalUnrealized += b.unrealized_pnl;
+        totalNet += b.total_net_pnl;
 
-        // Listen for individual bot checkbox changes
-        checkbox.addEventListener('change', handleBotCheckboxChange);
+        html += `
+        <tr>
+            <td class="sticky-col">
+                <span class="bot-tag-badge" style="background:${color};">${b.symbol}</span>
+                <strong>${b.bot_id}</strong>
+                <div style="font-size:11px;color:var(--text-muted);">${b.strategy}</div>
+            </td>
+            <td class="font-mono">${formatCurrency(b.allocated_capital)} (${b.allocation_pct}%)</td>
+            <td><span class="stat-badge ${b.status === 'RUNNING' ? 'pos' : 'neutral'}">${b.status}</span></td>
+            <td class="font-mono">${b.trades_count} (${b.winning_trades} / ${b.losing_trades})</td>
+            <td class="font-mono ${b.win_rate_pct >= 50 ? 'val-pos' : 'val-neg'}">${b.win_rate_pct.toFixed(1)}%</td>
+            <td class="font-mono">${b.profit_factor !== null && b.profit_factor !== undefined ? b.profit_factor.toFixed(2) : '--'}</td>
+            <td class="font-mono">${b.payoff_ratio !== null && b.payoff_ratio !== undefined ? `1 : ${b.payoff_ratio.toFixed(2)}` : '--'}</td>
+            <td class="font-mono ${b.gross_pnl >= 0 ? 'val-pos' : 'val-neg'}">${formatCurrency(b.gross_pnl, true)}</td>
+            <td class="font-mono val-neg">${formatCurrency(b.commissions)}</td>
+            <td class="font-mono ${realizedClass}">${formatCurrency(b.realized_pnl, true)}</td>
+            <td class="font-mono ${unrealizedClass}">${formatCurrency(b.unrealized_pnl, true)}</td>
+            <td class="font-mono ${pnlClass}"><strong>${formatCurrency(b.total_net_pnl, true)}</strong></td>
+            <td class="font-mono ${pnlClass}">${formatPercent(b.roc_pct, true)}</td>
+        </tr>
+        `;
     });
 
-    // Toggle dropdown on button click
-    filterButton.addEventListener('click', (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        const isVisible = filterDropdown.style.display === 'block';
-        filterDropdown.style.display = isVisible ? 'none' : 'block';
-        Logger.info('PnLReporting', `Filter dropdown ${isVisible ? 'closed' : 'opened'}`);
+    // Summary Row
+    const winRateTotal = totalTrades > 0 ? (totalWins / totalTrades * 100).toFixed(1) : '0.0';
+    const rocTotal = totalAlloc > 0 ? (totalNet / totalAlloc * 100).toFixed(1) : '0.0';
+
+    html += `
+    <tr class="total-summary-row">
+        <td class="sticky-col">Combined Total (${bots.length} Bots)</td>
+        <td class="font-mono">${formatCurrency(totalAlloc)} (100%)</td>
+        <td><span class="stat-badge pos">Operational</span></td>
+        <td class="font-mono">${totalTrades} (${totalWins} / ${totalLosses})</td>
+        <td class="font-mono val-pos">${winRateTotal}%</td>
+        <td class="font-mono">--</td>
+        <td class="font-mono">--</td>
+        <td class="font-mono ${totalGross >= 0 ? 'val-pos' : 'val-neg'}">${formatCurrency(totalGross, true)}</td>
+        <td class="font-mono val-neg">${formatCurrency(totalComms)}</td>
+        <td class="font-mono ${totalRealized >= 0 ? 'val-pos' : 'val-neg'}">${formatCurrency(totalRealized, true)}</td>
+        <td class="font-mono ${totalUnrealized >= 0 ? 'val-pos' : 'val-neg'}">${formatCurrency(totalUnrealized, true)}</td>
+        <td class="font-mono ${totalNet >= 0 ? 'val-pos' : 'val-neg'}"><strong>${formatCurrency(totalNet, true)}</strong></td>
+        <td class="font-mono val-pos">+${rocTotal}%</td>
+    </tr>
+    `;
+
+    tbody.innerHTML = html;
+}
+
+/**
+ * Render Equity Growth Chart (Chart.js)
+ */
+function renderEquityChart(eqData) {
+    const canvas = document.getElementById('equityGrowthChart');
+    if (!canvas || !eqData) return;
+
+    const ctx = canvas.getContext('2d');
+    if (equityChart) {
+        equityChart.destroy();
+    }
+
+    const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+    gradient.addColorStop(0, 'rgba(99, 102, 241, 0.45)');
+    gradient.addColorStop(1, 'rgba(99, 102, 241, 0.0)');
+
+    equityChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: eqData.labels,
+            datasets: [
+                {
+                    label: 'Bot Portfolio Return (%)',
+                    data: eqData.portfolio_returns_pct,
+                    borderColor: '#6366f1',
+                    borderWidth: 3,
+                    backgroundColor: gradient,
+                    fill: true,
+                    tension: 0.35,
+                    pointBackgroundColor: '#818cf8',
+                    pointBorderColor: '#080c1e',
+                    pointRadius: 4,
+                    pointHoverRadius: 6
+                },
+                {
+                    label: 'SPY Benchmark (%)',
+                    data: eqData.benchmark_returns_pct,
+                    borderColor: '#64748b',
+                    borderWidth: 2,
+                    borderDash: [5, 5],
+                    backgroundColor: 'transparent',
+                    fill: false,
+                    tension: 0.3,
+                    pointRadius: 2
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: '#151c3d',
+                    titleColor: '#f8fafc',
+                    bodyColor: '#cbd5e1',
+                    borderColor: 'rgba(99, 122, 185, 0.3)',
+                    borderWidth: 1,
+                    padding: 12,
+                    callbacks: {
+                        label: function(ctx) {
+                            return ` ${ctx.dataset.label}: ${formatPercent(ctx.parsed.y, true)}`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                    ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 11 } }
+                },
+                y: {
+                    grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                    ticks: {
+                        color: '#94a3b8',
+                        font: { family: 'JetBrains Mono', size: 11 },
+                        callback: function(v) { return formatPercent(v, true); }
+                    }
+                }
+            }
+        }
+    });
+}
+
+/**
+ * Render Calendar Heatmap
+ */
+function renderCalendarHeatmap(heatmapDays) {
+    const grid = document.getElementById('calendarHeatmapGrid');
+    if (!grid) return;
+
+    if (!heatmapDays || heatmapDays.length === 0) {
+        grid.innerHTML = `<div style="grid-column: span 7; text-align:center; padding: 24px; color:var(--text-muted);">No calendar trading sessions in this period.</div>`;
+        return;
+    }
+
+    let html = '';
+    heatmapDays.forEach(day => {
+        let chipClass = 'pnl-gain-light';
+        if (day.intensity === 'heavy_gain') chipClass = 'pnl-gain-heavy';
+        else if (day.intensity === 'heavy_loss') chipClass = 'pnl-loss-heavy';
+        else if (day.intensity === 'light_loss') chipClass = 'pnl-loss-light';
+
+        const pnlSign = day.pnl >= 0 ? '+' : '';
+        const pnlColorClass = day.pnl >= 0 ? 'val-pos' : 'val-neg';
+
+        html += `
+        <div class="cal-day-cell ${chipClass}">
+            <span class="cal-day-num">${day.date.substring(5)}</span>
+            <span class="cal-day-pnl font-mono ${pnlColorClass}">${pnlSign}$${Math.abs(day.pnl).toLocaleString()}</span>
+            <span class="cal-day-trades">${day.trades} trades</span>
+        </div>
+        `;
     });
 
-    // Prevent dropdown from closing when clicking inside it
-    filterDropdown.addEventListener('click', (e) => {
-        e.stopPropagation();
-    });
+    grid.innerHTML = html;
+}
 
-    // Close dropdown when clicking outside
-    document.addEventListener('click', (e) => {
-        if (!filterButton.contains(e.target) && !filterDropdown.contains(e.target)) {
-            filterDropdown.style.display = 'none';
+/**
+ * Render Donut Chart
+ */
+function renderDonutChart(bots) {
+    const canvas = document.getElementById('botContributionDonut');
+    const footer = document.getElementById('donutSummaryFooter');
+    if (!canvas || !bots || bots.length === 0) return;
+
+    const ctx = canvas.getContext('2d');
+    if (donutChart) {
+        donutChart.destroy();
+    }
+
+    const labels = bots.map(b => b.symbol);
+    const data = bots.map(b => Math.max(0, b.total_net_pnl));
+    const colors = bots.map(b => getBotColor(b.symbol));
+
+    donutChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: data,
+                backgroundColor: colors,
+                borderColor: '#080c1e',
+                borderWidth: 3,
+                hoverOffset: 6
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '70%',
+            plugins: {
+                legend: { display: false }
+            }
         }
     });
 
-    // Handle "All Bots" checkbox
-    allBotsCheckbox.addEventListener('change', handleAllBotsCheckboxChange);
-
-    Logger.info('PnLReporting', `Bot filter setup with ${Object.keys(BOT_NAMES).length} bots`);
-}
-
-/**
- * Handle "All Bots" checkbox change
- */
-function handleAllBotsCheckboxChange(e) {
-    allBotsSelected = e.target.checked;
-    const botCheckboxes = document.querySelectorAll('.bot-checkbox');
-
-    if (allBotsSelected) {
-        // Disable and uncheck individual bot checkboxes
-        botCheckboxes.forEach(cb => {
-            cb.disabled = true;
-            cb.checked = false;
+    // Populate footer
+    if (footer) {
+        const total = data.reduce((a, b) => a + b, 0);
+        let fHtml = '';
+        bots.forEach(b => {
+            const val = Math.max(0, b.total_net_pnl);
+            const pct = total > 0 ? ((val / total) * 100).toFixed(1) : '0.0';
+            const col = getBotColor(b.symbol);
+            fHtml += `
+            <div>
+                <span style="font-size:11px;color:var(--text-muted);">${b.symbol}</span>
+                <div class="donut-bot-share-val font-mono" style="color:${col};">${pct}%</div>
+            </div>
+            `;
         });
-        selectedBots.clear();
-        updateFilterButtonText();
-        loadPnLStatement();
-    } else {
-        // Enable individual bot checkboxes
-        botCheckboxes.forEach(cb => {
-            cb.disabled = false;
-        });
+        footer.innerHTML = fHtml;
     }
 }
 
 /**
- * Handle individual bot checkbox change
+ * Render Risk Insights
  */
-function handleBotCheckboxChange(e) {
-    const botId = e.target.value;
+function renderRiskInsights(insights) {
+    const grid = document.getElementById('riskInsightsGrid');
+    if (!grid || !insights) return;
 
-    if (e.target.checked) {
-        selectedBots.add(botId);
-    } else {
-        selectedBots.delete(botId);
-    }
+    let html = '';
+    insights.forEach(item => {
+        let icon = '💡';
+        let iconColor = '#818cf8';
+        let iconBg = 'rgba(99, 102, 241, 0.15)';
 
-    updateFilterButtonText();
-
-    // Only reload if at least one bot is selected
-    if (selectedBots.size > 0) {
-        loadPnLStatement();
-    }
-}
-
-/**
- * Update filter button text based on selection
- */
-function updateFilterButtonText() {
-    const filterText = document.getElementById('botFilterText');
-    if (!filterText) return;
-
-    if (allBotsSelected || selectedBots.size === 0) {
-        filterText.textContent = 'All Bots';
-    } else if (selectedBots.size === 1) {
-        const botId = Array.from(selectedBots)[0];
-        filterText.textContent = BOT_NAMES[botId] || `Bot ${botId}`;
-    } else {
-        const botNames = Array.from(selectedBots)
-            .map(id => BOT_NAMES[id] || `Bot ${id}`)
-            .join(', ');
-        filterText.textContent = botNames.length > 30
-            ? `${selectedBots.size} Bots Selected`
-            : botNames;
-    }
-}
-
-/**
- * Update P&L table column headers based on selected bots
- */
-function updatePnLHeaders() {
-    let headerText;
-
-    if (allBotsSelected || selectedBots.size === 0) {
-        headerText = 'All Bots';
-    } else if (selectedBots.size === 1) {
-        const botId = Array.from(selectedBots)[0];
-        headerText = BOT_NAMES[botId] || `Bot ${botId}`;
-    } else {
-        const botNames = Array.from(selectedBots)
-            .map(id => BOT_NAMES[id] || `Bot ${id}`)
-            .join(', ');
-        headerText = botNames.length > 20
-            ? `${selectedBots.size} Bots`
-            : botNames;
-    }
-
-    // Update headers for all three periods
-    ['day', 'week', 'month'].forEach(period => {
-        const headerElement = document.getElementById(`${period}-bot1-header`);
-        if (headerElement) {
-            headerElement.textContent = headerText;
+        if (item.type === 'ALPHA') {
+            icon = '🎯';
+            iconColor = '#10b981';
+            iconBg = 'rgba(16, 185, 129, 0.15)';
+        } else if (item.severity === 'WARNING') {
+            icon = '⚠️';
+            iconColor = '#f59e0b';
+            iconBg = 'rgba(245, 158, 11, 0.15)';
+        } else if (item.type === 'RISK') {
+            icon = '🛡️';
+            iconColor = '#06b6d4';
+            iconBg = 'rgba(6, 182, 212, 0.15)';
         }
+
+        html += `
+        <div class="insight-card">
+            <div class="insight-icon-box" style="background:${iconBg}; color:${iconColor};">
+                ${icon}
+            </div>
+            <div>
+                <h4>${item.title}</h4>
+                <p>${item.description}</p>
+            </div>
+        </div>
+        `;
     });
 
-    Logger.info('PnLReporting', `Updated headers to: ${headerText}`);
+    grid.innerHTML = html;
 }
 
-// Initialize dashboard on page load
-document.addEventListener('DOMContentLoaded', async function() {
-    Logger.info('PnLReporting', 'P&L Reporting Dashboard initializing...');
+/**
+ * Populate Bot Scope Pills
+ */
+function updateScopePills(bots) {
+    const container = document.getElementById('botScopePills');
+    if (!container || !bots) return;
 
-    // Note: Bot configs are already loaded by dashboard.js
-    // Wait a moment for dashboard.js to finish loading config
-    await new Promise(resolve => setTimeout(resolve, 100));
+    let html = `
+    <div class="bot-scope-pill ${currentBotScope === 'ALL' ? 'active' : ''}" data-scope="ALL" onclick="setBotScope('ALL')">
+        <span class="scope-dot" style="background:#818cf8;"></span> All Bots Combined
+    </div>
+    `;
 
-    // Setup multi-select bot filter
-    setupBotFilter();
+    bots.forEach(b => {
+        const col = getBotColor(b.symbol);
+        const isActive = currentBotScope.toUpperCase() === b.symbol.toUpperCase();
+        html += `
+        <div class="bot-scope-pill ${isActive ? 'active' : ''}" data-scope="${b.symbol}" onclick="setBotScope('${b.symbol}')">
+            <span class="scope-dot" style="background:${col};"></span> ${b.symbol}
+        </div>
+        `;
+    });
 
-    // Set initial headers to "All Bots" (override dashboard.js hardcoded values)
-    updatePnLHeaders();
+    container.innerHTML = html;
+}
 
-    Logger.info('PnLReporting', 'Filter setup and headers updated');
+/**
+ * Interactive Controls
+ */
+function setStatementPeriod(period) {
+    document.querySelectorAll('.timeline-tab').forEach(t => {
+        t.classList.toggle('active', t.getAttribute('data-period') === period);
+    });
+    loadStatement(period, currentBotScope);
+}
 
-    updateLastUpdateTime();
-    initializeDateSelectors(loadPnLStatement);
-    loadPnLStatement();
+function setBotScope(scope) {
+    document.querySelectorAll('.bot-scope-pill').forEach(p => {
+        p.classList.toggle('active', p.getAttribute('data-scope') === scope);
+    });
+    loadStatement(currentPeriod, scope);
+}
 
-    // Set up auto-refresh
-    setInterval(loadPnLStatement, REFRESH_INTERVAL);
-    setInterval(updateLastUpdateTime, 1000);
+function exportStatementCSV() {
+    if (!currentStatementData) {
+        alert('Statement data not yet loaded.');
+        return;
+    }
+
+    const rows = [
+        ['Bot ID', 'Symbol', 'Strategy', 'Allocation ($)', 'Allocation (%)', 'Trades', 'Wins', 'Losses', 'Win Rate (%)', 'Profit Factor', 'Gross P&L ($)', 'Commissions ($)', 'Realized P&L ($)', 'Unrealized P&L ($)', 'Total Net P&L ($)', 'ROC (%)']
+    ];
+
+    currentStatementData.bot_attribution.forEach(b => {
+        rows.push([
+            b.bot_id,
+            b.symbol,
+            b.strategy,
+            b.allocated_capital,
+            b.allocation_pct,
+            b.trades_count,
+            b.winning_trades,
+            b.losing_trades,
+            b.win_rate_pct,
+            b.profit_factor || 'N/A',
+            b.gross_pnl,
+            b.commissions,
+            b.realized_pnl,
+            b.unrealized_pnl,
+            b.total_net_pnl,
+            b.roc_pct
+        ]);
+    });
+
+    const csvContent = "data:text/csv;charset=utf-8," + rows.map(e => e.join(",")).join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `pnl_statement_${currentPeriod}_${currentBotScope}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+// Auto-run on page load
+document.addEventListener('DOMContentLoaded', () => {
+    loadStatement('YTD', 'ALL');
+    // Refresh periodically (every 45s)
+    setInterval(() => {
+        loadStatement(currentPeriod, currentBotScope);
+    }, 45000);
 });
-
-// Update the last update timestamp
-function updateLastUpdateTime() {
-    const now = new Date();
-    const timeString = now.toLocaleString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit'
-    });
-    document.getElementById('lastUpdate').textContent = timeString;
-}
-
-/**
- * Load P&L Statement with date-based filtering.
- * Fetches all trades from backend, then filters client-side based on selected dates.
- */
-async function loadPnLStatement() {
-    try {
-        // Fetch all trades for P&L calculations
-        const response = await fetch(`${API_BASE_URL}/trade-history/all`, {
-            credentials: 'include'
-        });
-        const data = await response.json();
-        const allTrades = data.trades || [];
-
-        // Filter trades by selected bots
-        let filteredTrades;
-        if (allBotsSelected || selectedBots.size === 0) {
-            // Show all bots
-            filteredTrades = allTrades;
-        } else {
-            // Filter to selected bots only
-            filteredTrades = allTrades.filter(trade =>
-                selectedBots.has(String(trade.botId))
-            );
-        }
-
-        Logger.info('PnLReporting', `Filtered ${allTrades.length} trades to ${filteredTrades.length} for ${selectedBots.size || 'all'} bot(s)`);
-
-        // Get selected dates
-        const daySelector = document.getElementById('day-selector');
-        const weekSelector = document.getElementById('week-selector');
-        const weekYearSelector = document.getElementById('week-year-selector');
-        const monthSelector = document.getElementById('month-selector');
-        const monthYearSelector = document.getElementById('month-year-selector');
-
-        // Calculate P&L for each period using filtered trades
-        const dayPnL = calculatePnLForDay(filteredTrades, new Date(daySelector.value));
-
-        const weekValue = `${weekYearSelector.value}-W${weekSelector.value.toString().padStart(2, '0')}`;
-        const weekPnL = calculatePnLForWeek(filteredTrades, weekValue);
-
-        const monthValue = `${monthYearSelector.value}-${monthSelector.value.toString().padStart(2, '0')}`;
-        const monthPnL = calculatePnLForMonth(filteredTrades, monthValue);
-
-        // Update column headers with selected bot names
-        updatePnLHeaders();
-
-        // Update UI
-        updatePnLPeriod('day', dayPnL);
-        updatePnLPeriod('week', weekPnL);
-        updatePnLPeriod('month', monthPnL);
-    } catch (error) {
-        console.error('Error loading P&L statement:', error);
-    }
-}
-
-// Export API for external use
-window.pnlReportingAPI = {
-    refresh: loadPnLStatement
-};

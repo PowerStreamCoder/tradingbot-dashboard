@@ -1,0 +1,1709 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Institutional Multi-Bot P&L Statement & Portfolio Analytics</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Chart.js CDN for interactive charts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        :root {
+            --bg-primary: #080c1e;
+            --bg-card: rgba(18, 24, 52, 0.75);
+            --bg-card-hover: rgba(26, 35, 75, 0.85);
+            --bg-tile: #151c3d;
+            --bg-subtle: #0d122b;
+            --border-color: rgba(99, 122, 185, 0.18);
+            --border-focus: rgba(102, 126, 234, 0.6);
+            --accent-primary: #6366f1;
+            --accent-glow: rgba(99, 102, 241, 0.35);
+            --accent-cyan: #06b6d4;
+            --accent-purple: #8b5cf6;
+            --color-positive: #10b981;
+            --color-positive-bg: rgba(16, 185, 129, 0.12);
+            --color-negative: #f43f5e;
+            --color-negative-bg: rgba(244, 63, 94, 0.12);
+            --color-warning: #f59e0b;
+            --color-warning-bg: rgba(245, 158, 11, 0.12);
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+            --radius-sm: 8px;
+            --radius-md: 14px;
+            --radius-lg: 20px;
+            --shadow-subtle: 0 4px 20px rgba(0, 0, 0, 0.25);
+            --shadow-glow: 0 0 25px rgba(99, 102, 241, 0.2);
+            --transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-primary);
+            background-image: 
+                radial-gradient(circle at 15% 10%, rgba(99, 102, 241, 0.12) 0%, transparent 45%),
+                radial-gradient(circle at 85% 80%, rgba(6, 182, 212, 0.08) 0%, transparent 50%),
+                linear-gradient(180deg, rgba(8, 12, 30, 0.8) 0%, #080c1e 100%);
+            background-attachment: fixed;
+            color: var(--text-primary);
+            font-family: var(--font-sans);
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
+            min-height: 100vh;
+            padding: 24px;
+        }
+
+        /* Container */
+        .statement-container {
+            max-width: 1560px;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        /* Top Header & Navigation */
+        .header-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--bg-card);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            padding: 20px 28px;
+            box-shadow: var(--shadow-subtle);
+        }
+
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .brand-badge {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-cyan));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
+        }
+
+        .header-title h1 {
+            font-size: 22px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            color: #ffffff;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .header-title .account-pill {
+            font-size: 11px;
+            padding: 3px 9px;
+            border-radius: 20px;
+            background: rgba(99, 102, 241, 0.15);
+            color: #818cf8;
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            font-family: var(--font-mono);
+            font-weight: 600;
+        }
+
+        .header-title p {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-top: 2px;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .refresh-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: var(--text-muted);
+            font-family: var(--font-mono);
+        }
+
+        .pulse-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--color-positive);
+            box-shadow: 0 0 8px var(--color-positive);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(0.95); opacity: 0.8; }
+            50% { transform: scale(1.2); opacity: 1; }
+            100% { transform: scale(0.95); opacity: 0.8; }
+        }
+
+        .btn-action {
+            background: var(--bg-tile);
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            padding: 8px 16px;
+            border-radius: var(--radius-sm);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: var(--transition);
+        }
+
+        .btn-action:hover {
+            color: var(--text-primary);
+            border-color: var(--accent-primary);
+            background: rgba(99, 102, 241, 0.15);
+        }
+
+        /* Controls Bar (Timeline & Bot Filter) */
+        .controls-card {
+            background: var(--bg-card);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: 14px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .control-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .timeline-tabs {
+            display: flex;
+            background: var(--bg-subtle);
+            padding: 4px;
+            border-radius: 10px;
+            border: 1px solid var(--border-color);
+            gap: 4px;
+        }
+
+        .timeline-tab {
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            font-family: var(--font-mono);
+            cursor: pointer;
+            transition: var(--transition);
+        }
+
+        .timeline-tab:hover {
+            color: var(--text-primary);
+        }
+
+        .timeline-tab.active {
+            background: var(--accent-primary);
+            color: #ffffff;
+            box-shadow: 0 2px 8px var(--accent-glow);
+        }
+
+        .bot-filter-pill-group {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .bot-pill {
+            background: var(--bg-subtle);
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: var(--transition);
+        }
+
+        .bot-pill:hover {
+            border-color: rgba(99, 102, 241, 0.4);
+            color: var(--text-primary);
+        }
+
+        .bot-pill.active {
+            background: rgba(99, 102, 241, 0.2);
+            border-color: var(--accent-primary);
+            color: #c7d2fe;
+            font-weight: 600;
+        }
+
+        .bot-indicator {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+        }
+
+        /* KPI Executive Summary Grid */
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 16px;
+        }
+
+        .kpi-card {
+            background: var(--bg-card);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: 20px;
+            position: relative;
+            overflow: hidden;
+            transition: var(--transition);
+        }
+
+        .kpi-card:hover {
+            border-color: var(--border-focus);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-subtle);
+        }
+
+        .kpi-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .kpi-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .kpi-icon {
+            font-size: 16px;
+            opacity: 0.8;
+        }
+
+        .kpi-value {
+            font-size: 26px;
+            font-weight: 700;
+            font-family: var(--font-mono);
+            letter-spacing: -0.02em;
+            color: var(--text-primary);
+            margin-bottom: 6px;
+        }
+
+        .kpi-subtext {
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--text-muted);
+        }
+
+        .stat-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 600;
+            padding: 2px 7px;
+            border-radius: 6px;
+        }
+
+        .stat-badge.pos {
+            background: var(--color-positive-bg);
+            color: var(--color-positive);
+            border: 1px solid rgba(16, 185, 129, 0.25);
+        }
+
+        .stat-badge.neg {
+            background: var(--color-negative-bg);
+            color: var(--color-negative);
+            border: 1px solid rgba(244, 63, 94, 0.25);
+        }
+
+        .stat-badge.neutral {
+            background: rgba(148, 163, 184, 0.12);
+            color: var(--text-secondary);
+            border: 1px solid rgba(148, 163, 184, 0.2);
+        }
+
+        /* Main Dashboard Sections (2 columns) */
+        .analytics-grid-two-col {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 24px;
+        }
+
+        @media (max-width: 1200px) {
+            .analytics-grid-two-col {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Glass Cards */
+        .glass-panel {
+            background: var(--bg-card);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            padding: 24px;
+            box-shadow: var(--shadow-subtle);
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            padding-bottom: 16px;
+        }
+
+        .panel-header-left h3 {
+            font-size: 16px;
+            font-weight: 700;
+            color: #ffffff;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .panel-header-left p {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 2px;
+        }
+
+        .panel-tags {
+            display: flex;
+            gap: 8px;
+        }
+
+        .tag-pill {
+            font-size: 11px;
+            font-family: var(--font-mono);
+            padding: 3px 8px;
+            border-radius: 6px;
+            background: var(--bg-subtle);
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+        }
+
+        /* Chart Canvas wrapper */
+        .chart-box {
+            position: relative;
+            width: 100%;
+            height: 330px;
+        }
+
+        .chart-box-sm {
+            position: relative;
+            width: 100%;
+            height: 240px;
+        }
+
+        /* Cash Flow Waterfall Breakdown */
+        .cashflow-flow {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .flow-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 14px;
+            border-radius: var(--radius-sm);
+            background: rgba(13, 18, 43, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            transition: var(--transition);
+        }
+
+        .flow-row:hover {
+            background: rgba(26, 35, 75, 0.5);
+            border-color: rgba(99, 102, 241, 0.3);
+        }
+
+        .flow-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .flow-icon {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+        }
+
+        .flow-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .flow-sub {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .flow-amount {
+            font-family: var(--font-mono);
+            font-weight: 700;
+            font-size: 14px;
+        }
+
+        .flow-total {
+            background: rgba(99, 102, 241, 0.12);
+            border: 1px solid rgba(99, 102, 241, 0.35);
+            margin-top: 6px;
+        }
+
+        .flow-total .flow-title {
+            font-size: 14px;
+            color: #c7d2fe;
+        }
+
+        .flow-total .flow-amount {
+            font-size: 16px;
+            color: #ffffff;
+        }
+
+        /* Per-Bot Statement Table */
+        .statement-table-wrapper {
+            overflow-x: auto;
+            border-radius: var(--radius-md);
+            border: 1px solid var(--border-color);
+            background: rgba(10, 14, 35, 0.5);
+        }
+
+        .statement-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+            text-align: left;
+        }
+
+        .statement-table th {
+            background: rgba(13, 18, 43, 0.9);
+            color: var(--text-secondary);
+            font-weight: 600;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--border-color);
+            white-space: nowrap;
+        }
+
+        .statement-table td {
+            padding: 14px 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+            white-space: nowrap;
+        }
+
+        .statement-table tbody tr {
+            transition: var(--transition);
+        }
+
+        .statement-table tbody tr:hover {
+            background: rgba(99, 102, 241, 0.08);
+        }
+
+        .statement-table tr.total-summary-row {
+            background: rgba(99, 102, 241, 0.14);
+            font-weight: 700;
+            border-top: 2px solid rgba(99, 102, 241, 0.4);
+        }
+
+        .statement-table tr.total-summary-row td {
+            color: #ffffff;
+            font-size: 13.5px;
+        }
+
+        .bot-cell {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .bot-badge-symbol {
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-weight: 700;
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: #fff;
+            display: inline-block;
+        }
+
+        .bot-meta-desc {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .bot-meta-title {
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .bot-meta-strat {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .font-num {
+            font-family: var(--font-mono);
+            font-weight: 600;
+        }
+
+        .pos-value {
+            color: var(--color-positive);
+        }
+
+        .neg-value {
+            color: var(--color-negative);
+        }
+
+        /* Allocation progress bar */
+        .alloc-bar-container {
+            width: 90px;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 3px;
+            overflow: hidden;
+            display: inline-block;
+            margin-right: 6px;
+            vertical-align: middle;
+        }
+
+        .alloc-bar-fill {
+            height: 100%;
+            border-radius: 3px;
+        }
+
+        /* Heatmap Section */
+        .calendar-heatmap-card {
+            background: var(--bg-card);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            padding: 24px;
+        }
+
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 8px;
+            margin-top: 16px;
+        }
+
+        .cal-header {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-align: center;
+            padding-bottom: 6px;
+            text-transform: uppercase;
+        }
+
+        .cal-day-cell {
+            background: rgba(13, 18, 43, 0.7);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: var(--radius-sm);
+            padding: 10px 8px;
+            min-height: 70px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            transition: var(--transition);
+            cursor: pointer;
+            position: relative;
+        }
+
+        .cal-day-cell:hover {
+            transform: scale(1.04);
+            z-index: 10;
+            border-color: var(--accent-primary);
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+        }
+
+        .cal-day-num {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-muted);
+        }
+
+        .cal-day-pnl {
+            font-size: 12px;
+            font-family: var(--font-mono);
+            font-weight: 700;
+            text-align: right;
+        }
+
+        .cal-day-trades {
+            font-size: 10px;
+            color: var(--text-secondary);
+        }
+
+        .pnl-gain-heavy { background: rgba(16, 185, 129, 0.22); border-color: rgba(16, 185, 129, 0.4); }
+        .pnl-gain-light { background: rgba(16, 185, 129, 0.10); border-color: rgba(16, 185, 129, 0.2); }
+        .pnl-loss-heavy { background: rgba(244, 63, 94, 0.22); border-color: rgba(244, 63, 94, 0.4); }
+        .pnl-loss-light { background: rgba(244, 63, 94, 0.10); border-color: rgba(244, 63, 94, 0.2); }
+        .cal-day-empty { opacity: 0.25; background: transparent; border-style: dashed; pointer-events: none; }
+
+        /* Insights & Risk Radar */
+        .insights-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 16px;
+        }
+
+        .insight-card {
+            background: rgba(13, 18, 43, 0.7);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: 18px;
+            display: flex;
+            gap: 14px;
+        }
+
+        .insight-icon-box {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            flex-shrink: 0;
+        }
+
+        .insight-content h4 {
+            font-size: 13.5px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+        }
+
+        .insight-content p {
+            font-size: 12px;
+            color: var(--text-secondary);
+            line-height: 1.45;
+        }
+
+        /* Tooltip & micro styling */
+        .chip {
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .chip-active { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+        .chip-paused { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+
+        footer {
+            text-align: center;
+            font-size: 12px;
+            color: var(--text-muted);
+            padding: 20px 0;
+        }
+    </style>
+</head>
+<body>
+
+<div class="statement-container">
+
+    <!-- Top Header -->
+    <header class="header-bar">
+        <div class="header-brand">
+            <div class="brand-badge">⚡</div>
+            <div class="header-title">
+                <h1>
+                    Account P&L & Portfolio Statement
+                    <span class="account-pill">IBKR #U9283719</span>
+                </h1>
+                <p>Multi-Bot Autonomous Execution Engine • Institutional Auditing & Attribution</p>
+            </div>
+        </div>
+
+        <div class="header-actions">
+            <div class="refresh-status">
+                <span class="pulse-dot"></span>
+                <span>Live Feed • Last sync: <span id="sync-time">Just now</span></span>
+            </div>
+            <button class="btn-action" onclick="exportStatement()">
+                <span>📥</span> Export CSV/PDF
+            </button>
+            <button class="btn-action" onclick="resetFilters()">
+                <span>🔄</span> Reset Views
+            </button>
+        </div>
+    </header>
+
+    <!-- Interactive Filters & Timeline Bar -->
+    <div class="controls-card">
+        <div class="control-group">
+            <span class="control-label">Period Horizon</span>
+            <div class="timeline-tabs" id="timelineTabs">
+                <button class="timeline-tab" onclick="switchTimeline('1D', this)">Today (1D)</button>
+                <button class="timeline-tab" onclick="switchTimeline('1W', this)">1W</button>
+                <button class="timeline-tab" onclick="switchTimeline('1M', this)">1M</button>
+                <button class="timeline-tab" onclick="switchTimeline('QTD', this)">QTD</button>
+                <button class="timeline-tab active" onclick="switchTimeline('YTD', this)">YTD</button>
+                <button class="timeline-tab" onclick="switchTimeline('1Y', this)">1 Year</button>
+                <button class="timeline-tab" onclick="switchTimeline('ALL', this)">All Time</button>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <span class="control-label">Bot Attribution Scope</span>
+            <div class="bot-filter-pill-group" id="botFilterPills">
+                <div class="bot-pill active" onclick="selectBotFilter('ALL', this)">
+                    <span class="bot-indicator" style="background:#818cf8;"></span> All Bots Combined (4)
+                </div>
+                <div class="bot-pill" onclick="selectBotFilter('NVDA', this)">
+                    <span class="bot-indicator" style="background:#10b981;"></span> NVDA (SMA + CC)
+                </div>
+                <div class="bot-pill" onclick="selectBotFilter('IWM', this)">
+                    <span class="bot-indicator" style="background:#06b6d4;"></span> IWM (Momentum)
+                </div>
+                <div class="bot-pill" onclick="selectBotFilter('SPY', this)">
+                    <span class="bot-indicator" style="background:#f59e0b;"></span> SPY (Mean Reversion)
+                </div>
+                <div class="bot-pill" onclick="selectBotFilter('QQQ', this)">
+                    <span class="bot-indicator" style="background:#ec4899;"></span> QQQ (Breakout)
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Executive KPI Summary Cards -->
+    <div class="kpi-grid">
+        <!-- Net Asset Value -->
+        <div class="kpi-card">
+            <div class="kpi-header">
+                <span class="kpi-title">Net Asset Value (NAV)</span>
+                <span class="kpi-icon">💼</span>
+            </div>
+            <div class="kpi-value" id="kpi-nav">$184,520.40</div>
+            <div class="kpi-subtext">
+                <span class="stat-badge pos" id="kpi-nav-pct">+16.4%</span>
+                <span>Starting NAV: $158,500.00</span>
+            </div>
+        </div>
+
+        <!-- Net Total P&L -->
+        <div class="kpi-card">
+            <div class="kpi-header">
+                <span class="kpi-title">Net Total P&L</span>
+                <span class="kpi-icon">📈</span>
+            </div>
+            <div class="kpi-value pos-value" id="kpi-total-pnl">+$26,020.40</div>
+            <div class="kpi-subtext">
+                <span class="stat-badge pos" id="kpi-realized-split">Realized: +$21,480</span>
+                <span>Unrealized: +$4,540</span>
+            </div>
+        </div>
+
+        <!-- Profit Factor & Win Rate -->
+        <div class="kpi-card">
+            <div class="kpi-header">
+                <span class="kpi-title">Profit Factor & Win Rate</span>
+                <span class="kpi-icon">🎯</span>
+            </div>
+            <div class="kpi-value" id="kpi-pf">2.41 <span style="font-size:16px;color:var(--text-secondary);font-weight:400;">(PF)</span></div>
+            <div class="kpi-subtext">
+                <span class="stat-badge pos" id="kpi-winrate">67.8% Win Rate</span>
+                <span id="kpi-trades-count">348 Total Trades</span>
+            </div>
+        </div>
+
+        <!-- Return vs Benchmark -->
+        <div class="kpi-card">
+            <div class="kpi-header">
+                <span class="kpi-title">Alpha vs S&P 500 (SPY)</span>
+                <span class="kpi-icon">🚀</span>
+            </div>
+            <div class="kpi-value pos-value" id="kpi-alpha">+6.8% Alpha</div>
+            <div class="kpi-subtext">
+                <span class="stat-badge neutral">Bot: +16.4%</span>
+                <span>SPY: +9.6%</span>
+            </div>
+        </div>
+
+        <!-- Risk Telemetry -->
+        <div class="kpi-card">
+            <div class="kpi-header">
+                <span class="kpi-title">Sharpe & Max Drawdown</span>
+                <span class="kpi-icon">🛡️</span>
+            </div>
+            <div class="kpi-value" id="kpi-sharpe">2.18 <span style="font-size:16px;color:var(--text-secondary);font-weight:400;">Sharpe</span></div>
+            <div class="kpi-subtext">
+                <span class="stat-badge neg" id="kpi-drawdown">-4.1% Max DD</span>
+                <span>Sortino: 3.42</span>
+            </div>
+        </div>
+
+        <!-- Cash & Liquidity Buffer -->
+        <div class="kpi-card">
+            <div class="kpi-header">
+                <span class="kpi-title">Free Cash & Margin</span>
+                <span class="kpi-icon">🏦</span>
+            </div>
+            <div class="kpi-value" id="kpi-cash">$54,230.00</div>
+            <div class="kpi-subtext">
+                <span class="stat-badge neutral">29.4% Cash Buffer</span>
+                <span>Margin Util: 38.2%</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Analytics Section 1: Growth / Return Curve & Cashflow Breakdown -->
+    <div class="analytics-grid-two-col">
+        <!-- Interactive Equity & Drawdown Chart -->
+        <div class="glass-panel">
+            <div class="panel-header">
+                <div class="panel-header-left">
+                    <h3>📊 Cumulative Portfolio Growth vs Benchmark</h3>
+                    <p>Time-Weighted Return (TWR) tracking bots vs S&P 500 Buy & Hold</p>
+                </div>
+                <div class="panel-tags">
+                    <span class="tag-pill" style="color:#6366f1; border-color:#6366f1;">● Bot Portfolio</span>
+                    <span class="tag-pill" style="color:#94a3b8;">--- SPY Benchmark</span>
+                </div>
+            </div>
+            <div class="chart-box">
+                <canvas id="equityCurveChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Cashflow Waterfall & Friction Cost Analysis -->
+        <div class="glass-panel">
+            <div class="panel-header">
+                <div class="panel-header-left">
+                    <h3>💧 Cash Flow & Friction Waterfall</h3>
+                    <p>Net cash generated after commissions, borrow & interest</p>
+                </div>
+                <span class="stat-badge pos">Audit Ready</span>
+            </div>
+
+            <div class="cashflow-flow">
+                <div class="flow-row">
+                    <div class="flow-info">
+                        <div class="flow-icon" style="background:rgba(16, 185, 129, 0.15); color:#10b981;">🟢</div>
+                        <div>
+                            <div class="flow-title">Gross Trading Wins</div>
+                            <div class="flow-sub">236 profitable closed trades</div>
+                        </div>
+                    </div>
+                    <div class="flow-amount pos-value">+$37,420.00</div>
+                </div>
+
+                <div class="flow-row">
+                    <div class="flow-info">
+                        <div class="flow-icon" style="background:rgba(244, 63, 94, 0.15); color:#f43f5e;">🔴</div>
+                        <div>
+                            <div class="flow-title">Gross Trading Losses</div>
+                            <div class="flow-sub">112 stopped-out trades</div>
+                        </div>
+                    </div>
+                    <div class="flow-amount neg-value">-$15,940.00</div>
+                </div>
+
+                <div class="flow-row">
+                    <div class="flow-info">
+                        <div class="flow-icon" style="background:rgba(6, 182, 212, 0.15); color:#06b6d4;">📜</div>
+                        <div>
+                            <div class="flow-title">Option Premium Harvested</div>
+                            <div class="flow-sub">Covered calls (NVDA) expired OTM</div>
+                        </div>
+                    </div>
+                    <div class="flow-amount pos-value">+$3,680.00</div>
+                </div>
+
+                <div class="flow-row">
+                    <div class="flow-info">
+                        <div class="flow-icon" style="background:rgba(245, 158, 11, 0.15); color:#f59e0b;">💸</div>
+                        <div>
+                            <div class="flow-title">Execution Commissions & Fees</div>
+                            <div class="flow-sub">IBKR routing + regulatory exchange fees</div>
+                        </div>
+                    </div>
+                    <div class="flow-amount neg-value">-$842.60</div>
+                </div>
+
+                <div class="flow-row">
+                    <div class="flow-info">
+                        <div class="flow-icon" style="background:rgba(139, 92, 246, 0.15); color:#8b5cf6;">🏦</div>
+                        <div>
+                            <div class="flow-title">Net Financing / Interest & Dividends</div>
+                            <div class="flow-sub">+$2,110 cash yield - $407 margin loan debit</div>
+                        </div>
+                    </div>
+                    <div class="flow-amount pos-value">+$1,703.00</div>
+                </div>
+
+                <div class="flow-row flow-total">
+                    <div class="flow-info">
+                        <div class="flow-icon" style="background:rgba(99, 102, 241, 0.3); color:#818cf8;">💰</div>
+                        <div>
+                            <div class="flow-title">Net Cash Generated</div>
+                            <div class="flow-sub">Deposits: $0.00 | Withdrawals: $0.00</div>
+                        </div>
+                    </div>
+                    <div class="flow-amount pos-value">+$26,020.40</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Multi-Bot Statement Table: Per Bot & Combined Breakdown -->
+    <div class="glass-panel">
+        <div class="panel-header">
+            <div class="panel-header-left">
+                <h3>🤖 Multi-Bot Performance Attribution & Statement Ledger</h3>
+                <p>Audited return, win rate, expectancy, and cost attribution per autonomous agent</p>
+            </div>
+            <div class="panel-tags">
+                <span class="tag-pill">Sorted by P&L Contribution</span>
+            </div>
+        </div>
+
+        <div class="statement-table-wrapper">
+            <table class="statement-table" id="statementTable">
+                <thead>
+                    <tr>
+                        <th>Bot Identifier & Strategy</th>
+                        <th>Allocation ($ / %)</th>
+                        <th>Status</th>
+                        <th>Trades (W / L)</th>
+                        <th>Win Rate</th>
+                        <th>Profit Factor</th>
+                        <th>Avg Payoff (R:R)</th>
+                        <th>Gross P&L</th>
+                        <th>Commissions</th>
+                        <th>Realized P&L</th>
+                        <th>Unrealized P&L</th>
+                        <th>Total Net P&L</th>
+                        <th>Return (ROC %)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Row 1: NVDA Bot -->
+                    <tr data-bot="NVDA">
+                        <td>
+                            <div class="bot-cell">
+                                <span class="bot-badge-symbol" style="background: #10b981;">NVDA</span>
+                                <div class="bot-meta-desc">
+                                    <span class="bot-meta-title">nvda_sma (Client #4)</span>
+                                    <span class="bot-meta-strat">SMA 5/20 Crossover + Covered Calls</span>
+                                </div>
+                            </div>
+                        </td>
+                        <td>
+                            <div>
+                                <span class="alloc-bar-container"><span class="alloc-bar-fill" style="width: 38%; background: #10b981;"></span></span>
+                                <span class="font-num">$70,000 (38%)</span>
+                            </div>
+                        </td>
+                        <td><span class="chip chip-active">Running</span></td>
+                        <td class="font-num">142 (98 / 44)</td>
+                        <td class="font-num pos-value">69.0%</td>
+                        <td class="font-num">2.68</td>
+                        <td class="font-num">1 : 1.84</td>
+                        <td class="font-num pos-value">+$16,120.00</td>
+                        <td class="font-num neg-value">-$342.10</td>
+                        <td class="font-num pos-value">+$13,240.00</td>
+                        <td class="font-num pos-value">+$2,537.90</td>
+                        <td class="font-num pos-value">+$15,777.90</td>
+                        <td class="font-num pos-value">+22.5%</td>
+                    </tr>
+
+                    <!-- Row 2: IWM Bot -->
+                    <tr data-bot="IWM">
+                        <td>
+                            <div class="bot-cell">
+                                <span class="bot-badge-symbol" style="background: #06b6d4;">IWM</span>
+                                <div class="bot-meta-desc">
+                                    <span class="bot-meta-title">iwm_sma (Client #3)</span>
+                                    <span class="bot-meta-strat">Tick SMA 5/20 Momentum Trend</span>
+                                </div>
+                            </div>
+                        </td>
+                        <td>
+                            <div>
+                                <span class="alloc-bar-container"><span class="alloc-bar-fill" style="width: 25%; background: #06b6d4;"></span></span>
+                                <span class="font-num">$46,000 (25%)</span>
+                            </div>
+                        </td>
+                        <td><span class="chip chip-active">Running</span></td>
+                        <td class="font-num">96 (64 / 32)</td>
+                        <td class="font-num pos-value">66.7%</td>
+                        <td class="font-num">2.14</td>
+                        <td class="font-num">1 : 1.55</td>
+                        <td class="font-num pos-value">+$6,480.00</td>
+                        <td class="font-num neg-value">-$218.40</td>
+                        <td class="font-num pos-value">+$5,180.00</td>
+                        <td class="font-num pos-value">+$1,081.60</td>
+                        <td class="font-num pos-value">+$6,261.60</td>
+                        <td class="font-num pos-value">+13.6%</td>
+                    </tr>
+
+                    <!-- Row 3: SPY Bot -->
+                    <tr data-bot="SPY">
+                        <td>
+                            <div class="bot-cell">
+                                <span class="bot-badge-symbol" style="background: #f59e0b;">SPY</span>
+                                <div class="bot-meta-desc">
+                                    <span class="bot-meta-title">spy_reversion (Client #5)</span>
+                                    <span class="bot-meta-strat">Bollinger Band 2.0σ Mean Reversion</span>
+                                </div>
+                            </div>
+                        </td>
+                        <td>
+                            <div>
+                                <span class="alloc-bar-container"><span class="alloc-bar-fill" style="width: 20%; background: #f59e0b;"></span></span>
+                                <span class="font-num">$36,000 (20%)</span>
+                            </div>
+                        </td>
+                        <td><span class="chip chip-active">Running</span></td>
+                        <td class="font-num">68 (48 / 20)</td>
+                        <td class="font-num pos-value">70.6%</td>
+                        <td class="font-num">2.35</td>
+                        <td class="font-num">1 : 1.42</td>
+                        <td class="font-num pos-value">+$3,850.00</td>
+                        <td class="font-num neg-value">-$162.00</td>
+                        <td class="font-num pos-value">+$3,210.00</td>
+                        <td class="font-num pos-value">+$478.00</td>
+                        <td class="font-num pos-value">+$3,688.00</td>
+                        <td class="font-num pos-value">+10.2%</td>
+                    </tr>
+
+                    <!-- Row 4: QQQ Bot -->
+                    <tr data-bot="QQQ">
+                        <td>
+                            <div class="bot-cell">
+                                <span class="bot-badge-symbol" style="background: #ec4899;">QQQ</span>
+                                <div class="bot-meta-desc">
+                                    <span class="bot-meta-title">qqq_breakout (Client #6)</span>
+                                    <span class="bot-meta-strat">Opening Range Breakout (ORB 15m)</span>
+                                </div>
+                            </div>
+                        </td>
+                        <td>
+                            <div>
+                                <span class="alloc-bar-container"><span class="alloc-bar-fill" style="width: 17%; background: #ec4899;"></span></span>
+                                <span class="font-num">$32,520 (17%)</span>
+                            </div>
+                        </td>
+                        <td><span class="chip chip-paused">Audit Rest</span></td>
+                        <td class="font-num">42 (26 / 16)</td>
+                        <td class="font-num pos-value">61.9%</td>
+                        <td class="font-num">1.72</td>
+                        <td class="font-num">1 : 1.38</td>
+                        <td class="font-num pos-value">+$1,410.00</td>
+                        <td class="font-num neg-value">-$120.10</td>
+                        <td class="font-num pos-value">+$850.00</td>
+                        <td class="font-num pos-value">+$439.90</td>
+                        <td class="font-num pos-value">+$1,289.90</td>
+                        <td class="font-num pos-value">+4.0%</td>
+                    </tr>
+
+                    <!-- Total Summary Row -->
+                    <tr class="total-summary-row">
+                        <td>Combined Portfolio (4 Bots)</td>
+                        <td class="font-num">$184,520 (100%)</td>
+                        <td><span class="chip chip-active">Healthy</span></td>
+                        <td class="font-num">348 (236 / 112)</td>
+                        <td class="font-num pos-value">67.8%</td>
+                        <td class="font-num">2.41</td>
+                        <td class="font-num">1 : 1.62</td>
+                        <td class="font-num pos-value">+$27,860.00</td>
+                        <td class="font-num neg-value">-$842.60</td>
+                        <td class="font-num pos-value">+$22,480.00</td>
+                        <td class="font-num pos-value">+$4,537.40</td>
+                        <td class="font-num pos-value">+$26,020.40</td>
+                        <td class="font-num pos-value">+16.4%</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Analytics Section 2: Bot Allocation & Daily P&L Calendar Heatmap -->
+    <div class="analytics-grid-two-col">
+        <!-- Daily P&L Trading Calendar Heatmap -->
+        <div class="glass-panel">
+            <div class="panel-header">
+                <div class="panel-header-left">
+                    <h3>📅 Daily Trading P&L Heatmap</h3>
+                    <p>Distribution of daily net trading profits and losses across recent sessions</p>
+                </div>
+                <div style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-muted);">
+                    <span>Loss</span>
+                    <span style="display:inline-block;width:10px;height:10px;background:rgba(244,63,94,0.4);border-radius:2px;"></span>
+                    <span style="display:inline-block;width:10px;height:10px;background:rgba(255,255,255,0.05);border-radius:2px;"></span>
+                    <span style="display:inline-block;width:10px;height:10px;background:rgba(16,185,129,0.2);border-radius:2px;"></span>
+                    <span style="display:inline-block;width:10px;height:10px;background:rgba(16,185,129,0.5);border-radius:2px;"></span>
+                    <span>Profit</span>
+                </div>
+            </div>
+
+            <div class="calendar-grid">
+                <div class="cal-header">Mon</div>
+                <div class="cal-header">Tue</div>
+                <div class="cal-header">Wed</div>
+                <div class="cal-header">Thu</div>
+                <div class="cal-header">Fri</div>
+                <div class="cal-header">Sat</div>
+                <div class="cal-header">Sun</div>
+
+                <!-- Week 1 -->
+                <div class="cal-day-cell pnl-gain-heavy">
+                    <span class="cal-day-num">Sep 8</span>
+                    <span class="cal-day-pnl pos-value">+$1,420</span>
+                    <span class="cal-day-trades">14 trades</span>
+                </div>
+                <div class="cal-day-cell pnl-gain-light">
+                    <span class="cal-day-num">Sep 9</span>
+                    <span class="cal-day-pnl pos-value">+$460</span>
+                    <span class="cal-day-trades">8 trades</span>
+                </div>
+                <div class="cal-day-cell pnl-loss-light">
+                    <span class="cal-day-num">Sep 10</span>
+                    <span class="cal-day-pnl neg-value">-$310</span>
+                    <span class="cal-day-trades">11 trades</span>
+                </div>
+                <div class="cal-day-cell pnl-gain-heavy">
+                    <span class="cal-day-num">Sep 11</span>
+                    <span class="cal-day-pnl pos-value">+$2,180</span>
+                    <span class="cal-day-trades">19 trades</span>
+                </div>
+                <div class="cal-day-cell pnl-gain-light">
+                    <span class="cal-day-num">Sep 12</span>
+                    <span class="cal-day-pnl pos-value">+$890</span>
+                    <span class="cal-day-trades">7 trades</span>
+                </div>
+                <div class="cal-day-cell cal-day-empty">
+                    <span class="cal-day-num">Sep 13</span>
+                </div>
+                <div class="cal-day-cell cal-day-empty">
+                    <span class="cal-day-num">Sep 14</span>
+                </div>
+
+                <!-- Week 2 -->
+                <div class="cal-day-cell pnl-gain-light">
+                    <span class="cal-day-num">Sep 15</span>
+                    <span class="cal-day-pnl pos-value">+$740</span>
+                    <span class="cal-day-trades">10 trades</span>
+                </div>
+                <div class="cal-day-cell pnl-gain-heavy">
+                    <span class="cal-day-num">Sep 16</span>
+                    <span class="cal-day-pnl pos-value">+$1,850</span>
+                    <span class="cal-day-trades">16 trades</span>
+                </div>
+                <div class="cal-day-cell pnl-loss-heavy">
+                    <span class="cal-day-num">Sep 17</span>
+                    <span class="cal-day-pnl neg-value">-$920</span>
+                    <span class="cal-day-trades">12 trades</span>
+                </div>
+                <div class="cal-day-cell pnl-gain-heavy">
+                    <span class="cal-day-num">Sep 18</span>
+                    <span class="cal-day-pnl pos-value">+$1,340</span>
+                    <span class="cal-day-trades">15 trades</span>
+                </div>
+                <div class="cal-day-cell pnl-gain-light">
+                    <span class="cal-day-num">Sep 19</span>
+                    <span class="cal-day-pnl pos-value">+$580</span>
+                    <span class="cal-day-trades">9 trades</span>
+                </div>
+                <div class="cal-day-cell cal-day-empty">
+                    <span class="cal-day-num">Sep 20</span>
+                </div>
+                <div class="cal-day-cell cal-day-empty">
+                    <span class="cal-day-num">Sep 21</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bot Capital & Profit Contribution Donut -->
+        <div class="glass-panel">
+            <div class="panel-header">
+                <div class="panel-header-left">
+                    <h3>🍩 P&L Contribution by Bot</h3>
+                    <p>Relative share of total generated net profits</p>
+                </div>
+            </div>
+            <div class="chart-box-sm">
+                <canvas id="botContributionChart"></canvas>
+            </div>
+            <div style="display:flex; justify-content:space-around; text-align:center; padding-top:10px; border-top:1px solid rgba(255,255,255,0.05);">
+                <div>
+                    <span style="font-size:11px;color:var(--text-muted);">NVDA Bot</span>
+                    <div style="font-weight:700;color:#10b981;font-family:var(--font-mono);">60.6%</div>
+                </div>
+                <div>
+                    <span style="font-size:11px;color:var(--text-muted);">IWM Bot</span>
+                    <div style="font-weight:700;color:#06b6d4;font-family:var(--font-mono);">24.1%</div>
+                </div>
+                <div>
+                    <span style="font-size:11px;color:var(--text-muted);">SPY Bot</span>
+                    <div style="font-weight:700;color:#f59e0b;font-family:var(--font-mono);">14.2%</div>
+                </div>
+                <div>
+                    <span style="font-size:11px;color:var(--text-muted);">QQQ Bot</span>
+                    <div style="font-weight:700;color:#ec4899;font-family:var(--font-mono);">5.0%</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Institutional Portfolio Insights & Risk Telemetry -->
+    <div class="glass-panel">
+        <div class="panel-header">
+            <div class="panel-header-left">
+                <h3>💡 Automated Portfolio Insights & Risk Guardrails</h3>
+                <p>Telemetry-driven suggestions calculated from real-time execution and risk parameters</p>
+            </div>
+            <span class="stat-badge pos">All Bots Operational</span>
+        </div>
+
+        <div class="insights-grid">
+            <div class="insight-card">
+                <div class="insight-icon-box" style="background:rgba(16, 185, 129, 0.15); color:#10b981;">
+                    🎯
+                </div>
+                <div class="insight-content">
+                    <h4>High Alpha from NVDA Covered Calls</h4>
+                    <p>The NVDA SMA strategy with covered call overlays has reduced portfolio volatility by 24% while contributing $3,680 in net theta yield without caping upside exits.</p>
+                </div>
+            </div>
+
+            <div class="insight-card">
+                <div class="insight-icon-box" style="background:rgba(245, 158, 11, 0.15); color:#f59e0b;">
+                    ⚠️
+                </div>
+                <div class="insight-content">
+                    <h4>Slippage & Commission Friction in IWM</h4>
+                    <p>IWM tick execution incurred $218 in commissions across 96 trades. Consider adjusting minimum ATR filter to reduce micro-churn trades in low volatility regimes.</p>
+                </div>
+            </div>
+
+            <div class="insight-card">
+                <div class="insight-icon-box" style="background:rgba(99, 102, 241, 0.15); color:#818cf8;">
+                    🛡️
+                </div>
+                <div class="insight-content">
+                    <h4>Margin Utilization & Beta Exposure</h4>
+                    <p>Portfolio Beta is 0.82 to S&P 500 with 38.2% margin usage ($54,230 cash buffer). Max historical drawdown is contained at -4.1%, well within the 8.0% institutional circuit breaker.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        Multi-Bot Trading Dashboard • Google Cloud Run & IBKR Telemetry Engine • Generated for sudhirmakam@gmail.com
+    </footer>
+
+</div>
+
+<!-- Interactive JavaScript -->
+<script>
+    // Mock Data Store for Timelines
+    const timelineData = {
+        '1D': {
+            nav: '$184,520.40',
+            navPct: '+0.78%',
+            pnl: '+$1,420.00',
+            realizedSplit: 'Realized: +$1,120',
+            unrealized: '+$300',
+            pf: '3.12',
+            winrate: '75.0%',
+            trades: '16 Trades Today',
+            alpha: '+0.45%',
+            botPct: '+0.78%',
+            spyPct: '+0.33%',
+            sharpe: '2.84',
+            drawdown: '-0.3%',
+            cash: '$54,230.00',
+            labels: ['9:30', '10:30', '11:30', '12:30', '13:30', '14:30', '15:30', '16:00'],
+            botGrowth: [0, 0.15, 0.32, 0.28, 0.54, 0.62, 0.71, 0.78],
+            spyGrowth: [0, 0.05, 0.12, 0.18, 0.14, 0.22, 0.29, 0.33]
+        },
+        '1W': {
+            nav: '$184,520.40',
+            navPct: '+2.85%',
+            pnl: '+$5,120.00',
+            realizedSplit: 'Realized: +$4,200',
+            unrealized: '+$920',
+            pf: '2.76',
+            winrate: '71.4%',
+            trades: '42 Trades (1W)',
+            alpha: '+1.65%',
+            botPct: '+2.85%',
+            spyPct: '+1.20%',
+            sharpe: '2.45',
+            drawdown: '-1.2%',
+            cash: '$54,230.00',
+            labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+            botGrowth: [0.3, 0.8, 1.4, 2.1, 2.85],
+            spyGrowth: [0.1, 0.4, 0.7, 0.9, 1.20]
+        },
+        '1M': {
+            nav: '$184,520.40',
+            navPct: '+5.42%',
+            pnl: '+$9,480.00',
+            realizedSplit: 'Realized: +$8,100',
+            unrealized: '+$1,380',
+            pf: '2.55',
+            winrate: '68.9%',
+            trades: '94 Trades (1M)',
+            alpha: '+3.12%',
+            botPct: '+5.42%',
+            spyPct: '+2.30%',
+            sharpe: '2.31',
+            drawdown: '-2.4%',
+            cash: '$54,230.00',
+            labels: ['Week 1', 'Week 2', 'Week 3', 'Week 4'],
+            botGrowth: [1.2, 2.8, 3.9, 5.42],
+            spyGrowth: [0.5, 1.1, 1.8, 2.30]
+        },
+        'QTD': {
+            nav: '$184,520.40',
+            navPct: '+11.8%',
+            pnl: '+$19,450.00',
+            realizedSplit: 'Realized: +$16,200',
+            unrealized: '+$3,250',
+            pf: '2.48',
+            winrate: '68.2%',
+            trades: '210 Trades (QTD)',
+            alpha: '+5.2%',
+            botPct: '+11.8%',
+            spyPct: '+6.6%',
+            sharpe: '2.24',
+            drawdown: '-3.5%',
+            cash: '$54,230.00',
+            labels: ['Month 1', 'Month 2', 'Month 3'],
+            botGrowth: [3.4, 7.8, 11.8],
+            spyGrowth: [2.1, 4.3, 6.6]
+        },
+        'YTD': {
+            nav: '$184,520.40',
+            navPct: '+16.4%',
+            pnl: '+$26,020.40',
+            realizedSplit: 'Realized: +$21,480',
+            unrealized: '+$4,540',
+            pf: '2.41',
+            winrate: '67.8%',
+            trades: '348 Total Trades',
+            alpha: '+6.8% Alpha',
+            botPct: '+16.4%',
+            spyPct: '+9.6%',
+            sharpe: '2.18',
+            drawdown: '-4.1% Max DD',
+            cash: '$54,230.00',
+            labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct'],
+            botGrowth: [1.8, 3.2, 5.1, 4.2, 7.6, 9.8, 12.1, 13.9, 15.2, 16.4],
+            spyGrowth: [1.2, 2.0, 3.1, 1.8, 4.0, 5.5, 6.8, 7.5, 8.9, 9.6]
+        },
+        '1Y': {
+            nav: '$184,520.40',
+            navPct: '+24.6%',
+            pnl: '+$36,400.00',
+            realizedSplit: 'Realized: +$31,200',
+            unrealized: '+$5,200',
+            pf: '2.38',
+            winrate: '66.5%',
+            trades: '492 Trades (1Y)',
+            alpha: '+9.4%',
+            botPct: '+24.6%',
+            spyPct: '+15.2%',
+            sharpe: '2.12',
+            drawdown: '-5.8%',
+            cash: '$54,230.00',
+            labels: ['Q1', 'Q2', 'Q3', 'Q4'],
+            botGrowth: [5.2, 12.4, 18.9, 24.6],
+            spyGrowth: [3.8, 8.2, 11.5, 15.2]
+        },
+        'ALL': {
+            nav: '$184,520.40',
+            navPct: '+42.1%',
+            pnl: '+$54,700.00',
+            realizedSplit: 'Realized: +$48,900',
+            unrealized: '+$5,800',
+            pf: '2.35',
+            winrate: '66.1%',
+            trades: '820 Lifetime Trades',
+            alpha: '+18.2%',
+            botPct: '+42.1%',
+            spyPct: '+23.9%',
+            sharpe: '2.10',
+            drawdown: '-6.2%',
+            cash: '$54,230.00',
+            labels: ['2024 H1', '2024 H2', '2025 H1', '2025 H2', '2026 YTD'],
+            botGrowth: [7.5, 16.2, 25.4, 34.8, 42.1],
+            spyGrowth: [4.9, 10.1, 15.6, 20.2, 23.9]
+        }
+    };
+
+    let currentTimeline = 'YTD';
+    let equityChart = null;
+    let contributionChart = null;
+
+    // Initialize Charts
+    function initCharts() {
+        const ctxEquity = document.getElementById('equityCurveChart').getContext('2d');
+        const activeData = timelineData[currentTimeline];
+
+        // Gradient for Bot line
+        const gradient = ctxEquity.createLinearGradient(0, 0, 0, 300);
+        gradient.addColorStop(0, 'rgba(99, 102, 241, 0.45)');
+        gradient.addColorStop(1, 'rgba(99, 102, 241, 0.0)');
+
+        equityChart = new Chart(ctxEquity, {
+            type: 'line',
+            data: {
+                labels: activeData.labels,
+                datasets: [
+                    {
+                        label: 'Bot Portfolio Return (%)',
+                        data: activeData.botGrowth,
+                        borderColor: '#6366f1',
+                        borderWidth: 3,
+                        backgroundColor: gradient,
+                        fill: true,
+                        tension: 0.35,
+                        pointBackgroundColor: '#818cf8',
+                        pointBorderColor: '#0a0e27',
+                        pointRadius: 4,
+                        pointHoverRadius: 6
+                    },
+                    {
+                        label: 'SPY Benchmark (%)',
+                        data: activeData.spyGrowth,
+                        borderColor: '#64748b',
+                        borderWidth: 2,
+                        borderDash: [5, 5],
+                        backgroundColor: 'transparent',
+                        fill: false,
+                        tension: 0.3,
+                        pointRadius: 2
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        backgroundColor: '#151c3d',
+                        titleColor: '#f8fafc',
+                        bodyColor: '#cbd5e1',
+                        borderColor: '#2d3748',
+                        borderWidth: 1,
+                        padding: 12,
+                        displayColors: true,
+                        callbacks: {
+                            label: function(context) {
+                                return ` ${context.dataset.label}: +${context.parsed.y.toFixed(2)}%`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.05)'
+                        },
+                        ticks: {
+                            color: '#94a3b8',
+                            font: { family: 'JetBrains Mono', size: 11 }
+                        }
+                    },
+                    y: {
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.05)'
+                        },
+                        ticks: {
+                            color: '#94a3b8',
+                            font: { family: 'JetBrains Mono', size: 11 },
+                            callback: function(value) {
+                                return '+' + value + '%';
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        // Donut Chart for Bot Contribution
+        const ctxDonut = document.getElementById('botContributionChart').getContext('2d');
+        contributionChart = new Chart(ctxDonut, {
+            type: 'doughnut',
+            data: {
+                labels: ['NVDA (SMA + CC)', 'IWM (Momentum)', 'SPY (Mean Reversion)', 'QQQ (Breakout)'],
+                datasets: [{
+                    data: [15777.90, 6261.60, 3688.00, 1289.90],
+                    backgroundColor: ['#10b981', '#06b6d4', '#f59e0b', '#ec4899'],
+                    borderColor: '#0a0e27',
+                    borderWidth: 3,
+                    hoverOffset: 6
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                cutout: '72%',
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        backgroundColor: '#151c3d',
+                        titleColor: '#ffffff',
+                        bodyColor: '#cbd5e1',
+                        callbacks: {
+                            label: function(context) {
+                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                const val = context.parsed;
+                                const pct = ((val / total) * 100).toFixed(1);
+                                return ` $${val.toLocaleString()} (${pct}%)`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // Switch timeline
+    function switchTimeline(period, buttonElement) {
+        currentTimeline = period;
+
+        // Update active class
+        document.querySelectorAll('.timeline-tab').forEach(btn => btn.classList.remove('active'));
+        if (buttonElement) {
+            buttonElement.classList.add('active');
+        }
+
+        const data = timelineData[period];
+        if (!data) return;
+
+        // Update KPI card text
+        document.getElementById('kpi-nav').textContent = data.nav;
+        document.getElementById('kpi-nav-pct').textContent = data.navPct;
+        document.getElementById('kpi-total-pnl').textContent = data.pnl;
+        document.getElementById('kpi-realized-split').textContent = data.realizedSplit;
+        document.getElementById('kpi-pf').innerHTML = `${data.pf} <span style="font-size:16px;color:var(--text-secondary);font-weight:400;">(PF)</span>`;
+        document.getElementById('kpi-winrate').textContent = `${data.winrate} Win Rate`;
+        document.getElementById('kpi-trades-count').textContent = data.trades;
+        document.getElementById('kpi-alpha').textContent = data.alpha;
+        document.getElementById('kpi-sharpe').innerHTML = `${data.sharpe} <span style="font-size:16px;color:var(--text-secondary);font-weight:400;">Sharpe</span>`;
+        document.getElementById('kpi-drawdown').textContent = data.drawdown;
+
+        // Update Chart
+        if (equityChart) {
+            equityChart.data.labels = data.labels;
+            equityChart.data.datasets[0].data = data.botGrowth;
+            equityChart.data.datasets[1].data = data.spyGrowth;
+            equityChart.update();
+        }
+    }
+
+    // Filter table by bot
+    function selectBotFilter(botKey, element) {
+        document.querySelectorAll('.bot-pill').forEach(pill => pill.classList.remove('active'));
+        if (element) {
+            element.classList.add('active');
+        }
+
+        const rows = document.querySelectorAll('#statementTable tbody tr');
+        rows.forEach(row => {
+            if (row.classList.contains('total-summary-row')) return;
+            const rowBot = row.getAttribute('data-bot');
+            if (botKey === 'ALL' || rowBot === botKey) {
+                row.style.display = '';
+            } else {
+                row.style.display = 'none';
+            }
+        });
+    }
+
+    function resetFilters() {
+        const ytdBtn = Array.from(document.querySelectorAll('.timeline-tab')).find(b => b.textContent.includes('YTD'));
+        switchTimeline('YTD', ytdBtn);
+        const allBotsPill = document.querySelector('.bot-pill');
+        selectBotFilter('ALL', allBotsPill);
+    }
+
+    function exportStatement() {
+        alert('Institutional P&L Statement exported! Ready for audit and tax reporting.');
+    }
+
+    window.onload = function() {
+        initCharts();
+    };
+</script>
+
+</body>
+</html>
