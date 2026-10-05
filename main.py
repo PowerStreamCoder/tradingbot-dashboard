@@ -3457,6 +3457,23 @@ async def provision_bot_from_pick(request: Request):
             _stock_picks_cache["data"] = None
             _stock_picks_cache["timestamp"] = None
 
+        # Step 4: Notify VM Bot Control API if reachable (Phase 5 hot-reload hook)
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=4.0) as client:
+                vm_resp = await client.post(
+                    f"{BOT_CONTROL_API_URL}/provision-bot",
+                    json={
+                        "bot_id": bot_id,
+                        "client_id": next_id,
+                        "symbol": symbol,
+                        "strategy_track": strategy_track
+                    }
+                )
+                logger.info(f"VM /provision-bot response for {symbol}: {vm_resp.status_code}")
+        except Exception as vm_err:
+            logger.info(f"VM bot control API notification skipped or unreachable (non-fatal): {vm_err}")
+
         return {
             "status": "success",
             "bot_id": bot_id,
@@ -3527,6 +3544,218 @@ async def provision_bot_from_pick(request: Request):
             detail=f"Provisioning failed at stage [{stage}]: {str(e)}"
         )
 
+
+# =============================================================================
+# STOCKPICKER CLOSED-LOOP FEEDBACK ENDPOINTS (Phase 7)
+# =============================================================================
+
+@app.get("/api/stock-picks/feedback/status")
+async def get_feedback_status(request: Request):
+    """
+    Get the current status of the Closed-Loop Feedback Engine (Phase 7):
+    - Factor IC ledger & active dynamic weight multipliers (Loop A)
+    - Execution performance feedback aggregates (Loop B)
+    - Rejection pattern analysis & suggested filter adjustments
+    """
+    session_id = request.cookies.get("dashboard_session")
+    if not session_id or session_id not in authenticated_sessions:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    try:
+        from stockpicker.feedback_engine import (
+            compute_execution_summary,
+            load_weight_adjustments,
+        )
+
+        db = dashboard_data.db
+        factor_ledger = {}
+        rejection_analysis = {}
+
+        if db:
+            fl_doc = db.collection("stockpicker_factor_ledger").document("current").get()
+            if fl_doc.exists:
+                factor_ledger = fl_doc.to_dict()
+
+            rej_doc = db.collection("stockpicker_rejection_analysis").document("current").get()
+            if rej_doc.exists:
+                rejection_analysis = rej_doc.to_dict()
+
+            execution_summary = compute_execution_summary(db)
+            weight_multipliers = load_weight_adjustments(db)
+        else:
+            execution_summary = {"status": "no_database"}
+            weight_multipliers = {}
+
+        return {
+            "status": "success",
+            "factor_ledger": factor_ledger,
+            "weight_multipliers": weight_multipliers,
+            "execution_summary": execution_summary,
+            "rejection_analysis": rejection_analysis,
+        }
+    except Exception as e:
+        logger.exception("Error getting feedback status")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch feedback status: {e}")
+
+
+@app.post("/api/stock-picks/feedback/run-audit")
+async def trigger_feedback_audit(request: Request):
+    """
+    Manually trigger the full closed-loop feedback engine:
+    1. Forward alpha audit (t+1, t+5, t+20 vs benchmarks)
+    2. Factor IC computation & dynamic weight adaptation
+    3. Trade execution summary
+    4. Rejection pattern analysis
+    5. 90-day archive TTL cleanup
+    """
+    session_id = request.cookies.get("dashboard_session")
+    if not session_id or session_id not in authenticated_sessions:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    try:
+        from stockpicker.feedback_engine import run_feedback_loop
+        db = dashboard_data.db
+        if not db:
+            raise HTTPException(status_code=500, detail="Firestore database unavailable")
+
+        results = run_feedback_loop(db)
+        return {"status": "success", "feedback_results": results}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error running feedback audit")
+        raise HTTPException(status_code=500, detail=f"Feedback audit failed: {e}")
+
+
+@app.post("/api/stock-picks/feedback/execution")
+async def submit_execution_feedback(request: Request):
+    """
+    Ingest trade execution feedback from trading bots when a position is closed.
+    Links realized P&L and holding duration back to the immutable stock pick snapshot.
+    """
+    session_id = request.cookies.get("dashboard_session")
+    if not session_id or session_id not in authenticated_sessions:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    pick_id = body.get("pick_id")
+    if not pick_id:
+        raise HTTPException(status_code=400, detail="Missing required field: pick_id")
+
+    realized_pnl = body.get("realized_pnl")
+    if realized_pnl is None:
+        raise HTTPException(status_code=400, detail="Missing required field: realized_pnl")
+
+    trade_duration_days = body.get("trade_duration_days", 1)
+    exit_reason = body.get("exit_reason", "manual_exit")
+    slippage = body.get("slippage")
+    execution_mode = body.get("execution_mode", "PAPER")
+    metadata = body.get("metadata", {})
+
+    try:
+        from stockpicker.feedback_engine import ingest_execution_feedback
+        db = dashboard_data.db
+        res = ingest_execution_feedback(
+            db=db,
+            pick_id=pick_id,
+            realized_pnl=float(realized_pnl),
+            trade_duration_days=int(trade_duration_days),
+            exit_reason=str(exit_reason),
+            slippage=float(slippage) if slippage is not None else None,
+            execution_mode=str(execution_mode),
+            metadata=metadata,
+        )
+        return res
+    except Exception as e:
+        logger.exception(f"Error ingesting execution feedback for {pick_id}")
+        raise HTTPException(status_code=500, detail=f"Failed to ingest feedback: {e}")
+
+
+# =============================================================================
+# IN-FLIGHT THESIS SENTINEL ENDPOINTS (Phase 6)
+# =============================================================================
+
+@app.get("/api/stock-picks/sentinel/status")
+async def get_sentinel_status(request: Request):
+    """
+    Get current thesis telemetry and degradation states for all active bot positions.
+    Returns status: 'disabled' if the feature is switched off.
+    """
+    session_id = request.cookies.get("dashboard_session")
+    if not session_id or session_id not in authenticated_sessions:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    try:
+        from stockpicker.sentinel import audit_in_flight_positions, is_sentinel_enabled
+        if not is_sentinel_enabled():
+            return {
+                "status": "disabled",
+                "enabled": False,
+                "message": "In-Flight Thesis Sentinel & Downstream Adaptive Gateway is currently switched off.",
+            }
+        db = dashboard_data.db
+        summary = audit_in_flight_positions(db)
+        return summary
+    except Exception as e:
+        logger.exception("Error checking sentinel status")
+        raise HTTPException(status_code=500, detail=f"Failed to check sentinel status: {e}")
+
+
+@app.post("/api/stock-picks/sentinel/audit")
+async def trigger_sentinel_audit(request: Request):
+    """
+    Trigger manual pre-market in-flight position health audit.
+    Evaluates score deltas, flags invalidations, and communicates action instructions to bots.
+    If switched off, returns disabled status unless ?force=true is provided.
+    """
+    session_id = request.cookies.get("dashboard_session")
+    if not session_id or session_id not in authenticated_sessions:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    try:
+        force = request.query_params.get("force", "").lower() in ("true", "1", "yes")
+        from stockpicker.sentinel import audit_in_flight_positions, is_sentinel_enabled
+        if not is_sentinel_enabled() and not force:
+            return {
+                "status": "disabled",
+                "enabled": False,
+                "message": "In-Flight Thesis Sentinel is currently switched off. Set SENTINEL_ENABLED=true or pass ?force=true to audit."
+            }
+        db = dashboard_data.db
+        summary = audit_in_flight_positions(db, force=force)
+        return {"status": "success", "sentinel_audit": summary}
+    except Exception as e:
+        logger.exception("Error running sentinel audit")
+        raise HTTPException(status_code=500, detail=f"Failed to run sentinel audit: {e}")
+
+
+@app.post("/api/stock-picks/sentinel/toggle")
+async def toggle_sentinel(request: Request):
+    """
+    Enable or disable the In-Flight Thesis Sentinel feature at runtime.
+    Body: {"enabled": true} or {"enabled": false}
+    """
+    session_id = request.cookies.get("dashboard_session")
+    if not session_id or session_id not in authenticated_sessions:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    try:
+        data = await request.json()
+        enable = bool(data.get("enabled", False))
+        from stockpicker.sentinel import set_sentinel_enabled, is_sentinel_enabled
+        set_sentinel_enabled(enable)
+        return {
+            "status": "success",
+            "enabled": is_sentinel_enabled(),
+            "message": f"In-Flight Thesis Sentinel has been {'enabled' if enable else 'disabled'}."
+        }
+    except Exception as e:
+        logger.exception("Error toggling sentinel status")
+        raise HTTPException(status_code=500, detail=f"Failed to toggle sentinel: {e}")
 
 
 @app.get("/api/entry-decisions")
