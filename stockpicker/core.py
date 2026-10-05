@@ -1287,7 +1287,7 @@ def latest_val(items):
         return None
 
 
-def compute_fundamental_score(ticker: str) -> Dict[str, Any]:
+def compute_fundamental_score(ticker: str, weight_adjustments: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
     """
     Compute fundamental score (0-100) for a ticker.
 
@@ -1440,98 +1440,98 @@ def compute_fundamental_score(ticker: str) -> Dict[str, Any]:
     # 8-FACTOR MODEL: Additional Scoring Factors
     # ========================================================================
 
-    # 1. Relative Volume (weight: 4.0)
+    # Dynamic factor weight adaptations from Closed-Loop Feedback Engine (Phase 7)
+    adj = weight_adjustments or {}
+    w_rel_vol = RELATIVE_VOLUME_WEIGHT * adj.get("relative_volume", 1.0)
+    w_price_1d = PRICE_CONF_1D_WEIGHT * adj.get("price_momentum_1d", 1.0)
+    w_analyst = ANALYST_VIEWS_WEIGHT * adj.get("analyst_views", 1.0)
+    w_growth = GROWTH_QUALITY_WEIGHT * adj.get("growth_quality", 1.0)
+    w_persistence = PERSISTENCE_WEIGHT * adj.get("persistence", 1.0)
+    w_insider = INSIDER_BUYS_WEIGHT * adj.get("insider_buys", 1.0)
+
+    # 1. Relative Volume (base weight: 4.0)
     if current_volume and average_volume and average_volume > 0:
         rel_vol = current_volume / average_volume
         if rel_vol >= 2.0:  # 2x average = strong signal
-            adjustment = RELATIVE_VOLUME_WEIGHT
+            adjustment = w_rel_vol
         elif rel_vol >= 1.5:
-            adjustment = RELATIVE_VOLUME_WEIGHT * 0.6
+            adjustment = w_rel_vol * 0.6
         elif rel_vol <= 0.5:
-            adjustment = -RELATIVE_VOLUME_WEIGHT * 0.5
+            adjustment = -w_rel_vol * 0.5
         else:
             adjustment = 0
         score += adjustment
         reasons.append(f'rel_vol={rel_vol:.2f}x ({adjustment:+.1f})')
 
-    # 2. 1d Price Confirmation (weight: 50.0) - HIGHEST WEIGHT
+    # 2. 1d Price Confirmation (base weight: 50.0) - HIGHEST WEIGHT
     if current_price and previous_close and previous_close > 0:
         price_change_pct = (current_price - previous_close) / previous_close
-        # Scale: ±5% = full points (50.0)
-        # Formula: change_pct * 20 * weight → 0.05 * 20 * 50 = 50
-        adjustment = max(-PRICE_CONF_1D_WEIGHT,
-                        min(PRICE_CONF_1D_WEIGHT,
-                            price_change_pct * 20 * PRICE_CONF_1D_WEIGHT))
+        # Scale: ±5% = full points
+        # Formula: change_pct * 20 * weight
+        adjustment = max(-w_price_1d,
+                        min(w_price_1d,
+                            price_change_pct * 20 * w_price_1d))
         score += adjustment
         reasons.append(f'1d_price={price_change_pct:+.1%} ({adjustment:+.1f})')
 
-    # 3. Analyst Views (weight: 40.0) - Scaled up from ±3
+    # 3. Analyst Views (base weight: 40.0) - Scaled up from ±3
     if recommendation is not None:
         if recommendation <= 2.2:  # Strong buy/buy
-            adjustment = ANALYST_VIEWS_WEIGHT * 0.5  # +20
+            adjustment = w_analyst * 0.5  # +20
         elif recommendation >= 3.5:  # Sell/strong sell
-            adjustment = -ANALYST_VIEWS_WEIGHT * 0.5  # -20
+            adjustment = -w_analyst * 0.5  # -20
         else:
             # Linear scale between 2.2 and 3.5
-            adjustment = (3.5 - recommendation) / 1.3 * ANALYST_VIEWS_WEIGHT * 0.5
+            adjustment = (3.5 - recommendation) / 1.3 * w_analyst * 0.5
         score += adjustment
         reasons.append(f'analyst={recommendation:.1f} ({adjustment:+.1f})')
 
-    # 4. Growth Quality (weight: 40.0)
+    # 4. Growth Quality (base weight: 40.0)
     if revenue_yoy is not None and gross_margin is not None and operating_margin is not None:
         # Combine revenue growth with margin quality
         quality = (revenue_yoy * 50) + (gross_margin * 20) + (operating_margin * 30)
-        adjustment = max(-GROWTH_QUALITY_WEIGHT * 0.5,
-                        min(GROWTH_QUALITY_WEIGHT * 0.5, quality))
+        adjustment = max(-w_growth * 0.5,
+                        min(w_growth * 0.5, quality))
         score += adjustment
         reasons.append(f'growth_quality={quality:.1f} ({adjustment:+.1f})')
 
-    # 5. Persistence (weight: 15.0)
+    # 5. Persistence (base weight: 15.0)
     if current_price and ma_50 and ma_200:
         if current_price > ma_50 > ma_200:
-            adjustment = PERSISTENCE_WEIGHT
+            adjustment = w_persistence
             reasons.append('persistence=uptrend (+15.0)')
         elif current_price < ma_50 < ma_200:
-            adjustment = -PERSISTENCE_WEIGHT
+            adjustment = -w_persistence
             reasons.append('persistence=downtrend (-15.0)')
         elif current_price > ma_50:
-            adjustment = PERSISTENCE_WEIGHT * 0.5
+            adjustment = w_persistence * 0.5
             reasons.append('persistence=above_50ma (+7.5)')
         else:
-            adjustment = -PERSISTENCE_WEIGHT * 0.5
+            adjustment = -w_persistence * 0.5
             reasons.append('persistence=below_50ma (-7.5)')
         score += adjustment
 
-    # 6. Insider Buys (weight: 30.0) - Form 4 filings via Finnhub
+    # 6. Insider Buys (base weight: 30.0) - Form 4 filings via Finnhub
     insider_data = get_finnhub_insider_trades(ticker)
     insider_score = insider_data.get('insider_score', 0)
+    if INSIDER_BUYS_WEIGHT > 0:
+        insider_score = insider_score * (w_insider / INSIDER_BUYS_WEIGHT)
     score += insider_score
     reasons.append(insider_data.get('reason', 'no insider data'))
-
-    # Old analyst recommendation logic (replaced by new Analyst Views above)
-    # Keeping for reference - can be removed after testing
-    # if recommendation is not None:
-    #     if recommendation <= 2.2:
-    #         score += 3
-    #     elif recommendation >= 3.5:
-    #         score -= 3
 
     # Clamp score before normalization
     raw_score = score
     score = max(0, min(500, round(score, 2)))  # Allow higher range for normalization
 
     # Normalize to 0-100 range (preserves relative weights)
-    # NOTE: Explosiveness is scored separately in news ranking, not here
-    # This function only scores: fundamentals + 6 new factors
     MAX_POSSIBLE_SCORE = (
-        # EXPLOSIVENESS_WEIGHT_8F * 10 +  # NOT scored in this function!
-        RELATIVE_VOLUME_WEIGHT * 10 +   # 40 points max
-        PRICE_CONF_1D_WEIGHT +           # 50 points max
-        ANALYST_VIEWS_WEIGHT +           # 40 points max
-        INSIDER_BUYS_WEIGHT +            # 30 points max
-        GROWTH_QUALITY_WEIGHT +          # 40 points max
-        PERSISTENCE_WEIGHT +             # 15 points max
-        100                              # Fundamentals baseline range (~70 points actual)
+        w_rel_vol * 10 +
+        w_price_1d +
+        w_analyst +
+        w_insider +
+        w_growth +
+        w_persistence +
+        100
     )  # Total: ~315 points
 
     normalized_score = (score / MAX_POSSIBLE_SCORE) * 100
@@ -1778,9 +1778,13 @@ def build_evidence_dossier(
 # PICK SELECTION (Composite Scoring)
 # =============================================================================
 
-def score_candidates(ranked_news: List[Dict]) -> List[Dict]:
+def score_candidates(
+    ranked_news: List[Dict],
+    weight_adjustments: Optional[Dict[str, float]] = None
+) -> List[Dict]:
     """
     Score candidate tickers and select top picks with Evidence Dossiers.
+    Optionally incorporates dynamic weight adjustments from the Factor IC ledger.
     """
     picks = []
 
@@ -1816,8 +1820,8 @@ def score_candidates(ranked_news: List[Dict]) -> List[Dict]:
                 continue
 
             try:
-                # Get fundamental analysis for this ticker
-                fundamentals = compute_fundamental_score(ticker)
+                # Get fundamental analysis for this ticker (with dynamic weights if present)
+                fundamentals = compute_fundamental_score(ticker, weight_adjustments=weight_adjustments)
                 fundamental_score = fundamentals.get('score', BASELINE_FUNDAMENTAL_SCORE)
 
                 # Calculate composite score: 60% explosiveness + 40% fundamentals

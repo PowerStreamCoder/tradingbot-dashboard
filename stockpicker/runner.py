@@ -28,6 +28,11 @@ from google.cloud import firestore
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from stockpicker.core import fetch_all_news, rank_news, score_candidates
+from stockpicker.feedback_engine import (
+    archive_run_snapshots,
+    run_feedback_loop,
+    load_weight_adjustments,
+)
 
 # =============================================================================
 # LOGGING CONFIGURATION
@@ -252,11 +257,19 @@ def run_stockpicker() -> Optional[Dict[str, Any]]:
     db = firestore.Client()
 
     try:
-        # Step 0: Hydrate Active Portfolio & Review History
-        logger.info("Step 0: Hydrating active bot registry and review history...")
+        # Step 0: Hydrate Active Portfolio, Review History, and Factor IC weights
+        logger.info("Step 0: Hydrating active bot registry, review history, and IC weights...")
         registered_bots = load_registered_bots()
         history_state = hydrate_history_state(db)
         logger.info(f"✓ Found {len(registered_bots)} registered bots, {len(history_state['accepted'])} accepted, {len(history_state['rejected'])} rejected in history")
+
+        weight_adjustments = {}
+        try:
+            weight_adjustments = load_weight_adjustments(db)
+            if weight_adjustments:
+                logger.info(f"✓ Loaded {len(weight_adjustments)} dynamic factor weight adjustments from IC ledger")
+        except Exception as w_err:
+            logger.warning(f"Could not load dynamic weight adjustments: {w_err}")
 
         # Step 1: Fetch news from last 24 hours
         logger.info("Step 1/5: Fetching news from last 24 hours...")
@@ -270,7 +283,7 @@ def run_stockpicker() -> Optional[Dict[str, Any]]:
 
         # Step 3: Track 1 - Growth Equity Scoring
         logger.info("Step 3/5: Scoring Track 1 (Growth Equity) candidates...")
-        growth_candidates = score_candidates(ranked) if ranked else []
+        growth_candidates = score_candidates(ranked, weight_adjustments=weight_adjustments) if ranked else []
         logger.info(f"✓ Scored {len(growth_candidates)} growth candidates")
 
         # Step 4: Track 2 - Covered Call Income Screening
@@ -445,11 +458,33 @@ def run_stockpicker() -> Optional[Dict[str, Any]]:
         # Write to 'current' document
         stock_picks_ref.document('current').set(result_payload)
 
-        # Archive under current date
+        # Step 7: Archive immutable per-pick snapshots (Phase 7 Feedback Loop)
+        logger.info("Step 7: Archiving immutable per-pick snapshots...")
         try:
-            stock_picks_ref.document(now_iso).set(result_payload)
+            archived_ids = archive_run_snapshots(db, actionable_leads, now_iso)
+            result_payload['archived_pick_ids'] = archived_ids
+            logger.info(f"✓ Archived {len(archived_ids)} pick snapshots")
         except Exception as arc_err:
-            logger.warning(f"Could not archive daily stock picks: {arc_err}")
+            logger.warning(f"Could not archive pick snapshots: {arc_err}")
+
+        # Step 8: Run closed-loop feedback engine
+        logger.info("Step 8: Running closed-loop feedback engine...")
+        try:
+            feedback_results = run_feedback_loop(
+                db,
+                include_alpha_audit=True,
+                include_factor_ic=True,
+                include_execution_summary=True,
+                include_rejection_analysis=True,
+                include_cleanup=True,
+            )
+            result_payload['feedback_loop'] = {
+                'run_at': feedback_results.get('run_at'),
+                'components_run': list(feedback_results.get('components', {}).keys()),
+            }
+            logger.info(f"✓ Feedback engine completed: {list(feedback_results.get('components', {}).keys())}")
+        except Exception as fb_err:
+            logger.warning(f"Feedback engine encountered an error (non-fatal): {fb_err}")
 
         logger.info("=" * 60)
         logger.info("✅ StockPicker state-aware run completed successfully!")
