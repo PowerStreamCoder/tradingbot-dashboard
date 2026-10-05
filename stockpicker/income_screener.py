@@ -38,9 +38,22 @@ def fetch_yahoo_options(ticker: str) -> Optional[Dict[str, Any]]:
     Returns:
         Dict with current price, expiration dates, and calls chain.
     """
+    from stockpicker.core import _yf_crumb, _yf_cookies, get_yahoo_crumb_and_cookies
     url = YF_OPTIONS_URL.format(ticker=ticker)
+    headers = DEFAULT_HEADERS
+    params = {}
+    crumb, cookies = _yf_crumb, _yf_cookies
+    if crumb:
+        params["crumb"] = crumb
+
     try:
-        r = requests.get(url, headers=DEFAULT_HEADERS, timeout=15)
+        r = requests.get(url, headers=headers, params=params, cookies=cookies, timeout=15)
+        if r.status_code in (401, 429):
+            crumb, cookies = get_yahoo_crumb_and_cookies(force_refresh=True)
+            if crumb:
+                params["crumb"] = crumb
+                r = requests.get(url, headers=headers, params=params, cookies=cookies, timeout=15)
+
         if r.status_code == 200:
             data = r.json()
             result = data.get("optionChain", {}).get("result", [])
@@ -55,9 +68,22 @@ def fetch_earnings_date(ticker: str) -> Optional[datetime]:
     """
     Fetch next scheduled earnings date from Yahoo Finance quoteSummary.
     """
+    from stockpicker.core import _yf_crumb, _yf_cookies, get_yahoo_crumb_and_cookies
     url = f"{YF_QUOTE_SUMMARY_URL.format(ticker=ticker)}?modules=calendarEvents"
+    headers = DEFAULT_HEADERS
+    params = {"modules": "calendarEvents"}
+    crumb, cookies = _yf_crumb, _yf_cookies
+    if crumb:
+        params["crumb"] = crumb
+
     try:
-        r = requests.get(url, headers=DEFAULT_HEADERS, timeout=15)
+        r = requests.get(url, headers=headers, params=params, cookies=cookies, timeout=15)
+        if r.status_code in (401, 429):
+            crumb, cookies = get_yahoo_crumb_and_cookies(force_refresh=True)
+            if crumb:
+                params["crumb"] = crumb
+                r = requests.get(url, headers=headers, params=params, cookies=cookies, timeout=15)
+
         if r.status_code == 200:
             data = r.json()
             events = data.get("quoteSummary", {}).get("result", [{}])[0].get("calendarEvents", {})
@@ -217,19 +243,27 @@ def evaluate_covered_call_candidate(ticker: str) -> Optional[Dict[str, Any]]:
     }
 
 
-def screen_income_candidates(tickers: Optional[List[str]] = None, top_n: int = 5) -> List[Dict[str, Any]]:
+def screen_income_candidates(tickers: Optional[Any] = None, top_n: int = 5) -> List[Dict[str, Any]]:
     """
     Screen candidate universe for top Covered Call Income leads.
 
     Returns:
         List of top_n scored candidates sorted by income_score.
     """
+    if isinstance(tickers, int):
+        top_n = tickers
+        tickers = None
+
     candidates_pool = tickers or INCOME_UNIVERSE
     results = []
 
+    from concurrent.futures import ThreadPoolExecutor
+
     logger.info(f"[INCOME-SCREENER] Screening {len(candidates_pool)} tickers for Covered Call Income...")
-    for sym in candidates_pool:
-        res = evaluate_covered_call_candidate(sym)
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        eval_results = list(ex.map(evaluate_covered_call_candidate, candidates_pool))
+
+    for res in eval_results:
         if res:
             results.append(res)
 

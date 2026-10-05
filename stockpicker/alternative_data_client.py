@@ -111,10 +111,12 @@ def fetch_congressional_trades(ticker: str, days: int = 60) -> List[Dict[str, An
     if not cached_time or (now - cached_time).total_seconds() > CONGRESSIONAL_CACHE_TTL:
         try:
             logger.info("[STOCKWATCHER] Refreshing congressional disclosures cache...")
-            r = requests.get(HOUSE_STOCK_WATCHER_URL, timeout=25)
+            r = requests.get(HOUSE_STOCK_WATCHER_URL, timeout=10)
             if r.status_code == 200:
                 _congressional_cache["data"] = r.json()
-                _congressional_cache["timestamp"] = now
+            else:
+                _congressional_cache["data"] = []
+            _congressional_cache["timestamp"] = now
         except Exception as e:
             logger.warning(f"[STOCKWATCHER] Failed to fetch House disclosures: {e}")
 
