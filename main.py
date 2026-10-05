@@ -843,12 +843,14 @@ async def pnl_reporting():
 async def get_pnl_statement(
     period: str = "YTD",
     bot: str = "ALL",
+    mode: str = "all",
     benchmark: str = "SPY",
     response: Response = None
 ):
     """
     Get Institutional Multi-Bot P&L Statement and Portfolio Analytics.
     Aggregates closed trades, active buckets, risk metrics, cashflow waterfall, and visual series.
+    Supports filtering by period, bot, and trading mode (paper, live, or all/both).
     """
     try:
         # Load trades using existing trade history logic (lookback 365 days)
@@ -877,8 +879,10 @@ async def get_pnl_statement(
             account_overview_data=account_overview,
             period=period,
             bot_scope=bot,
+            mode=mode,
             benchmark_symbol=benchmark
         )
+
 
         if response:
             cache_status = "HIT" if statement.data_quality.cached else "MISS"

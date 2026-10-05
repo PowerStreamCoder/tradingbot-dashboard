@@ -158,6 +158,81 @@ class TestPnLStatementEngine(unittest.TestCase):
         self.assertTrue(st2.data_quality.cached)
         self.assertEqual(st2.data_quality.cache_age_seconds, 5.0)
 
+    def test_trading_mode_segmentation(self):
+        # Setup trades with mixed paper and live modes
+        mixed_trades = [
+            {"timestamp": "2026-10-01T14:30:00Z", "symbol": "NVDA", "botId": 4, "profitLoss": 500.0, "trading_mode": "paper"},
+            {"timestamp": "2026-10-02T14:30:00Z", "symbol": "NVDA", "botId": 4, "profitLoss": 300.0, "trading_mode": "live"},
+            {"timestamp": "2026-10-03T14:30:00Z", "symbol": "IWM", "botId": 3, "profitLoss": -100.0, "trading_mode": "paper"},
+            {"timestamp": "2026-10-04T14:30:00Z", "symbol": "IWM", "botId": 3, "profitLoss": 250.0, "trading_mode": "live"}
+        ]
+
+        # 1. Paper Mode: only paper trades (NVDA +500, IWM -100) -> 2 trades, realized = 400.0
+        st_paper = aggregate_portfolio_pnl(
+            trades=mixed_trades,
+            bot_overview_data=self.mock_bot_overview,
+            bot_configs=self.mock_configs,
+            period="YTD",
+            bot_scope="ALL",
+            mode="paper",
+            now=self.now
+        )
+        self.assertEqual(st_paper.trading_mode, "paper")
+        self.assertEqual(st_paper.executive_kpis.total_trades, 2)
+        self.assertEqual(st_paper.executive_kpis.realized_pnl, 400.0)
+        self.assertEqual(st_paper.executive_kpis.nav, 100000.00)
+
+        # 2. Live Mode: only live trades (NVDA +300, IWM +250) -> 2 trades, realized = 550.0
+        st_live = aggregate_portfolio_pnl(
+            trades=mixed_trades,
+            bot_overview_data=self.mock_bot_overview,
+            bot_configs=self.mock_configs,
+            period="YTD",
+            bot_scope="ALL",
+            mode="live",
+            now=self.now
+        )
+        self.assertEqual(st_live.trading_mode, "live")
+        self.assertEqual(st_live.executive_kpis.total_trades, 2)
+        self.assertEqual(st_live.executive_kpis.realized_pnl, 550.0)
+        self.assertEqual(st_live.executive_kpis.nav, 184520.40)
+
+        # 3. All / Both Mode: all 4 trades -> realized = 950.0
+        st_all = aggregate_portfolio_pnl(
+            trades=mixed_trades,
+            bot_overview_data=self.mock_bot_overview,
+            bot_configs=self.mock_configs,
+            period="YTD",
+            bot_scope="ALL",
+            mode="all",
+            now=self.now
+        )
+        self.assertEqual(st_all.trading_mode, "all")
+        self.assertEqual(st_all.executive_kpis.total_trades, 4)
+        self.assertEqual(st_all.executive_kpis.realized_pnl, 950.0)
+        self.assertEqual(st_all.executive_kpis.nav, 284520.40)
+
+        # Verify bot execution mode tagging
+        nvda_bot = next(b for b in st_all.bot_attribution if b.symbol == "NVDA")
+        self.assertEqual(nvda_bot.trading_mode, "BOTH")
+
+    def test_trading_mode_cache_isolation(self):
+        mixed_trades = [
+            {"timestamp": "2026-10-01T14:30:00Z", "symbol": "NVDA", "botId": 4, "profitLoss": 500.0, "trading_mode": "paper"},
+            {"timestamp": "2026-10-02T14:30:00Z", "symbol": "NVDA", "botId": 4, "profitLoss": 300.0, "trading_mode": "live"}
+        ]
+        # Query paper mode
+        p1 = aggregate_portfolio_pnl(trades=mixed_trades, bot_overview_data={}, bot_configs=self.mock_configs, mode="paper", now=self.now)
+        # Query live mode immediately after
+        l1 = aggregate_portfolio_pnl(trades=mixed_trades, bot_overview_data={}, bot_configs=self.mock_configs, mode="live", now=self.now)
+        # Must be different data, not a cache collision
+        self.assertEqual(p1.trading_mode, "paper")
+        self.assertEqual(l1.trading_mode, "live")
+        self.assertEqual(p1.executive_kpis.realized_pnl, 500.0)
+        self.assertEqual(l1.executive_kpis.realized_pnl, 300.0)
+        self.assertFalse(l1.data_quality.cached)
+
 
 if __name__ == '__main__':
     unittest.main()
+

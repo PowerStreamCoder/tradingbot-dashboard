@@ -6,6 +6,7 @@
 
 let currentPeriod = 'YTD';
 let currentBotScope = 'ALL';
+let currentMode = 'all';
 let currentStatementData = null;
 let equityChart = null;
 let donutChart = null;
@@ -51,15 +52,17 @@ function formatPercent(val, includePlus = false) {
 /**
  * Main Data Fetcher
  */
-async function loadStatement(period = currentPeriod, botScope = currentBotScope) {
+async function loadStatement(period = currentPeriod, botScope = currentBotScope, mode = currentMode) {
     currentPeriod = period;
     currentBotScope = botScope;
+    currentMode = mode;
 
     const syncStatus = document.getElementById('syncStatusText');
     if (syncStatus) syncStatus.textContent = 'Syncing statement...';
 
     try {
-        const response = await fetch(`/api/pnl-statement?period=${encodeURIComponent(period)}&bot=${encodeURIComponent(botScope)}`);
+        const url = `/api/pnl-statement?period=${encodeURIComponent(period)}&bot=${encodeURIComponent(botScope)}&mode=${encodeURIComponent(mode)}`;
+        const response = await fetch(url);
         if (!response.ok) {
             throw new Error(`HTTP error ${response.status}: ${response.statusText}`);
         }
@@ -80,7 +83,8 @@ async function loadStatement(period = currentPeriod, botScope = currentBotScope)
         // Header metadata
         const activeBotsElem = document.getElementById('activeBots');
         if (activeBotsElem) {
-            activeBotsElem.textContent = `${data.bot_attribution.length} Bots Operational`;
+            const modeText = mode === 'paper' ? 'Paper' : (mode === 'live' ? 'Live' : 'Multi-Mode');
+            activeBotsElem.textContent = `${data.bot_attribution.length} Bots (${modeText})`;
         }
         const lastUpdateElem = document.getElementById('lastUpdate');
         if (lastUpdateElem) {
@@ -96,6 +100,7 @@ async function loadStatement(period = currentPeriod, botScope = currentBotScope)
         if (syncStatus) syncStatus.textContent = 'Sync Error';
     }
 }
+
 
 /**
  * Render Executive KPIs
@@ -225,7 +230,7 @@ function renderBotAttributionTable(bots) {
     if (!tbody) return;
 
     if (!bots || bots.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="13" style="text-align:center; padding: 24px; color: var(--text-muted);">No bot attribution records found for this period.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="14" style="text-align:center; padding: 24px; color: var(--text-muted);">No bot attribution records found for this mode and period.</td></tr>`;
         if (badge) badge.textContent = '0 Bots Tracked';
         return;
     }
@@ -249,6 +254,13 @@ function renderBotAttributionTable(bots) {
         const realizedClass = b.realized_pnl >= 0 ? 'val-pos' : 'val-neg';
         const unrealizedClass = b.unrealized_pnl >= 0 ? 'val-pos' : 'val-neg';
 
+        const bMode = (b.trading_mode || 'PAPER').toUpperCase();
+        const modeBadgeHtml = bMode === 'LIVE'
+            ? '<span class="badge-mode live">🟢 LIVE</span>'
+            : (bMode === 'PAPER' 
+                ? '<span class="badge-mode paper">🧪 PAPER</span>' 
+                : '<span class="badge-mode both">🔄 BOTH</span>');
+
         totalAlloc += b.allocated_capital;
         totalTrades += b.trades_count;
         totalWins += b.winning_trades;
@@ -268,6 +280,7 @@ function renderBotAttributionTable(bots) {
             </td>
             <td class="font-mono">${formatCurrency(b.allocated_capital)} (${b.allocation_pct}%)</td>
             <td><span class="stat-badge ${b.status === 'RUNNING' ? 'pos' : 'neutral'}">${b.status}</span></td>
+            <td>${modeBadgeHtml}</td>
             <td class="font-mono">${b.trades_count} (${b.winning_trades} / ${b.losing_trades})</td>
             <td class="font-mono ${b.win_rate_pct >= 50 ? 'val-pos' : 'val-neg'}">${b.win_rate_pct.toFixed(1)}%</td>
             <td class="font-mono">${b.profit_factor !== null && b.profit_factor !== undefined ? b.profit_factor.toFixed(2) : '--'}</td>
@@ -291,6 +304,7 @@ function renderBotAttributionTable(bots) {
         <td class="sticky-col">Combined Total (${bots.length} Bots)</td>
         <td class="font-mono">${formatCurrency(totalAlloc)} (100%)</td>
         <td><span class="stat-badge pos">Operational</span></td>
+        <td><span class="badge-mode ${currentMode === 'all' ? 'both' : currentMode}">${currentMode.toUpperCase()}</span></td>
         <td class="font-mono">${totalTrades} (${totalWins} / ${totalLosses})</td>
         <td class="font-mono val-pos">${winRateTotal}%</td>
         <td class="font-mono">--</td>
@@ -306,6 +320,7 @@ function renderBotAttributionTable(bots) {
 
     tbody.innerHTML = html;
 }
+
 
 /**
  * Render Equity Growth Chart (Chart.js)
@@ -559,14 +574,22 @@ function setStatementPeriod(period) {
     document.querySelectorAll('.timeline-tab').forEach(t => {
         t.classList.toggle('active', t.getAttribute('data-period') === period);
     });
-    loadStatement(period, currentBotScope);
+    loadStatement(period, currentBotScope, currentMode);
+}
+
+function setTradingMode(mode) {
+    currentMode = mode;
+    document.querySelectorAll('.mode-tab').forEach(t => {
+        t.classList.toggle('active', t.getAttribute('data-mode') === mode);
+    });
+    loadStatement(currentPeriod, currentBotScope, currentMode);
 }
 
 function setBotScope(scope) {
     document.querySelectorAll('.bot-scope-pill').forEach(p => {
         p.classList.toggle('active', p.getAttribute('data-scope') === scope);
     });
-    loadStatement(currentPeriod, scope);
+    loadStatement(currentPeriod, scope, currentMode);
 }
 
 function exportStatementCSV() {
@@ -576,7 +599,7 @@ function exportStatementCSV() {
     }
 
     const rows = [
-        ['Bot ID', 'Symbol', 'Strategy', 'Allocation ($)', 'Allocation (%)', 'Trades', 'Wins', 'Losses', 'Win Rate (%)', 'Profit Factor', 'Gross P&L ($)', 'Commissions ($)', 'Realized P&L ($)', 'Unrealized P&L ($)', 'Total Net P&L ($)', 'ROC (%)']
+        ['Bot ID', 'Symbol', 'Strategy', 'Mode', 'Allocation ($)', 'Allocation (%)', 'Trades', 'Wins', 'Losses', 'Win Rate (%)', 'Profit Factor', 'Gross P&L ($)', 'Commissions ($)', 'Realized P&L ($)', 'Unrealized P&L ($)', 'Total Net P&L ($)', 'ROC (%)']
     ];
 
     currentStatementData.bot_attribution.forEach(b => {
@@ -584,6 +607,7 @@ function exportStatementCSV() {
             b.bot_id,
             b.symbol,
             b.strategy,
+            b.trading_mode || 'PAPER',
             b.allocated_capital,
             b.allocation_pct,
             b.trades_count,
@@ -604,7 +628,7 @@ function exportStatementCSV() {
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `pnl_statement_${currentPeriod}_${currentBotScope}.csv`);
+    link.setAttribute("download", `pnl_statement_${currentPeriod}_${currentMode}_${currentBotScope}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -612,9 +636,10 @@ function exportStatementCSV() {
 
 // Auto-run on page load
 document.addEventListener('DOMContentLoaded', () => {
-    loadStatement('YTD', 'ALL');
+    loadStatement('YTD', 'ALL', 'all');
     // Refresh periodically (every 45s)
     setInterval(() => {
-        loadStatement(currentPeriod, currentBotScope);
+        loadStatement(currentPeriod, currentBotScope, currentMode);
     }, 45000);
 });
+

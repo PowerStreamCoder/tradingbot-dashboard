@@ -92,6 +92,46 @@ class TestPnLStatementAPI(unittest.TestCase):
         self.assertEqual(res2.status_code, 200)
         self.assertIn("HIT", res2.headers.get("X-Cache-Status", ""))
 
+    @patch("main.get_all_trade_history")
+    @patch("main.load_bot_configs")
+    @patch("main.dashboard_data._load_bot_data")
+    def test_pnl_statement_api_mode_parameter(self, mock_load_bot, mock_configs, mock_trades):
+        mock_trades.return_value = {
+            "trades": [
+                {"timestamp": "2026-10-01T14:30:00Z", "symbol": "NVDA", "botId": 4, "profitLoss": 200.0, "trading_mode": "paper"},
+                {"timestamp": "2026-10-02T15:30:00Z", "symbol": "NVDA", "botId": 4, "profitLoss": 400.0, "trading_mode": "live"}
+            ]
+        }
+        mock_configs.return_value = {
+            "bots": [{"name": "nvda_sma", "symbol": "NVDA", "client_id": 4, "strategy": "sma_crossover", "enabled": True}]
+        }
+        mock_load_bot.return_value = {}
+
+        # 1. Paper Mode
+        res_paper = self.client.get("/api/pnl-statement?mode=paper")
+        self.assertEqual(res_paper.status_code, 200)
+        d_paper = res_paper.json()
+        self.assertEqual(d_paper["trading_mode"], "paper")
+        self.assertEqual(d_paper["executive_kpis"]["total_trades"], 1)
+        self.assertEqual(d_paper["executive_kpis"]["realized_pnl"], 200.0)
+
+        # 2. Live Mode
+        res_live = self.client.get("/api/pnl-statement?mode=live")
+        self.assertEqual(res_live.status_code, 200)
+        d_live = res_live.json()
+        self.assertEqual(d_live["trading_mode"], "live")
+        self.assertEqual(d_live["executive_kpis"]["total_trades"], 1)
+        self.assertEqual(d_live["executive_kpis"]["realized_pnl"], 400.0)
+
+        # 3. All / Both Mode
+        res_all = self.client.get("/api/pnl-statement?mode=all")
+        self.assertEqual(res_all.status_code, 200)
+        d_all = res_all.json()
+        self.assertEqual(d_all["trading_mode"], "all")
+        self.assertEqual(d_all["executive_kpis"]["total_trades"], 2)
+        self.assertEqual(d_all["executive_kpis"]["realized_pnl"], 600.0)
+
 
 if __name__ == '__main__':
     unittest.main()
+

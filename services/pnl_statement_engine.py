@@ -74,6 +74,7 @@ class BotAttributionRecord(BaseModel):
     client_id: Optional[int] = None
     strategy: str
     status: str
+    trading_mode: str = "PAPER"  # PAPER, LIVE, or BOTH
     allocated_capital: float
     allocation_pct: float
     deployed_capital: float
@@ -105,7 +106,7 @@ class CalendarHeatmapDay(BaseModel):
 
 
 class RiskInsight(BaseModel):
-    type: str  # ALPHA, FRICTION, RISK, HEALTH
+    type: str  # ALPHA, FRICTION, RISK, HEALTH, MODE
     severity: str  # POSITIVE, WARNING, DANGER, INFO
     title: str
     description: str
@@ -116,8 +117,10 @@ class PortfolioStatementResponse(BaseModel):
     account_id: str
     period: str
     bot_scope: str
+    trading_mode: str = "all"  # paper, live, or all (both)
     data_quality: DataQualityMetadata
     executive_kpis: ExecutiveKPIs
+
     cashflow_waterfall: CashFlowWaterfall
     bot_attribution: List[BotAttributionRecord]
     equity_curve: EquityCurveData
@@ -294,17 +297,26 @@ def aggregate_portfolio_pnl(
     account_overview_data: Optional[Dict[str, Any]] = None,
     period: str = "YTD",
     bot_scope: str = "ALL",
+    mode: str = "all",
     benchmark_symbol: str = "SPY",
     now: Optional[datetime] = None
 ) -> PortfolioStatementResponse:
     """
     Core calculation engine executing the 4-tier statement aggregation.
+    Supports filtering across period horizons, bot scope, and execution mode (paper, live, all/both).
     """
     if now is None:
         now = datetime.now(timezone.utc)
 
-    # Check cache
-    cache_key = f"{period}_{bot_scope}_{benchmark_symbol}"
+    # Normalize mode
+    norm_mode = (mode or "all").lower().strip()
+    if norm_mode not in ("paper", "live", "all", "both"):
+        norm_mode = "all"
+    if norm_mode == "both":
+        norm_mode = "all"
+
+    # Check cache (includes mode to prevent collisions)
+    cache_key = f"{period}_{bot_scope}_{benchmark_symbol}_{norm_mode}"
     with _statement_cache_lock:
         if cache_key in _statement_cache:
             entry = _statement_cache[cache_key]
@@ -317,12 +329,20 @@ def aggregate_portfolio_pnl(
 
     period_start = get_period_start_date(period, now)
 
-    # Filter trades by date range
+    # Filter trades by date range AND trading mode
     filtered_trades: List[Dict[str, Any]] = []
     for t in trades:
         ts = parse_iso_datetime(t.get("timestamp"))
-        if ts and ts >= period_start:
-            filtered_trades.append(t)
+        if not ts or ts < period_start:
+            continue
+
+        trade_mode = (t.get("trading_mode") or "paper").lower().strip()
+        if norm_mode == "paper" and trade_mode != "paper":
+            continue
+        if norm_mode == "live" and trade_mode != "live":
+            continue
+
+        filtered_trades.append(t)
 
     # Map configured bots
     config_by_symbol = {b.get("symbol", "").upper(): b for b in bot_configs if b.get("symbol")}
@@ -337,7 +357,7 @@ def aggregate_portfolio_pnl(
             "QQQ": {"name": "qqq_breakout", "symbol": "QQQ", "client_id": 6, "strategy": "orb_breakout"}
         }
 
-    # Group trades per bot
+    # Group filtered trades per bot
     bot_trades_map: Dict[str, List[Dict[str, Any]]] = {sym: [] for sym in config_by_symbol}
     unmapped_trades: List[Dict[str, Any]] = []
 
@@ -356,10 +376,59 @@ def aggregate_portfolio_pnl(
         else:
             unmapped_trades.append(t)
 
+    # Determine bot mode capabilities and filter active symbols by mode
+    candidate_symbols = list(config_by_symbol.keys())
+    symbols_for_mode: List[str] = []
+
+    # Check overall trades per symbol for mode tagging
+    sym_all_trades_map: Dict[str, List[Dict[str, Any]]] = {sym: [] for sym in config_by_symbol}
+    for t in trades:
+        sym = (t.get("symbol") or "").upper()
+        bot_id = t.get("botId")
+        matched = sym if sym in config_by_symbol else (config_by_client_id.get(bot_id, {}).get("symbol", "").upper() if bot_id in config_by_client_id else None)
+        if matched and matched in sym_all_trades_map:
+            sym_all_trades_map[matched].append(t)
+
+    bot_mode_tags: Dict[str, str] = {}
+    has_any_live_bots = False
+
+    for sym in candidate_symbols:
+        cfg = config_by_symbol.get(sym, {})
+        cfg_mode = (cfg.get("trading_mode") or cfg.get("mode") or cfg.get("profile") or "").lower().strip()
+        all_t = sym_all_trades_map.get(sym, [])
+        has_paper_history = any((t.get("trading_mode") or "paper").lower().strip() == "paper" for t in all_t)
+        has_live_history = any((t.get("trading_mode") or "paper").lower().strip() == "live" for t in all_t)
+
+        if has_live_history and has_paper_history:
+            mode_tag = "BOTH"
+        elif has_live_history or cfg_mode == "live":
+            mode_tag = "LIVE"
+            has_any_live_bots = True
+        else:
+            mode_tag = "PAPER"
+
+        bot_mode_tags[sym] = mode_tag
+
+        if norm_mode == "paper":
+            if not (cfg_mode == "live" and not has_paper_history):
+                symbols_for_mode.append(sym)
+        elif norm_mode == "live":
+            if has_live_history or cfg_mode == "live":
+                symbols_for_mode.append(sym)
+        else:  # all / both
+            symbols_for_mode.append(sym)
+
+    # If live mode requested but no bots have traded live or marked live yet, include all candidate bots with 0 live trades
+    if norm_mode == "live" and not symbols_for_mode:
+        symbols_for_mode = candidate_symbols
+
     # Filter scope if requested
-    active_symbols = list(config_by_symbol.keys())
+    active_symbols = symbols_for_mode
     if bot_scope.upper() != "ALL" and bot_scope.upper() in config_by_symbol:
-        active_symbols = [bot_scope.upper()]
+        if bot_scope.upper() in symbols_for_mode:
+            active_symbols = [bot_scope.upper()]
+        else:
+            active_symbols = [bot_scope.upper()]
 
     # Extract unrealized P&L from bot_overview
     unrealized_by_symbol: Dict[str, float] = {}
@@ -370,13 +439,20 @@ def aggregate_portfolio_pnl(
             if isinstance(val, dict):
                 sym = (val.get("symbol") or "").upper()
                 if not sym and key.startswith("bot"):
-                    # Legacy key
                     continue
                 if sym:
+                    pos_mode = (val.get("trading_mode") or val.get("mode") or "").lower().strip()
+                    # Filter position if explicitly tagged with another mode
+                    if norm_mode == "paper" and pos_mode == "live":
+                        continue
+                    if norm_mode == "live" and pos_mode == "paper":
+                        continue
+
                     unrealized_by_symbol[sym] = float(val.get("unrealized_pnl") or 0.0)
                     pos_size = abs(float(val.get("position_size") or 0.0))
                     avg_cost = float(val.get("avg_cost") or val.get("current_price") or 0.0)
                     deployed_by_symbol[sym] = round(pos_size * avg_cost, 2)
+
 
     # Build per-bot attribution records
     bot_attribution_list: List[BotAttributionRecord] = []
@@ -447,6 +523,7 @@ def aggregate_portfolio_pnl(
                 client_id=cfg.get("client_id"),
                 strategy=cfg.get("description") or cfg.get("strategy") or "Automated Execution",
                 status="RUNNING" if cfg.get("enabled", True) else "PAUSED",
+                trading_mode=bot_mode_tags.get(sym, "PAPER"),
                 allocated_capital=alloc_cap,
                 allocation_pct=0.0,  # Computed below
                 deployed_capital=dep_cap,
@@ -464,6 +541,7 @@ def aggregate_portfolio_pnl(
                 roc_pct=roc
             )
         )
+
 
         total_gross_wins += gross_wins
         total_gross_losses += gross_losses
@@ -503,18 +581,38 @@ def aggregate_portfolio_pnl(
     )
 
     # Executive NAV and Cash Telemetry
-    # Reconcile from account_overview if present, otherwise default to model baseline
-    current_nav = 184520.40
-    free_cash = 54230.00
-    margin_util = 38.2
-
-    if isinstance(account_overview_data, dict):
-        if "net_liquidation" in account_overview_data:
-            current_nav = float(account_overview_data["net_liquidation"])
-        if "total_cash" in account_overview_data:
-            free_cash = float(account_overview_data["total_cash"])
-        if "margin_utilization_pct" in account_overview_data:
-            margin_util = float(account_overview_data["margin_utilization_pct"])
+    # Reconcile according to selected trading mode:
+    # - Live: real production account ($184,520.40 baseline or live account_overview)
+    # - Paper: simulated paper account ($100,000.00 baseline or paper account_overview)
+    # - All/Both: combined capital ($284,520.40 baseline)
+    if norm_mode == "paper":
+        current_nav = 100000.00
+        free_cash = 35000.00
+        margin_util = 14.5
+        if isinstance(account_overview_data, dict):
+            if "paper_net_liquidation" in account_overview_data:
+                current_nav = float(account_overview_data["paper_net_liquidation"])
+            if "paper_total_cash" in account_overview_data:
+                free_cash = float(account_overview_data["paper_total_cash"])
+    elif norm_mode == "live":
+        current_nav = 184520.40
+        free_cash = 54230.00
+        margin_util = 38.2
+        if isinstance(account_overview_data, dict):
+            if "net_liquidation" in account_overview_data:
+                current_nav = float(account_overview_data["net_liquidation"])
+            if "total_cash" in account_overview_data:
+                free_cash = float(account_overview_data["total_cash"])
+            if "margin_utilization_pct" in account_overview_data:
+                margin_util = float(account_overview_data["margin_utilization_pct"])
+    else:  # all / both
+        current_nav = 284520.40
+        free_cash = 89230.00
+        margin_util = 29.8
+        if isinstance(account_overview_data, dict) and "net_liquidation" in account_overview_data:
+            current_nav = float(account_overview_data["net_liquidation"]) + 100000.00
+            if "total_cash" in account_overview_data:
+                free_cash = float(account_overview_data["total_cash"]) + 35000.00
 
     total_net_pnl = round(total_realized_pnl + total_unrealized_pnl, 2)
     starting_nav = round(current_nav - total_net_pnl, 2)
@@ -638,8 +736,32 @@ def aggregate_portfolio_pnl(
         margin_utilization_pct=margin_util
     )
 
+    # Dynamic Mode-aware Risk Insight
+    if norm_mode == "paper":
+        mode_insight = RiskInsight(
+            type="MODE",
+            severity="INFO",
+            title="Paper Trading Simulation Mode",
+            description=f"Showing simulated execution across {len(bot_attribution_list)} paper trading bots. Real capital is not exposed."
+        )
+    elif norm_mode == "live":
+        mode_insight = RiskInsight(
+            type="MODE",
+            severity="POSITIVE" if total_trades_count > 0 else "WARNING",
+            title="Real-Money Live Trading Mode",
+            description=f"Showing live production execution for {len(bot_attribution_list)} live bots with real IBKR fills and commissions."
+        )
+    else:
+        mode_insight = RiskInsight(
+            type="MODE",
+            severity="INFO",
+            title="Consolidated Live & Paper Mode",
+            description=f"Blended multi-mode analytics across all {len(bot_attribution_list)} bots in live production and paper simulation environments."
+        )
+
     # Automated Risk Insights
     risk_insights = [
+        mode_insight,
         RiskInsight(
             type="ALPHA",
             severity="POSITIVE",
@@ -650,7 +772,7 @@ def aggregate_portfolio_pnl(
             type="FRICTION",
             severity="WARNING" if total_commissions > 500 else "INFO",
             title="Execution Friction & Commission Impact",
-            description=f"Total commissions across all active bots totaled ${total_commissions:,.2f}. Commission drag is well within strategy parameters."
+            description=f"Total commissions across active bots in this mode totaled ${total_commissions:,.2f}. Commission drag is well within strategy parameters."
         ),
         RiskInsight(
             type="RISK",
@@ -662,9 +784,10 @@ def aggregate_portfolio_pnl(
 
     response_obj = PortfolioStatementResponse(
         timestamp=now.isoformat(),
-        account_id="U9283719",
+        account_id="U9283719" if norm_mode == "live" else ("DU9283719" if norm_mode == "paper" else "COMBINED-U9283719"),
         period=period,
         bot_scope=bot_scope,
+        trading_mode=norm_mode,
         data_quality=DataQualityMetadata(
             nav_source="live_telemetry" if account_overview_data else "derived_and_overview",
             commissions_mode="hybrid_exact_and_tiered",
@@ -691,3 +814,4 @@ def aggregate_portfolio_pnl(
         }
 
     return response_obj
+
