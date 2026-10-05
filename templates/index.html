@@ -74,7 +74,7 @@
 
         <!-- Main Content -->
         <div class="main-content">
-            <!-- Horizon & Scope Controls Card -->
+            <!-- Horizon, Mode & Scope Controls Card -->
             <div class="statement-controls-card">
                 <div class="control-group">
                     <span class="control-label">Period Horizon</span>
@@ -90,6 +90,15 @@
                 </div>
 
                 <div class="control-group">
+                    <span class="control-label">Trading Mode</span>
+                    <div class="mode-tabs" id="modeTabs">
+                        <button class="mode-tab" data-mode="paper" onclick="setTradingMode('paper')">🧪 Paper Mode</button>
+                        <button class="mode-tab" data-mode="live" onclick="setTradingMode('live')">🟢 Live Mode</button>
+                        <button class="mode-tab active" data-mode="all" onclick="setTradingMode('all')">🔄 Both (Live &amp; Paper)</button>
+                    </div>
+                </div>
+
+                <div class="control-group">
                     <span class="control-label">Bot Attribution Scope</span>
                     <div class="bot-scope-pills" id="botScopePills">
                         <div class="bot-scope-pill active" data-scope="ALL" onclick="setBotScope('ALL')">
@@ -98,6 +107,7 @@
                     </div>
                 </div>
             </div>
+
 
             <!-- Executive KPI Summary Grid -->
             <div class="kpi-grid">
@@ -286,6 +296,7 @@
                                 <th class="sticky-col">Bot Identifier &amp; Strategy</th>
                                 <th>Allocation ($ / %)</th>
                                 <th>Status</th>
+                                <th>Mode</th>
                                 <th>Trades (W / L)</th>
                                 <th>Win Rate</th>
                                 <th>Profit Factor</th>
@@ -300,12 +311,13 @@
                         </thead>
                         <tbody id="statementTableBody">
                             <tr>
-                                <td colspan="13" style="text-align:center; padding: 24px; color: var(--text-muted);">
+                                <td colspan="14" style="text-align:center; padding: 24px; color: var(--text-muted);">
                                     Loading statement attribution records...
                                 </td>
                             </tr>
                         </tbody>
                     </table>
+
                 </div>
             </div>
 

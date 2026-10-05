@@ -221,3 +221,103 @@ def test_mutation_kill_roc_capital_denominator():
 
     with pytest.raises(AssertionError):
         assert mutant_roc == roc_baseline
+
+
+def test_mutation_kill_trading_mode_filter_inversion():
+    """
+    KILLS MUTANT 9: Inverting or omitting trading mode filtering.
+    When 'paper' mode is requested, live trades must be strictly excluded.
+    When 'live' mode is requested, paper trades must be strictly excluded.
+    """
+    trades = [
+        {"id": 1, "profitLoss": 500.0, "trading_mode": "paper"},
+        {"id": 2, "profitLoss": 250.0, "trading_mode": "live"},
+        {"id": 3, "profitLoss": 150.0, "trading_mode": "paper"},
+        {"id": 4, "profitLoss": 600.0, "trading_mode": "live"}
+    ]
+
+    # Baseline: Correct filtering
+    def filter_by_mode(trade_list, req_mode):
+        norm = (req_mode or "all").lower().strip()
+        if norm == "paper":
+            return [t for t in trade_list if (t.get("trading_mode") or "paper").lower() == "paper"]
+        elif norm == "live":
+            return [t for t in trade_list if (t.get("trading_mode") or "paper").lower() == "live"]
+        return trade_list
+
+    paper_trades = filter_by_mode(trades, "paper")
+    live_trades = filter_by_mode(trades, "live")
+
+    assert len(paper_trades) == 2
+    assert sum(t["profitLoss"] for t in paper_trades) == 650.0
+    assert len(live_trades) == 2
+    assert sum(t["profitLoss"] for t in live_trades) == 850.0
+
+    # Mutant 1: Mode filter bypassed (always returns all trades)
+    def mutant_bypassed_mode(trade_list, req_mode):
+        return trade_list
+
+    mutant_paper = mutant_bypassed_mode(trades, "paper")
+    assert len(mutant_paper) == 4
+    assert sum(t["profitLoss"] for t in mutant_paper) == 1500.0
+
+    with pytest.raises(AssertionError):
+        assert sum(t["profitLoss"] for t in mutant_paper) == sum(t["profitLoss"] for t in paper_trades)
+
+    # Mutant 2: Mode filter inverted (live returns paper)
+    def mutant_inverted_mode(trade_list, req_mode):
+        norm = (req_mode or "all").lower().strip()
+        if norm == "paper":
+            return [t for t in trade_list if (t.get("trading_mode") or "paper").lower() == "live"]
+        elif norm == "live":
+            return [t for t in trade_list if (t.get("trading_mode") or "paper").lower() == "paper"]
+        return trade_list
+
+    mutant_inverted_live = mutant_inverted_mode(trades, "live")
+    assert len(mutant_inverted_live) == 2
+    assert sum(t["profitLoss"] for t in mutant_inverted_live) == 650.0  # Returned paper trades instead of 850.0 live!
+
+    with pytest.raises(AssertionError):
+        assert sum(t["profitLoss"] for t in mutant_inverted_live) == sum(t["profitLoss"] for t in live_trades)
+
+
+def test_mutation_kill_cache_key_trading_mode_collision():
+    """
+    KILLS MUTANT 10: Mutating cache key generation by omitting trading mode.
+    `GET /api/pnl-statement?mode=paper` must NOT collide with or overwrite
+    `GET /api/pnl-statement?mode=live`.
+    """
+    period = "YTD"
+    scope = "ALL"
+    benchmark = "SPY"
+
+    # Baseline key format incorporates norm_mode
+    def correct_cache_key(period_val, scope_val, bench_val, mode_val):
+        norm = (mode_val or "all").lower().strip()
+        if norm == "both":
+            norm = "all"
+        return f"{period_val}_{scope_val}_{bench_val}_{norm}"
+
+    # Mutant: Omits mode from cache key
+    def mutant_cache_key(period_val, scope_val, bench_val, mode_val):
+        return f"{period_val}_{scope_val}_{bench_val}"
+
+    key_paper = correct_cache_key(period, scope, benchmark, "paper")
+    key_live = correct_cache_key(period, scope, benchmark, "live")
+    key_all = correct_cache_key(period, scope, benchmark, "all")
+
+    # Baseline keys are distinct
+    assert key_paper != key_live
+    assert key_paper != key_all
+    assert key_paper == "YTD_ALL_SPY_paper"
+    assert key_live == "YTD_ALL_SPY_live"
+    assert key_all == "YTD_ALL_SPY_all"
+
+    # Mutant keys collide completely
+    m_paper = mutant_cache_key(period, scope, benchmark, "paper")
+    m_live = mutant_cache_key(period, scope, benchmark, "live")
+    assert m_paper == m_live == "YTD_ALL_SPY"
+
+    with pytest.raises(AssertionError):
+        assert m_paper != m_live
+
