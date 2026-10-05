@@ -29,6 +29,12 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 UTC = timezone.utc
 
 # =============================================================================
@@ -187,22 +193,11 @@ def sec_headers():
 
     Returns:
         Dict with required headers
-
-    Raises:
-        ValueError: If SEC_USER_AGENT environment variable not set
-
-    Note:
-        Set SEC_USER_AGENT to: "YourAppName/1.0 your@email.com"
-        See: https://www.sec.gov/os/accessing-edgar-data
     """
     ua = env('SEC_USER_AGENT')
     if not ua or 'example.com' in ua:
-        raise ValueError(
-            "SEC_USER_AGENT environment variable must be set to a valid contact. "
-            "Format: 'YourAppName/1.0 your@email.com'. "
-            "See: https://www.sec.gov/os/accessing-edgar-data"
-        )
-    return {'User-Agent': ua, 'Accept-Encoding': 'gzip, deflate', 'Host': 'www.sec.gov'}
+        ua = 'TradingBotDashboard/1.0 tradingbot-admin@internal.local'
+    return {'User-Agent': ua, 'Accept-Encoding': 'gzip, deflate'}
 
 
 # =============================================================================
@@ -614,15 +609,18 @@ def fetch_alphavantage_news(since_iso: str) -> List[NewsItem]:
 
     try:
         # Alpha Vantage News Sentiment API
-        # Search for general market news with catalyst keywords
-        topics = 'earnings,ipo,mergers_and_acquisitions,financial_markets,technology'
-
-        data = safe_get(ALPHAVANTAGE_NEWS_URL, params={
+        # By default omitting 'topics' returns all latest market news sorted by recency
+        params = {
             'function': 'NEWS_SENTIMENT',
-            'topics': topics,
             'limit': 50,  # Max 50 articles per request
+            'sort': 'LATEST',
             'apikey': api_key
-        })
+        }
+
+        data = safe_get(ALPHAVANTAGE_NEWS_URL, params=params)
+        if isinstance(data, dict) and ('Information' in data or 'Note' in data):
+            logger.warning(f"Alpha Vantage rate limit reached in news: {data.get('Information') or data.get('Note')}")
+            return []
 
         items = []
         feed = data.get('feed', []) if isinstance(data, dict) else []
@@ -645,9 +643,11 @@ def fetch_alphavantage_news(since_iso: str) -> List[NewsItem]:
                 # If parsing fails, include the article anyway
                 pass
 
-            # Calculate engagement from sentiment scores and relevance
-            sentiment_score = float(article.get('overall_sentiment_score', 0))
-            relevance_score = float(article.get('overall_sentiment_label', '0.5'))
+            # Calculate engagement from sentiment scores
+            try:
+                sentiment_score = float(article.get('overall_sentiment_score', 0) or 0)
+            except (ValueError, TypeError):
+                sentiment_score = 0.0
 
             # Extract tickers mentioned
             ticker_sentiment = article.get('ticker_sentiment', [])
@@ -918,41 +918,44 @@ def generate_fundamentals_picks(top_n=20) -> List[Dict]:
 
     scores_summary = []  # Track scores for debugging
 
-    for item in all_tickers:
-        ticker = item['ticker']
-        sector = item['sector']
+    from concurrent.futures import ThreadPoolExecutor
 
+    def score_ticker_item(item):
+        t = item['ticker']
+        sec = item['sector']
         try:
-            # Get fundamental score (already implemented)
-            fund_score = compute_fundamental_score(ticker)
-
-            # Lower threshold to account for normalization
-            # After normalization, scores are 0-100 but weighted differently
-            # A normalized score of 10+ is decent (was 40+ in old scale)
+            fund_score = compute_fundamental_score(t)
             if fund_score and fund_score.get('score', 0) >= 10:
-                scores_summary.append(f"{ticker}:{fund_score['score']:.0f}")
                 fund_missing = sorted(list(set(fund_score.get('missing_sources', []) + ['News Catalysts'])))
                 fund_warnings = fund_score.get('degradation_warnings', []) + ['News catalyst feeds returned no explosive news (explosiveness 0.0)']
-                candidates.append({
-                    'headline': f"Strong fundamentals in {sector}",
-                    'explosiveness': 0.0,  # No news = no explosiveness
-                    'industry': sector,
-                    'direct_ticker': ticker,
-                    'impacted_us_tickers': [ticker],
-                    'thesis': f"{ticker} shows solid financial metrics: {fund_score.get('fundamental_reasons', 'Good fundamentals')}",
+                return {
+                    'headline': f"Strong fundamentals in {sec}",
+                    'explosiveness': 0.0,
+                    'industry': sec,
+                    'direct_ticker': t,
+                    'impacted_us_tickers': [t],
+                    'thesis': f"{t} shows solid financial metrics: {fund_score.get('fundamental_reasons', 'Good fundamentals')}",
                     'rationale_short': 'No news available - selected by fundamental analysis',
                     'news_source': 'fundamentals_only',
                     'published_at': datetime.now(UTC).isoformat(),
                     'fundamental_score': fund_score['score'],
-                    'ticker': ticker,
+                    'ticker': t,
                     'data_quality': 'PARTIAL',
                     'is_degraded': True,
                     'missing_sources': fund_missing,
                     'degradation_warnings': fund_warnings
-                })
+                }
         except Exception as e:
-            logger.warning(f"Failed to score {ticker}: {e}")
-            continue
+            logger.warning(f"Failed to score {t}: {e}")
+        return None
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        results = list(ex.map(score_ticker_item, all_tickers))
+
+    for cand in results:
+        if cand:
+            candidates.append(cand)
+            scores_summary.append(f"{cand['ticker']}:{cand['fundamental_score']:.0f}")
 
     # Sort by fundamental score
     candidates.sort(key=lambda x: x['fundamental_score'], reverse=True)
@@ -1046,6 +1049,7 @@ def get_sec_ticker_map() -> Dict[str, str]:
 
     except Exception as e:
         logger.warning(f"Failed to fetch SEC ticker map: {e}")
+        _fundamental_cache['sec_ticker_map'] = {}
         return {}
 
 
@@ -1127,6 +1131,41 @@ def get_companyfacts_quarterly(ticker: str) -> Dict[str, List]:
         return {}
 
 
+# Cached Yahoo Finance crumb & cookies for authenticated REST endpoints
+_yf_crumb = None
+_yf_cookies = None
+_yf_crumb_time = None
+
+
+def get_yahoo_crumb_and_cookies(force_refresh: bool = False):
+    """
+    Get or refresh Yahoo Finance crumb and cookies via requests.get.
+    """
+    global _yf_crumb, _yf_cookies, _yf_crumb_time
+    now = time.time()
+    if not force_refresh and _yf_crumb is not None and _yf_cookies is not None and (now - (_yf_crumb_time or 0) < 3600):
+        return _yf_crumb, _yf_cookies
+
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept': '*/*',
+            'Accept-Language': 'en-US,en;q=0.5',
+        }
+        r_fc = requests.get('https://fc.yahoo.com', headers=headers, timeout=10)
+        cookies = r_fc.cookies
+        r_crumb = requests.get('https://query2.finance.yahoo.com/v1/test/getcrumb', headers=headers, cookies=cookies, timeout=10)
+        if r_crumb.status_code == 200 and r_crumb.text:
+            _yf_crumb = r_crumb.text.strip()
+            _yf_cookies = cookies
+            _yf_crumb_time = now
+            return _yf_crumb, _yf_cookies
+    except Exception as e:
+        logger.debug(f"Failed to acquire Yahoo Finance crumb: {e}")
+
+    return None, None
+
+
 def get_yahoo_financial_snapshot(ticker: str) -> Dict:
     """
     Get financial snapshot from Yahoo Finance (FREE - no API key required).
@@ -1146,16 +1185,25 @@ def get_yahoo_financial_snapshot(ticker: str) -> Dict:
     Returns:
         Dict with Yahoo Finance data (nested structure)
         Empty dict if ticker not found or on error
-
-    Note:
-        This uses Yahoo's quoteSummary endpoint which is not officially
-        documented but widely used. May break if Yahoo changes their API.
     """
     try:
         modules = 'financialData,defaultKeyStatistics,price,summaryDetail,calendarEvents'
         url = YF_QUOTE_SUMMARY.format(ticker=ticker)
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        params = {'modules': modules}
 
-        r = requests.get(url, params={'modules': modules}, timeout=30)
+        crumb, cookies = _yf_crumb, _yf_cookies
+        if crumb:
+            params['crumb'] = crumb
+
+        r = requests.get(url, params=params, headers=headers, cookies=cookies, timeout=15)
+
+        if r.status_code in (401, 429):
+            crumb, cookies = get_yahoo_crumb_and_cookies(force_refresh=True)
+            if crumb:
+                params['crumb'] = crumb
+                r = requests.get(url, params=params, headers=headers, cookies=cookies, timeout=15)
+
         if r.status_code != 200:
             return {}
 
@@ -1203,8 +1251,13 @@ def get_alpha_earnings(ticker: str) -> Dict:
         if r.status_code != 200:
             return {}
 
+        data = r.json()
+        if isinstance(data, dict) and ('Information' in data or 'Note' in data):
+            logger.warning(f"Alpha Vantage rate limit reached for {ticker}: {data.get('Information') or data.get('Note')}")
+            return {}
+
         logger.debug(f"Fetched Alpha Vantage earnings data for {ticker}")
-        return r.json()
+        return data
 
     except Exception as e:
         logger.warning(f"Failed to get Alpha Vantage data for {ticker}: {e}")
@@ -1237,8 +1290,10 @@ def latest_numeric(obj, path_list):
 
     # Yahoo Finance returns {'raw': value, 'fmt': formatted_string}
     if isinstance(cur, dict) and 'raw' in cur:
-        return cur['raw']
-    return cur
+        cur = cur['raw']
+    if isinstance(cur, (int, float)):
+        return float(cur)
+    return None
 
 
 def safe_yoy_from_quarters(items):
@@ -1287,6 +1342,10 @@ def latest_val(items):
         return None
 
 
+# Cache for compute_fundamental_score within run
+_fundamental_scores_cache: Dict[Any, Dict[str, Any]] = {}
+
+
 def compute_fundamental_score(ticker: str, weight_adjustments: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
     """
     Compute fundamental score (0-100) for a ticker.
@@ -1332,6 +1391,10 @@ def compute_fundamental_score(ticker: str, weight_adjustments: Optional[Dict[str
         Each metric is optional - missing metrics don't affect baseline score.
         This ensures we can still score companies with incomplete data.
     """
+    cache_key = (ticker.upper(), tuple(sorted((weight_adjustments or {}).items())))
+    if cache_key in _fundamental_scores_cache:
+        return dict(_fundamental_scores_cache[cache_key])
+
     # Fetch data from all sources
     sec = get_companyfacts_quarterly(ticker)
     yf = get_yahoo_financial_snapshot(ticker)
@@ -1571,7 +1634,7 @@ def compute_fundamental_score(ticker: str, weight_adjustments: Optional[Dict[str
     if is_degraded:
         reasons.append(f"data_quality={data_quality} (missing: {', '.join(missing_sources)})")
 
-    return {
+    result_dict = {
         'ticker': ticker,
         'score': normalized_score,  # Use normalized score
         'raw_score': raw_score,     # Keep raw for debugging
@@ -1592,6 +1655,8 @@ def compute_fundamental_score(ticker: str, weight_adjustments: Optional[Dict[str
         'recommendation_mean': recommendation,
         'fundamental_reasons': '; '.join(reasons) if reasons else 'baseline (no data)'
     }
+    _fundamental_scores_cache[cache_key] = result_dict
+    return result_dict
 
 
 # =============================================================================

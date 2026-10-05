@@ -138,7 +138,11 @@ async function runStockPickerNow() {
         if (result.status === 'success') {
             const pickCount = result.pick_count || 0;
             const duration = result.duration_seconds || 0;
-            showToast(`✅ Generated ${pickCount} picks in ${duration}s`, 'success');
+            if (pickCount > 0) {
+                showToast(`✅ Generated ${pickCount} picks in ${duration}s`, 'success');
+            } else {
+                showToast(`ℹ️ 0 picks generated: ${result.message || 'No candidates met scoring criteria.'}`, 'warning');
+            }
             loadStockPicks();
         } else {
             showToast(`❌ ${result.message || 'StockPicker run failed'}`, 'error');

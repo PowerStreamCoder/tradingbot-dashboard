@@ -28,6 +28,12 @@ from google.cloud import firestore
 import os
 import re
 import json
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 from io import BytesIO
 import xlsxwriter
 import secrets

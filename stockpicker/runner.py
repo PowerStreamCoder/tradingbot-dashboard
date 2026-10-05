@@ -276,9 +276,9 @@ def run_stockpicker() -> Optional[Dict[str, Any]]:
         news = fetch_all_news(hours=24)
         logger.info(f"✓ Fetched {len(news)} news items from all sources")
 
-        # Step 2: Rank news by explosiveness
+        # Step 2: Rank news by explosiveness (falls back to fundamentals if news is empty)
         logger.info("Step 2/5: Ranking news by explosiveness...")
-        ranked = rank_news(news) if news else []
+        ranked = rank_news(news)
         logger.info(f"✓ Ranked {len(ranked)} items")
 
         # Step 3: Track 1 - Growth Equity Scoring
