@@ -497,41 +497,60 @@
                 <span id="sp-degradation-alert-text">Scoring degraded on some candidates due to missing/incomplete data feeds.</span>
             </div>
 
-            <!-- Track Filter Selector -->
-            <div style="display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap;">
-                <button class="sp-tab-btn active" id="sp-filter-all" onclick="filterStockPicks('all')" style="padding: 6px 14px; border-radius: 6px; border: 1px solid #4a5568; background: #2d3748; color: #fff; cursor: pointer; font-size: 0.9em;">
-                    All Visible
-                </button>
-                <button class="sp-tab-btn" id="sp-filter-growth" onclick="filterStockPicks('growth')" style="padding: 6px 14px; border-radius: 6px; border: 1px solid #4a5568; background: #1a202c; color: #cbd5e0; cursor: pointer; font-size: 0.9em;">
-                    🚀 Growth Leads
-                </button>
-                <button class="sp-tab-btn" id="sp-filter-income" onclick="filterStockPicks('income')" style="padding: 6px 14px; border-radius: 6px; border: 1px solid #4a5568; background: #1a202c; color: #cbd5e0; cursor: pointer; font-size: 0.9em;">
-                    🛡️ Income Leads
-                </button>
-                <button class="sp-tab-btn" id="sp-filter-accepted" onclick="filterStockPicks('accepted')" style="padding: 6px 14px; border-radius: 6px; border: 1px solid #4a5568; background: #1a202c; color: #cbd5e0; cursor: pointer; font-size: 0.9em;">
-                    🟢 Already Provisioned (<span id="sp-tab-accepted-num">0</span>)
-                </button>
+            <!-- Enhanced Toolbar: Track Filters & Quick Search -->
+            <div class="sp-toolbar">
+                <div class="sp-filter-group" role="tablist">
+                    <button class="sp-tab-btn active" id="sp-filter-all" onclick="filterStockPicks('all')" role="tab" aria-selected="true">
+                        <span class="sp-tab-icon">🌐</span>
+                        <span>All Visible</span>
+                        <span class="sp-tab-badge" id="sp-tab-all-num">0</span>
+                    </button>
+                    <button class="sp-tab-btn" id="sp-filter-growth" onclick="filterStockPicks('growth')" role="tab" aria-selected="false">
+                        <span class="sp-tab-icon">🚀</span>
+                        <span>Growth Leads</span>
+                        <span class="sp-tab-badge growth" id="sp-tab-growth-num">0</span>
+                    </button>
+                    <button class="sp-tab-btn" id="sp-filter-income" onclick="filterStockPicks('income')" role="tab" aria-selected="false">
+                        <span class="sp-tab-icon">🛡️</span>
+                        <span>Income Leads</span>
+                        <span class="sp-tab-badge income" id="sp-tab-income-num">0</span>
+                    </button>
+                    <button class="sp-tab-btn" id="sp-filter-accepted" onclick="filterStockPicks('accepted')" role="tab" aria-selected="false">
+                        <span class="sp-tab-icon">🟢</span>
+                        <span>Active Bots</span>
+                        <span class="sp-tab-badge active" id="sp-tab-accepted-num">0</span>
+                    </button>
+                </div>
+                <div class="sp-search-box">
+                    <svg class="sp-search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                    <input type="text" id="sp-search-input" class="sp-search-input" placeholder="Search ticker, thesis, or industry..." oninput="handleStockPickerSearch(this.value)">
+                    <button id="sp-search-clear-btn" class="sp-search-clear" onclick="clearStockPickerSearch()" title="Clear search" style="display: none;">✕</button>
+                </div>
             </div>
 
-            <!-- Picks Table -->
-            <div class="table-container">
-                <table class="bot-table" id="stock-picks-table">
+            <!-- Enhanced Picks Table -->
+            <div class="table-container sp-table-wrapper">
+                <table class="bot-table sp-enhanced-table" id="stock-picks-table">
                     <thead>
                         <tr>
-                            <th style="width: 45px; text-align: center; padding: 12px 6px;">#</th>
-                            <th style="width: 110px; padding: 12px 8px;">TRACK</th>
-                            <th style="width: 90px; text-align: center; padding: 12px 8px;">TICKER</th>
-                            <th style="width: 80px; text-align: right; padding: 12px 8px;" title="Composite or Income score (0-100)">SCORE</th>
-                            <th style="width: 120px; text-align: center; padding: 12px 8px;">STATUS</th>
-                            <th style="width: auto; min-width: 280px; padding: 12px 10px;">CATALYST / THESIS</th>
-                            <th style="width: auto; min-width: 220px; padding: 12px 10px;">METRICS & DOSSIER</th>
-                            <th style="width: 160px; text-align: center; padding: 12px 8px;">ACTIONS</th>
+                            <th style="width: 48px; text-align: center;">#</th>
+                            <th style="width: 110px;">TRACK</th>
+                            <th style="width: 100px; text-align: center;">TICKER</th>
+                            <th style="width: 95px; text-align: center;" title="Quantitative Conviction Score (0-100)">SCORE</th>
+                            <th style="width: 130px; text-align: center;">STATUS</th>
+                            <th style="min-width: 280px;">CATALYST & INVESTMENT THESIS</th>
+                            <th style="min-width: 220px;">KEY METRICS & EVIDENCE</th>
+                            <th style="width: 160px; text-align: center;">ACTIONS</th>
                         </tr>
                     </thead>
                     <tbody id="stock-picks-tbody">
                         <tr>
-                            <td colspan="8" style="text-align: center; padding: 20px; color: #95a5a6;">
-                                Loading stock picks...
+                            <td colspan="8" class="sp-table-loading">
+                                <div class="sp-spinner"></div>
+                                <div style="margin-top: 8px;">Loading stock picks...</div>
                             </td>
                         </tr>
                     </tbody>
@@ -686,15 +705,16 @@
     <script src="/static/js/stock_picker.js?v=3.0.0"></script>
 
     <script>
-    // Toggle Stock Picker tab visibility
+    // Toggle Stock Picker tab visibility and hide bot-specific bars
     function showStockPickerTab(event) {
-        event.preventDefault();
+        if (event) event.preventDefault();
 
-        // Hide all main sections
-        document.querySelectorAll('.main-content, section:not(#stock-picker-section)').forEach(el => {
-            if (!el.classList.contains('bot-header') && !el.classList.contains('nav-bar')) {
-                el.style.display = 'none';
-            }
+        // Mark body with stock-picker-mode
+        document.body.classList.add('stock-picker-mode');
+
+        // Hide all bot-specific sections, header bar, and market-clock risk strip
+        document.querySelectorAll('.main-content, .main-grid, .market-clock, .bot-header, section:not(#stock-picker-section)').forEach(el => {
+            el.style.display = 'none';
         });
 
         // Show stock picker section
@@ -704,7 +724,12 @@
 
             // Update nav active state
             document.querySelectorAll('.nav-link').forEach(link => link.classList.remove('active'));
-            event.target.classList.add('active');
+            const stockPickerLink = document.querySelector('.nav-link[onclick*="showStockPickerTab"]');
+            if (stockPickerLink) {
+                stockPickerLink.classList.add('active');
+            } else if (event && event.target) {
+                event.target.classList.add('active');
+            }
 
             // Load stock picks
             startStockPickerRefresh();
@@ -715,62 +740,607 @@
     window.addEventListener('DOMContentLoaded', function() {
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.get('show') === 'stockpicker') {
-            // Simulate click on Stock Picker tab
-            const stockPickerSection = document.getElementById('stock-picker-section');
-            if (stockPickerSection) {
-                // Hide all main sections
-                document.querySelectorAll('.main-content, section:not(#stock-picker-section)').forEach(el => {
-                    if (!el.classList.contains('bot-header') && !el.classList.contains('nav-bar')) {
-                        el.style.display = 'none';
-                    }
-                });
-
-                // Show stock picker section
-                stockPickerSection.style.display = 'block';
-
-                // Update nav active state
-                document.querySelectorAll('.nav-link').forEach(link => link.classList.remove('active'));
-                const stockPickerLink = document.querySelector('.nav-link[onclick*="showStockPickerTab"]');
-                if (stockPickerLink) {
-                    stockPickerLink.classList.add('active');
-                }
-
-                // Load stock picks
-                startStockPickerRefresh();
-            }
+            showStockPickerTab(null);
         }
     });
     </script>
 
     <style>
-    /* Stock Picker specific styles */
-    .badge-industry {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 6px 12px;
-        border-radius: 6px;
+    /* Ensure bot tabstrip and header are completely hidden when in Stock Picker mode */
+    body.stock-picker-mode .market-clock,
+    body.stock-picker-mode .bot-header {
+        display: none !important;
+    }
+
+    body.stock-picker-mode .nav-bar {
+        margin-top: 10px;
+        margin-bottom: 20px;
+    }
+
+    /* Stock Picker Toolbar & Segmented Filter Tabs */
+    .sp-toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 15px;
+        margin-bottom: 18px;
+        flex-wrap: wrap;
+    }
+
+    .sp-filter-group {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: rgba(15, 23, 42, 0.7);
+        padding: 4px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3);
+    }
+
+    .sp-tab-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 14px;
+        border-radius: 7px;
+        border: 1px solid transparent;
+        background: transparent;
+        color: #94a3b8;
+        font-size: 0.88em;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .sp-tab-btn:hover {
+        color: #f8fafc;
+        background: rgba(255, 255, 255, 0.05);
+    }
+
+    .sp-tab-btn.active {
+        background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+        color: #ffffff;
+        border-color: rgba(56, 189, 248, 0.35);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+        font-weight: 600;
+    }
+
+    .sp-tab-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 20px;
+        height: 20px;
+        padding: 0 6px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.12);
+        font-size: 0.78em;
+        font-weight: 700;
+        color: #e2e8f0;
+    }
+
+    .sp-tab-badge.growth {
+        background: rgba(99, 102, 241, 0.25);
+        color: #c7d2fe;
+    }
+
+    .sp-tab-badge.income {
+        background: rgba(16, 185, 129, 0.25);
+        color: #a7f3d0;
+    }
+
+    .sp-tab-badge.active {
+        background: rgba(56, 189, 248, 0.25);
+        color: #bae6fd;
+    }
+
+    /* Quick Search Input */
+    .sp-search-box {
+        position: relative;
+        display: flex;
+        align-items: center;
+        min-width: 280px;
+        max-width: 360px;
+        flex: 1;
+    }
+
+    .sp-search-icon {
+        position: absolute;
+        left: 12px;
+        color: #64748b;
+        pointer-events: none;
+    }
+
+    .sp-search-input {
+        width: 100%;
+        padding: 8px 32px 8px 36px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(15, 23, 42, 0.7);
+        color: #f8fafc;
+        font-size: 0.88em;
+        outline: none;
+        transition: all 0.2s ease;
+    }
+
+    .sp-search-input:focus {
+        border-color: #38bdf8;
+        background: #0f172a;
+        box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.18);
+    }
+
+    .sp-search-clear {
+        position: absolute;
+        right: 10px;
+        background: none;
+        border: none;
+        color: #94a3b8;
+        cursor: pointer;
+        font-size: 14px;
+        padding: 2px 4px;
+    }
+
+    .sp-search-clear:hover {
+        color: #f8fafc;
+    }
+
+    /* Enhanced Table Styling */
+    .sp-table-wrapper {
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 12px;
+        overflow: hidden;
+        background: rgba(15, 23, 42, 0.6);
+        backdrop-filter: blur(12px);
+        box-shadow: 0 15px 35px -5px rgba(0, 0, 0, 0.45);
+    }
+
+    .sp-enhanced-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+        font-size: 0.9em;
+    }
+
+    .sp-enhanced-table thead th {
+        background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+        color: #94a3b8;
+        font-weight: 600;
+        font-size: 0.76em;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        padding: 13px 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .sp-enhanced-table tbody tr {
+        transition: background-color 0.18s ease;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    }
+
+    .sp-enhanced-table tbody tr:hover {
+        background-color: rgba(56, 189, 248, 0.04) !important;
+    }
+
+    .sp-enhanced-table td {
+        padding: 13px 12px;
+        vertical-align: middle;
+    }
+
+    /* Rank Badge */
+    .sp-rank-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.06);
+        color: #94a3b8;
         font-size: 0.85em;
+        font-weight: 700;
+    }
+
+    /* Track Badge */
+    .sp-track-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-size: 0.78em;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+    }
+
+    .sp-track-badge.growth {
+        background: rgba(99, 102, 241, 0.15);
+        color: #a5b4fc;
+        border: 1px solid rgba(99, 102, 241, 0.35);
+    }
+
+    .sp-track-badge.income {
+        background: rgba(16, 185, 129, 0.15);
+        color: #34d399;
+        border: 1px solid rgba(16, 185, 129, 0.35);
+    }
+
+    /* Ticker Display */
+    .sp-ticker-cell {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+    }
+
+    .sp-ticker-symbol {
+        font-size: 1.15em;
+        font-weight: 800;
+        color: #38bdf8;
+        letter-spacing: 0.04em;
+        text-shadow: 0 0 12px rgba(56, 189, 248, 0.3);
+    }
+
+    .sp-ticker-industry {
+        font-size: 0.72em;
+        color: #94a3b8;
+        max-width: 110px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    /* Score Pills */
+    .sp-score-wrapper {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 3px;
+    }
+
+    .sp-score-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 4px 10px;
+        border-radius: 14px;
+        font-weight: 800;
+        font-size: 0.95em;
+        min-width: 48px;
+    }
+
+    .sp-score-pill.score-high {
+        background: rgba(16, 185, 129, 0.2);
+        color: #34d399;
+        border: 1px solid rgba(16, 185, 129, 0.5);
+        box-shadow: 0 0 10px rgba(16, 185, 129, 0.2);
+    }
+
+    .sp-score-pill.score-med {
+        background: rgba(56, 189, 248, 0.2);
+        color: #38bdf8;
+        border: 1px solid rgba(56, 189, 248, 0.5);
+    }
+
+    .sp-score-pill.score-low {
+        background: rgba(245, 158, 11, 0.2);
+        color: #fbbf24;
+        border: 1px solid rgba(245, 158, 11, 0.5);
+    }
+
+    .sp-degraded-tag {
+        background: rgba(245, 158, 11, 0.2);
+        color: #fbbf24;
+        border: 1px solid #f59e0b;
+        padding: 1px 6px;
+        border-radius: 6px;
+        font-size: 0.68em;
+        font-weight: 600;
+        cursor: help;
+    }
+
+    /* Status Pills with Pulses */
+    .sp-status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 11px;
+        border-radius: 20px;
+        font-size: 0.78em;
         font-weight: 600;
         white-space: nowrap;
     }
 
-    .catalyst-cell {
-        max-width: 500px;
+    .sp-status-pill.pending {
+        background: rgba(245, 158, 11, 0.15);
+        color: #fbbf24;
+        border: 1px solid rgba(245, 158, 11, 0.4);
+    }
+
+    .sp-status-pill.provisioned {
+        background: rgba(16, 185, 129, 0.2);
+        color: #34d399;
+        border: 1px solid rgba(16, 185, 129, 0.5);
+    }
+
+    .sp-status-pill.accepted {
+        background: rgba(59, 130, 246, 0.2);
+        color: #60a5fa;
+        border: 1px solid rgba(59, 130, 246, 0.5);
+    }
+
+    .sp-status-pill.failed {
+        background: rgba(239, 68, 68, 0.2);
+        color: #fca5a5;
+        border: 1px solid rgba(239, 68, 68, 0.5);
+    }
+
+    .sp-status-pill.rejected {
+        background: rgba(148, 163, 184, 0.15);
+        color: #94a3b8;
+        border: 1px solid rgba(148, 163, 184, 0.3);
+    }
+
+    .status-pulse {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        display: inline-block;
+    }
+
+    .status-pulse.amber {
+        background: #f59e0b;
+        box-shadow: 0 0 6px #f59e0b;
+        animation: pulseAmber 2s infinite;
+    }
+
+    .status-pulse.green {
+        background: #10b981;
+        box-shadow: 0 0 6px #10b981;
+    }
+
+    .status-pulse.blue {
+        background: #3b82f6;
+        box-shadow: 0 0 6px #3b82f6;
+    }
+
+    .status-pulse.red {
+        background: #ef4444;
+        box-shadow: 0 0 6px #ef4444;
+    }
+
+    @keyframes pulseAmber {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.4; transform: scale(0.85); }
+    }
+
+    /* Thesis Cell */
+    .sp-thesis-cell {
+        font-size: 0.88em;
+        line-height: 1.45;
+        color: #cbd5e1;
+    }
+
+    .sp-thesis-text {
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
         overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        padding: 8px 12px;
     }
 
-    .metrics-cell {
-        font-size: 0.85em;
-        color: #95a5a6;
-        white-space: nowrap;
-        padding: 8px 12px;
+    .sp-failure-box {
+        margin-top: 6px;
+        padding: 6px 9px;
+        background: rgba(239, 68, 68, 0.12);
+        border: 1px solid rgba(239, 68, 68, 0.35);
+        border-radius: 6px;
+        font-size: 0.82em;
+        color: #fca5a5;
     }
 
-    #stock-picks-table tbody tr:hover {
-        background-color: rgba(52, 152, 219, 0.1);
+    .sp-failure-action {
+        color: #94a3b8;
+        margin-top: 2px;
+    }
+
+    /* Metrics & Dossier Button */
+    .sp-metrics-cell {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .sp-metrics-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+        font-size: 0.8em;
+    }
+
+    .sp-metric-chip {
+        display: inline-block;
+        padding: 2px 7px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 4px;
+        color: #cbd5e1;
+        font-weight: 500;
+    }
+
+    .sp-dossier-toggle-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: rgba(56, 189, 248, 0.08);
+        border: 1px solid rgba(56, 189, 248, 0.3);
+        color: #38bdf8;
+        border-radius: 6px;
+        padding: 4px 10px;
+        font-size: 0.8em;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        width: fit-content;
+    }
+
+    .sp-dossier-toggle-btn:hover {
+        background: rgba(56, 189, 248, 0.18);
+        border-color: #38bdf8;
+        transform: translateY(-1px);
+    }
+
+    .dossier-arrow {
+        transition: transform 0.2s ease;
+        display: inline-block;
+    }
+
+    .dossier-arrow.open {
+        transform: rotate(180deg);
+    }
+
+    /* Modern Action Buttons */
+    .sp-actions-cell {
+        display: flex;
+        gap: 6px;
+        justify-content: center;
+        align-items: center;
+    }
+
+    .sp-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+        padding: 6px 13px;
+        border-radius: 6px;
+        font-size: 0.82em;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        text-decoration: none;
+        border: none;
+    }
+
+    .sp-btn-accept {
+        background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+        color: #ffffff;
+        box-shadow: 0 3px 10px rgba(16, 185, 129, 0.3);
+    }
+
+    .sp-btn-accept:hover {
+        background: linear-gradient(135deg, #047857 0%, #059669 100%);
+        transform: translateY(-1px);
+        box-shadow: 0 5px 14px rgba(16, 185, 129, 0.45);
+    }
+
+    .sp-btn-reject {
+        background: rgba(239, 68, 68, 0.12);
+        color: #f87171;
+        border: 1px solid rgba(239, 68, 68, 0.35);
+    }
+
+    .sp-btn-reject:hover {
+        background: rgba(239, 68, 68, 0.25);
+        color: #fca5a5;
+        border-color: #ef4444;
+    }
+
+    .sp-btn-view {
+        background: linear-gradient(135deg, #0284c7 0%, #0ea5e9 100%);
+        color: #ffffff;
+        box-shadow: 0 3px 10px rgba(14, 165, 233, 0.3);
+    }
+
+    .sp-btn-view:hover {
+        background: linear-gradient(135deg, #0369a1 0%, #0284c7 100%);
+        transform: translateY(-1px);
+    }
+
+    .sp-btn-retry {
+        background: rgba(245, 158, 11, 0.2);
+        color: #fbbf24;
+        border: 1px solid #f59e0b;
+        padding: 4px 10px;
+    }
+
+    .sp-btn-retry:hover {
+        background: rgba(245, 158, 11, 0.35);
+    }
+
+    .sp-muted-text {
+        font-size: 0.8em;
+        color: #64748b;
+    }
+
+    /* Table Loading Spinner */
+    .sp-table-loading {
+        text-align: center;
+        padding: 45px 20px;
+        color: #94a3b8;
+    }
+
+    .sp-spinner {
+        display: inline-block;
+        width: 28px;
+        height: 28px;
+        border: 3px solid rgba(56, 189, 248, 0.2);
+        border-radius: 50%;
+        border-top-color: #38bdf8;
+        animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+
+    /* Modern Empty State */
+    .sp-empty-state {
+        text-align: center;
+        padding: 50px 20px;
+        color: #94a3b8;
+    }
+
+    .sp-empty-icon {
+        font-size: 2.4em;
+        margin-bottom: 12px;
+        display: inline-block;
+        opacity: 0.85;
+    }
+
+    .sp-empty-title {
+        font-size: 1.15em;
+        font-weight: 600;
+        color: #f1f5f9;
+        margin-bottom: 6px;
+    }
+
+    .sp-empty-desc {
+        font-size: 0.88em;
+        color: #64748b;
+        max-width: 420px;
+        margin: 0 auto 16px auto;
+        line-height: 1.45;
+    }
+
+    .sp-empty-cta {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 18px;
+        border-radius: 8px;
+        background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+        color: white;
+        font-weight: 600;
+        font-size: 0.88em;
+        border: none;
+        cursor: pointer;
+        box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35);
+        transition: all 0.2s ease;
+    }
+
+    .sp-empty-cta:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 6px 18px rgba(16, 185, 129, 0.5);
     }
     </style>
 </body>
