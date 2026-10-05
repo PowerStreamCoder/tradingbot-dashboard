@@ -2755,6 +2755,181 @@ function calculateMaxDrawdown(trades) {
     return maxDrawdown;
 }
 
+let currentTradeHistoryFilter = 'all';
+let currentTradeHistorySearch = '';
+
+function updateTradeHistoryBadges(trades) {
+    const wins = trades.filter(t => {
+        const stockPnl = t.stock_pnl !== undefined ? t.stock_pnl : (t.profitLoss || 0);
+        const optionPnl = t.option_pnl || 0;
+        return (stockPnl + optionPnl) > 0;
+    }).length;
+    const losses = trades.filter(t => {
+        const stockPnl = t.stock_pnl !== undefined ? t.stock_pnl : (t.profitLoss || 0);
+        const optionPnl = t.option_pnl || 0;
+        return (stockPnl + optionPnl) < 0;
+    }).length;
+    const longs = trades.filter(t => {
+        const s = (t.analysis_metadata?.side || t.bucketType || '').toLowerCase();
+        return s.includes('long') || s.includes('buy');
+    }).length;
+    const shorts = trades.filter(t => {
+        const s = (t.analysis_metadata?.side || t.bucketType || '').toLowerCase();
+        return s.includes('short') || s.includes('sell');
+    }).length;
+
+    const bAll = document.getElementById('th-badge-all');
+    if (bAll) bAll.textContent = trades.length;
+    const bWins = document.getElementById('th-badge-wins');
+    if (bWins) bWins.textContent = wins;
+    const bLoss = document.getElementById('th-badge-losses');
+    if (bLoss) bLoss.textContent = losses;
+    const bLong = document.getElementById('th-badge-longs');
+    if (bLong) bLong.textContent = longs;
+    const bShort = document.getElementById('th-badge-shorts');
+    if (bShort) bShort.textContent = shorts;
+}
+
+function filterTradeHistoryTab(btn, filter) {
+    document.querySelectorAll('#trade-history-tabs .dash-tab-btn').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    currentTradeHistoryFilter = filter;
+    applyTradeHistoryFilters();
+}
+window.filterTradeHistoryTab = filterTradeHistoryTab;
+
+function handleTradeHistorySearch(val) {
+    currentTradeHistorySearch = (val || '').toLowerCase().trim();
+    const clearBtn = document.getElementById('trade-history-search-clear-btn');
+    if (clearBtn) clearBtn.style.display = val ? 'flex' : 'none';
+    applyTradeHistoryFilters();
+}
+window.handleTradeHistorySearch = handleTradeHistorySearch;
+
+function clearTradeHistorySearch() {
+    const input = document.getElementById('trade-history-search');
+    if (input) input.value = '';
+    currentTradeHistorySearch = '';
+    const clearBtn = document.getElementById('trade-history-search-clear-btn');
+    if (clearBtn) clearBtn.style.display = 'none';
+    applyTradeHistoryFilters();
+}
+window.clearTradeHistorySearch = clearTradeHistorySearch;
+
+function applyTradeHistoryFilters() {
+    const trades = window._cachedTradeHistory || [];
+    let filtered = trades;
+
+    if (currentTradeHistoryFilter === 'wins') {
+        filtered = filtered.filter(t => {
+            const stockPnl = t.stock_pnl !== undefined ? t.stock_pnl : (t.profitLoss || 0);
+            const optionPnl = t.option_pnl || 0;
+            return (stockPnl + optionPnl) > 0;
+        });
+    } else if (currentTradeHistoryFilter === 'losses') {
+        filtered = filtered.filter(t => {
+            const stockPnl = t.stock_pnl !== undefined ? t.stock_pnl : (t.profitLoss || 0);
+            const optionPnl = t.option_pnl || 0;
+            return (stockPnl + optionPnl) < 0;
+        });
+    } else if (currentTradeHistoryFilter === 'longs') {
+        filtered = filtered.filter(t => {
+            const s = (t.analysis_metadata?.side || t.bucketType || '').toLowerCase();
+            return s.includes('long') || s.includes('buy');
+        });
+    } else if (currentTradeHistoryFilter === 'shorts') {
+        filtered = filtered.filter(t => {
+            const s = (t.analysis_metadata?.side || t.bucketType || '').toLowerCase();
+            return s.includes('short') || s.includes('sell');
+        });
+    }
+
+    if (currentTradeHistorySearch) {
+        filtered = filtered.filter(t => {
+            const seq = String(t.sequence_display || t.seqNum || t.sequence_number || '').toLowerCase();
+            const reason = String(t.analysis_metadata?.exit_reason || t.reason || '').toLowerCase();
+            const side = String(t.analysis_metadata?.side || t.bucketType || '').toLowerCase();
+            const symbol = String(t.symbol || t.analysis_metadata?.symbol || '').toLowerCase();
+            return seq.includes(currentTradeHistorySearch) || reason.includes(currentTradeHistorySearch) || side.includes(currentTradeHistorySearch) || symbol.includes(currentTradeHistorySearch);
+        });
+    }
+
+    renderTradeHistoryRows(filtered);
+}
+
+function renderTradeHistoryRows(tradesToRender) {
+    const tbody = document.getElementById('tradeHistoryBody');
+    if (!tbody) return;
+
+    if (tradesToRender.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="15" style="text-align: center; padding: 24px; color: #a0aec0;">
+                    No matching trades found
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    tbody.innerHTML = tradesToRender.map(trade => {
+        const seqNum = trade.sequence_display || trade.seqNum || trade.sequence_number || '?';
+        const symbol = trade.symbol || trade.analysis_metadata?.symbol || CONFIG.symbol || 'N/A';
+        const entryPrice = trade.entryPrice || 0;
+        const exitPrice = trade.exitPrice || 0;
+        const side = (trade.analysis_metadata?.side || trade.bucketType || 'unknown').toUpperCase();
+        const quantity = trade.analysis_metadata?.quantity || trade.quantity || 0;
+        const reason = formatExitReason(trade.analysis_metadata?.exit_reason || trade.reason || 'unknown');
+
+        // Trading mode badge with status pulse
+        const mode = trade.trading_mode || 'paper';
+        const modeBadge = `<span class="mode-badge mode-${mode}">${mode.toUpperCase()}</span>`;
+
+        // Extract option data (with backward compatibility)
+        const stockPnl = trade.stock_pnl !== undefined ? trade.stock_pnl : trade.profitLoss;
+        const optionPnl = trade.option_pnl || 0;
+        const totalPnl = (trade.stock_pnl !== undefined) ? (stockPnl + optionPnl) : (trade.profitLoss || 0);
+        const optionEventCount = trade.option_event_count || 0;
+
+        // Format P&L values
+        const stockPnlClass = stockPnl >= 0 ? 'positive' : 'negative';
+        const stockPnlSign = stockPnl >= 0 ? '+' : '';
+        const optionPnlClass = optionPnl >= 0 ? 'positive' : 'negative';
+        const optionPnlSign = optionPnl >= 0 ? '+' : '';
+        const totalPnlClass = totalPnl >= 0 ? 'positive' : 'negative';
+        const totalPnlSign = totalPnl >= 0 ? '+' : '';
+
+        // Format option badge
+        const optionBadge = optionEventCount > 0
+            ? `<span class="option-badge" title="${optionEventCount} option events" onclick="showTradeDetails('${trade.trade_id || ''}', '${trade.entryOrderId}')">[${optionEventCount} 🔗]</span>`
+            : '<span class="option-badge-empty">[-]</span>';
+
+        // Format entry and exit times
+        const entryTime = formatTradeTimestamp(trade.entryTime || trade.analysis_metadata?.entry_time);
+        const exitTime = formatTradeTimestamp(trade.exitTime || trade.analysis_metadata?.exit_time);
+
+        return `
+            <tr>
+                <td style="text-align: center; font-weight: 500;">${seqNum}</td>
+                <td style="text-align: center;">${modeBadge}</td>
+                <td style="font-weight: 600; color: #4299e1;">${symbol}</td>
+                <td>$${entryPrice.toFixed(2)}</td>
+                <td style="font-size: 0.85em; color: #a0aec0;">${entryTime}</td>
+                <td>$${exitPrice.toFixed(2)}</td>
+                <td style="font-size: 0.85em; color: #a0aec0;">${exitTime}</td>
+                <td class="${stockPnlClass}"><strong>${stockPnlSign}$${Math.abs(stockPnl).toFixed(2)}</strong></td>
+                <td class="${optionPnlClass}">${optionPnl !== 0 ? `${optionPnlSign}$${Math.abs(optionPnl).toFixed(2)}` : '-'}</td>
+                <td class="${totalPnlClass}"><strong>${totalPnlSign}$${Math.abs(totalPnl).toFixed(2)}</strong></td>
+                <td class="option-badge-cell">${optionBadge}</td>
+                <td><span class="side-badge ${side.toLowerCase()}">${side}</span></td>
+                <td>${quantity}</td>
+                <td style="font-size: 0.9em;">${reason}</td>
+                <td><button class="view-details-btn" onclick="showTradeDetails('${trade.trade_id || ''}', '${trade.entryOrderId}')">View</button></td>
+            </tr>
+        `;
+    }).join('');
+}
+
 /**
  * Update trade history table (v5.0.0 - Added trading mode filtering)
  *
@@ -2802,7 +2977,7 @@ async function updateTradeHistory() {
 
         console.log(`[TRADE HISTORY] Loaded ${allTrades.length} ${currentProfile.toUpperCase()} trades (${trades.length} total)`);
 
-        // Cache trades for modal performance optimization
+        // Cache trades for modal performance optimization & interactive filtering
         window._cachedTradeHistory = allTrades;
 
         // Update count display with filter info
@@ -2811,75 +2986,8 @@ async function updateTradeHistory() {
             countEl.textContent = `Last ${allTrades.length} ${currentProfile.toUpperCase()} trades`;
         }
 
-        if (allTrades.length === 0) {
-            tbody.innerHTML = `
-                <tr>
-                    <td colspan="15" style="text-align: center; padding: 20px; color: #a0aec0;">
-                        No ${currentProfile} trades found
-                    </td>
-                </tr>
-            `;
-            return;
-        }
-
-        // Build table rows with option columns (Phase 4 - Unified Dashboard Update)
-        tbody.innerHTML = allTrades.map(trade => {
-            const seqNum = trade.sequence_display || trade.seqNum || trade.sequence_number || '?';
-            const symbol = trade.symbol || trade.analysis_metadata?.symbol || CONFIG.symbol || 'N/A';
-            const entryPrice = trade.entryPrice || 0;
-            const exitPrice = trade.exitPrice || 0;
-            const side = (trade.analysis_metadata?.side || trade.bucketType || 'unknown').toUpperCase();
-            const quantity = trade.analysis_metadata?.quantity || trade.quantity || 0;
-            const reason = formatExitReason(trade.analysis_metadata?.exit_reason || trade.reason || 'unknown');
-
-            // Trading mode badge
-            const mode = trade.trading_mode || 'paper';
-            const modeBadge = `<span class="mode-badge mode-${mode}">${mode.toUpperCase()}</span>`;
-
-            // Extract option data (with backward compatibility)
-            const stockPnl = trade.stock_pnl !== undefined ? trade.stock_pnl : trade.profitLoss;
-            const optionPnl = trade.option_pnl || 0;
-            const totalPnl = (trade.stock_pnl !== undefined) ? (stockPnl + optionPnl) : (trade.profitLoss || 0);
-            const optionEventCount = trade.option_event_count || 0;
-
-            // Format P&L values
-            const stockPnlClass = stockPnl >= 0 ? 'positive' : 'negative';
-            const stockPnlSign = stockPnl >= 0 ? '+' : '';
-            const optionPnlClass = optionPnl >= 0 ? 'positive' : 'negative';
-            const optionPnlSign = optionPnl >= 0 ? '+' : '';
-            const totalPnlClass = totalPnl >= 0 ? 'positive' : 'negative';
-            const totalPnlSign = totalPnl >= 0 ? '+' : '';
-
-            // Format option badge
-            const optionBadge = optionEventCount > 0
-                ? `<span class="option-badge" title="${optionEventCount} option events" onclick="showTradeDetails('${trade.trade_id || ''}', '${trade.entryOrderId}')">[${optionEventCount} 🔗]</span>`
-                : '<span class="option-badge-empty">[-]</span>';
-
-            // Format entry and exit times
-            const entryTime = formatTradeTimestamp(trade.entryTime || trade.analysis_metadata?.entry_time);
-            const exitTime = formatTradeTimestamp(trade.exitTime || trade.analysis_metadata?.exit_time);
-
-            return `
-                <tr>
-                    <td style="text-align: center; font-weight: 500;">${seqNum}</td>
-                    <td style="text-align: center;">${modeBadge}</td>
-                    <td style="font-weight: 600; color: #4299e1;">${symbol}</td>
-                    <td>$${entryPrice.toFixed(2)}</td>
-                    <td style="font-size: 0.85em; color: #a0aec0;">${entryTime}</td>
-                    <td>$${exitPrice.toFixed(2)}</td>
-                    <td style="font-size: 0.85em; color: #a0aec0;">${exitTime}</td>
-                    <td class="${stockPnlClass}"><strong>${stockPnlSign}$${Math.abs(stockPnl).toFixed(2)}</strong></td>
-                    <td class="${optionPnlClass}">${optionPnl !== 0 ? `${optionPnlSign}$${Math.abs(optionPnl).toFixed(2)}` : '-'}</td>
-                    <td class="${totalPnlClass}"><strong>${totalPnlSign}$${Math.abs(totalPnl).toFixed(2)}</strong></td>
-                    <td class="option-badge-cell">${optionBadge}</td>
-                    <td><span class="side-badge ${side.toLowerCase()}">${side}</span></td>
-                    <td>${quantity}</td>
-                    <td style="font-size: 0.9em;">${reason}</td>
-                    <td><button class="view-details-btn" onclick="showTradeDetails('${trade.trade_id || ''}', '${trade.entryOrderId}')">View</button></td>
-                </tr>
-            `;
-        }).join('');
-
+        updateTradeHistoryBadges(allTrades);
+        applyTradeHistoryFilters();
     } catch (error) {
         console.error('Error updating trade history:', error);
         const tbody = document.getElementById('tradeHistoryBody');

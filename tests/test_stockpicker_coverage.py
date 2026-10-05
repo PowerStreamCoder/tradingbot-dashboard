@@ -634,3 +634,36 @@ def test_runner_cli_main_block():
         assert runner_main() == 1
 
 
+def test_bot_focus_stockpicker_header_tile_presence():
+    """Verify templates/bot_focus.html retains the Stock Picker title header card
+
+    and keeps the navigation bar and tile in identical alignment to companion pages.
+    """
+    html_path = os.path.join(os.path.dirname(__file__), "../templates/bot_focus.html")
+    with open(html_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    # 1. Header card exists with correct classes and identifiers
+    assert 'id="stockPickerHeader"' in content
+    assert 'class="bot-header stock-picker-header"' in content
+    assert 'id="botFocusHeader"' in content
+
+    # 2. Contains proper title, icon, and Purpose metadata
+    assert "Stock Picker" in content
+    assert "📊" in content
+    assert "Purpose:" in content
+    assert "Dual-track growth equity &amp; covered call income screener" in content
+
+    # 3. Mode CSS correctly manages header display and risk bar suppression
+    assert "body.stock-picker-mode #stockPickerHeader" in content
+    assert "display: flex !important;" in content
+    assert "body.stock-picker-mode #botFocusHeader" in content
+    assert "body.stock-picker-mode .market-clock" in content
+    assert "display: none !important;" in content
+
+    # 4. JS functions exist for bidirectional tab switching
+    assert "function showStockPickerTab(" in content
+    assert "function showBotFocusTab(" in content
+
+
+
