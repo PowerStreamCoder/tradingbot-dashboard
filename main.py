@@ -2902,18 +2902,25 @@ async def get_stock_picks(request: Request, response: Response):
     if not session_id or session_id not in authenticated_sessions:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
+    # Set strict anti-caching headers so browsers never display stale runs
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+
     now = datetime.now()
 
-    # Check cache first (thread-safe)
-    with _stock_picks_cache['lock']:
-        cached_data = _stock_picks_cache['data']
-        cached_time = _stock_picks_cache['timestamp']
+    # Check cache first (thread-safe), unless client requested a fresh run via _t
+    force_refresh = request.query_params.get("_t") is not None
+    if not force_refresh:
+        with _stock_picks_cache['lock']:
+            cached_data = _stock_picks_cache['data']
+            cached_time = _stock_picks_cache['timestamp']
 
-        if cached_data and cached_time:
-            age_seconds = (now - cached_time).total_seconds()
-            if age_seconds < STOCK_PICKS_CACHE_TTL_SECONDS:
-                response.headers['X-Cache-Status'] = f'HIT (age: {int(age_seconds)}s)'
-                return cached_data
+            if cached_data and cached_time:
+                age_seconds = (now - cached_time).total_seconds()
+                if age_seconds < STOCK_PICKS_CACHE_TTL_SECONDS:
+                    response.headers['X-Cache-Status'] = f'HIT (age: {int(age_seconds)}s)'
+                    return cached_data
 
     # Cache miss - fetch from Firestore
     response.headers['X-Cache-Status'] = 'MISS'
@@ -3091,6 +3098,10 @@ async def run_stock_picker(request: Request):
             resp['already_accepted'] = picks.get('already_accepted', [])
             resp['rejected_cooldown'] = picks.get('rejected_cooldown', [])
             resp['summary'] = picks.get('summary', {})
+            resp['overall_data_quality'] = picks.get('overall_data_quality', 'FULL')
+            resp['degraded_candidate_count'] = picks.get('degraded_candidate_count', 0)
+            resp['missing_sources_detected'] = picks.get('missing_sources_detected', [])
+            resp['run_timestamp'] = datetime.now(timezone.utc).isoformat()
         return resp
 
     except asyncio.TimeoutError:
