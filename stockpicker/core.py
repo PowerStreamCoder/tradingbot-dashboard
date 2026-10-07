@@ -67,6 +67,7 @@ PRICE_CONF_1D_WEIGHT = 50.0        # 1-day price momentum (highest weight)
 FUNDAMENTALS_WEIGHT_8F = 40.0      # Financial metrics
 ANALYST_VIEWS_WEIGHT = 40.0        # Analyst recommendations
 INSIDER_BUYS_WEIGHT = 30.0         # Insider Form 4 transactions
+CONGRESS_BUYS_WEIGHT = 20.0        # Congressional STOCK Act transactions
 GROWTH_QUALITY_WEIGHT = 40.0       # Revenue growth + margin quality
 PERSISTENCE_WEIGHT = 15.0          # Moving average trend
 
@@ -511,7 +512,8 @@ def get_finnhub_insider_trades(ticker: str) -> Dict[str, Any]:
     """
     Get insider trading activity from Finnhub (OPTIONAL - requires FINNHUB_API_KEY).
 
-    Returns cluster buying/selling signals from SEC Form 4 filings.
+    Returns cluster buying/selling signals from SEC Form 4 filings with asymmetric
+    quantitative weighting (open-market purchases carry higher conviction than sales).
 
     Args:
         ticker: Stock symbol (e.g., "AAPL")
@@ -521,13 +523,26 @@ def get_finnhub_insider_trades(ticker: str) -> Dict[str, Any]:
         - insider_score: -30 to +30 (based on INSIDER_BUYS_WEIGHT)
         - net_transactions: Number of buys minus sells (last 30 days)
         - total_value: Dollar value of net transactions
-        - reason: Explanation string
+        - buy_value: Dollar value of purchases
+        - sell_value: Dollar value of sales
+        - distinct_buyers: Number of distinct purchasing insiders
+        - distinct_sellers: Number of distinct selling insiders
+        - reason: Explanation string with (+X.X) or (-X.X)
 
     API Docs: https://finnhub.io/docs/api/insider-transactions
     """
     api_key = env('FINNHUB_API_KEY')
     if not api_key:
-        return {'insider_score': 0, 'net_transactions': 0, 'total_value': 0, 'reason': 'Finnhub key not set'}
+        return {
+            'insider_score': 0.0,
+            'net_transactions': 0,
+            'total_value': 0,
+            'buy_value': 0,
+            'sell_value': 0,
+            'distinct_buyers': 0,
+            'distinct_sellers': 0,
+            'reason': 'Finnhub key not set (0.0)',
+        }
 
     try:
         # Fetch last 30 days of insider transactions
@@ -539,52 +554,91 @@ def get_finnhub_insider_trades(ticker: str) -> Dict[str, Any]:
             'token': api_key
         })
 
-        transactions = data.get('data', [])
+        transactions = data.get('data', []) if isinstance(data, dict) else []
 
-        # Calculate net buying (buys - sells)
         net_shares = 0
         net_value = 0
+        buy_shares = 0
+        buy_value = 0.0
+        sell_shares = 0
+        sell_value = 0.0
+        buyers = set()
+        sellers = set()
 
         for t in transactions:
-            change = t.get('change', 0)
-            value = t.get('transactionValue', 0) or 0
-            transaction_code = t.get('transactionCode', '')
+            change = t.get('change', 0) or 0
+            price = t.get('transactionPrice', 0) or 0
+            val = t.get('transactionValue') or (abs(change) * price)
+            val = float(val) if val else 0.0
+            code = str(t.get('transactionCode', '')).upper()
+            name = str(t.get('name', 'insider')).strip()
 
-            # P = Purchase, S = Sale, A = Award (treat as positive)
-            if transaction_code in ['P', 'A']:
+            if code == 'P':  # Open Market Purchase (pure conviction)
+                buy_shares += abs(change)
+                buy_value += val
                 net_shares += abs(change)
-                net_value += abs(value)
-            elif transaction_code == 'S':
+                net_value += val
+                if name:
+                    buyers.add(name)
+            elif code in ['A', 'M']:  # Grant / Option Exercise
+                net_shares += abs(change)
+                net_value += val
+            elif code == 'S':  # Open Market Sale
+                sell_shares += abs(change)
+                sell_value += val
                 net_shares -= abs(change)
-                net_value -= abs(value)
+                net_value -= val
+                if name:
+                    sellers.add(name)
 
-        # Score: cluster buying = positive, cluster selling = negative
-        if net_shares > 100000:  # Significant buying
-            insider_score = INSIDER_BUYS_WEIGHT * 0.8
-            reason = f'cluster_buying: {net_shares:,} shares, ${net_value/1e6:.1f}M'
-        elif net_shares > 50000:
-            insider_score = INSIDER_BUYS_WEIGHT * 0.5
-            reason = f'insider_buying: {net_shares:,} shares'
-        elif net_shares < -100000:  # Significant selling
-            insider_score = -INSIDER_BUYS_WEIGHT * 0.5
-            reason = f'cluster_selling: {abs(net_shares):,} shares'
-        elif net_shares < -50000:
-            insider_score = -INSIDER_BUYS_WEIGHT * 0.3
-            reason = f'insider_selling: {abs(net_shares):,} shares'
+        distinct_buyers = len(buyers)
+        distinct_sellers = len(sellers)
+        cluster_multiplier = 1.0 + 0.30 * max(0, distinct_buyers - 1)
+
+        # Quantitative Asymmetric Scoring
+        if buy_shares > 100000 or buy_value >= 500000 or (buy_shares >= 25000 and distinct_buyers >= 2):
+            insider_score = min(INSIDER_BUYS_WEIGHT, round(INSIDER_BUYS_WEIGHT * 0.8 * cluster_multiplier, 1))
+            val_str = f"${buy_value/1e6:.1f}M" if buy_value >= 1e6 else f"${buy_value/1e3:.0f}k"
+            reason = f'cluster_buying: {buy_shares:,} shares ({val_str}, {distinct_buyers} buyers) (+{insider_score:.1f})'
+        elif buy_shares > 10000 or buy_value >= 50000:
+            insider_score = round(INSIDER_BUYS_WEIGHT * 0.5 * cluster_multiplier, 1)
+            reason = f'insider_buying: {buy_shares:,} shares (+{insider_score:.1f})'
+        elif buy_shares > 0:
+            insider_score = round(INSIDER_BUYS_WEIGHT * 0.25, 1)
+            reason = f'insider_buying: {buy_shares:,} shares (+{insider_score:.1f})'
+        elif sell_value > 2000000 and distinct_sellers >= 2:
+            insider_score = -round(INSIDER_BUYS_WEIGHT * 0.5, 1)
+            reason = f'cluster_selling: ${sell_value/1e6:.1f}M ({distinct_sellers} sellers) ({insider_score:+.1f})'
+        elif abs(net_shares) > 100000 or sell_value > 1000000:
+            insider_score = -round(INSIDER_BUYS_WEIGHT * 0.3, 1)
+            reason = f'insider_selling: {abs(net_shares):,} shares ({insider_score:+.1f})'
         else:
-            insider_score = 0
-            reason = f'neutral: {net_shares:,} net shares'
+            insider_score = 0.0
+            reason = f'insider_neutral: {net_shares:,} net shares (0.0)'
 
         return {
             'insider_score': insider_score,
             'net_transactions': net_shares,
             'total_value': net_value,
+            'buy_value': buy_value,
+            'sell_value': sell_value,
+            'distinct_buyers': distinct_buyers,
+            'distinct_sellers': distinct_sellers,
             'reason': reason
         }
 
     except Exception as e:
         logger.warning(f"Failed to fetch insider data for {ticker}: {e}")
-        return {'insider_score': 0, 'net_transactions': 0, 'total_value': 0, 'reason': f'Error: {str(e)[:50]}'}
+        return {
+            'insider_score': 0.0,
+            'net_transactions': 0,
+            'total_value': 0,
+            'buy_value': 0,
+            'sell_value': 0,
+            'distinct_buyers': 0,
+            'distinct_sellers': 0,
+            'reason': f'Error: {str(e)[:40]} (0.0)'
+        }
 
 
 def fetch_alphavantage_news(since_iso: str) -> List[NewsItem]:
@@ -1606,6 +1660,7 @@ def compute_fundamental_score(ticker: str, weight_adjustments: Optional[Dict[str
     w_growth = GROWTH_QUALITY_WEIGHT * adj.get("growth_quality", 1.0)
     w_persistence = PERSISTENCE_WEIGHT * adj.get("persistence", 1.0)
     w_insider = INSIDER_BUYS_WEIGHT * adj.get("insider_buys", 1.0)
+    w_congress = CONGRESS_BUYS_WEIGHT * adj.get("congress_buys", 1.0)
 
     # 1. Relative Volume (base weight: 4.0)
     if current_volume and average_volume and average_volume > 0:
@@ -1677,6 +1732,18 @@ def compute_fundamental_score(ticker: str, weight_adjustments: Optional[Dict[str
     score += insider_score
     reasons.append(insider_data.get('reason', 'no insider data'))
 
+    # 7. Congressional Trading (base weight: 20.0) - STOCK Act disclosures via S3
+    try:
+        from .alternative_data_client import compute_congressional_trading_score
+        congress_data = compute_congressional_trading_score(ticker, base_weight=w_congress)
+        congress_score = congress_data.get('congress_score', 0.0)
+        score += congress_score
+        reasons.append(congress_data.get('reason', 'no congress trades'))
+    except Exception as e:
+        logger.warning(f"Failed to score congressional data for {ticker}: {e}")
+        congress_data = {"congress_score": 0.0, "trade_count": 0, "reason": "congress feed unverified"}
+        congress_score = 0.0
+
     # Clamp score before normalization
     raw_score = score
     score = max(0, min(500, round(score, 2)))  # Allow higher range for normalization
@@ -1687,10 +1754,11 @@ def compute_fundamental_score(ticker: str, weight_adjustments: Optional[Dict[str
         w_price_1d +
         w_analyst +
         w_insider +
+        w_congress +
         w_growth +
         w_persistence +
         100
-    )  # Total: ~315 points
+    )  # Total: ~335 points
 
     normalized_score = (score / MAX_POSSIBLE_SCORE) * 100
     normalized_score = max(0, min(100, round(normalized_score, 2)))
@@ -1748,7 +1816,11 @@ def compute_fundamental_score(ticker: str, weight_adjustments: Optional[Dict[str
         'operating_margin': operating_margin,
         'eps_surprise': eps_surprise,
         'recommendation_mean': recommendation,
-        'fundamental_reasons': '; '.join(reasons) if reasons else 'baseline (no data)'
+        'fundamental_reasons': '; '.join(reasons) if reasons else 'baseline (no data)',
+        'insider_score': insider_score,
+        'insider_shares_net': insider_data.get('net_transactions', 0),
+        'congress_score': congress_score,
+        'congress_trades_count': congress_data.get('trade_count', 0),
     }
     _fundamental_scores_cache[cache_key] = result_dict
     return result_dict
@@ -1917,6 +1989,8 @@ def build_evidence_dossier(
         "congress_trades": congress_trades,
         "congressional_trades": congress_trades,
         "congress_buy_count": len(congress_trades),
+        "insider_score": fundamentals.get("insider_score", 0.0),
+        "congress_score": fundamentals.get("congress_score", 0.0),
         "bull_thesis": bull_thesis[:3],
         "bull_drivers": bull_thesis[:3],
         "risk_warnings": risk_warnings[:3],

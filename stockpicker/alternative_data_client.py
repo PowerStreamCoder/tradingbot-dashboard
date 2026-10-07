@@ -10,6 +10,7 @@ Fetches quantitative catalyst data from free public government endpoints:
 
 import json
 import logging
+import math
 import os
 import re
 from datetime import datetime, timedelta, timezone
@@ -147,6 +148,107 @@ def fetch_congressional_trades(ticker: str, days: int = 60) -> List[Dict[str, An
             })
 
     return matching[:5]
+
+
+def _parse_congress_bracket_weight(amt_str: str) -> float:
+    """Map Congressional disclosure bracket string to relative conviction weight."""
+    amt_upper = str(amt_str).upper()
+    if "$1,000,001" in amt_upper or "$5,000,000" in amt_upper:
+        return 3.0
+    if "$500,001" in amt_upper or "$250,001" in amt_upper:
+        return 2.5
+    if "$100,001" in amt_upper:
+        return 2.0
+    if "$50,001" in amt_upper:
+        return 1.5
+    if "$15,001" in amt_upper:
+        return 1.0
+    if "$1,001" in amt_upper:
+        return 0.5
+    return 1.0
+
+
+def compute_congressional_trading_score(
+    ticker: str,
+    congress_trades: Optional[List[Dict[str, Any]]] = None,
+    base_weight: float = 20.0
+) -> Dict[str, Any]:
+    """
+    Compute quantitative conviction score from Congressional STOCK Act disclosures.
+
+    Mathematical Principles:
+    1. Exponential Time-Decay: w(t) = exp(-0.033 * days_ago) with ~21 day half-life.
+       Disclosures older than 45 days suffer severe alpha decay.
+    2. Dollar-Bracket Weighting: Larger purchases ($100k-$250k+) carry greater informational weight.
+    3. Trade Clustering: Purchases by multiple distinct lawmakers within the window provide a
+       cluster multiplier (1.0 + 0.35 * (unique_members - 1)).
+
+    Args:
+        ticker: Symbol ticker (e.g. 'KTOS', 'NVDA')
+        congress_trades: Optional pre-fetched list of congressional purchases
+        base_weight: Maximum factor score contribution (default: 20.0 pts)
+
+    Returns:
+        Dict with:
+        - congress_score: Scaled score (0.0 to base_weight)
+        - trade_count: Total purchases in window
+        - distinct_members: Count of distinct lawmakers
+        - latest_trade_days_ago: Days since latest trade
+        - reason: Formatted reason string with adjustment (+X.X)
+    """
+    trades = congress_trades if congress_trades is not None else fetch_congressional_trades(ticker, days=60)
+    if not trades or base_weight <= 0:
+        return {
+            "congress_score": 0.0,
+            "trade_count": 0,
+            "distinct_members": 0,
+            "latest_trade_days_ago": None,
+            "reason": "congress_neutral (0.0)",
+        }
+
+    now = datetime.now(UTC)
+    trade_weights = []
+    unique_members = set()
+    min_days_ago = 999
+
+    for t in trades:
+        member = t.get("representative", "Lawmaker")
+        if member:
+            unique_members.add(member)
+
+        # Date parsing
+        tx_date_str = str(t.get("transaction_date") or t.get("disclosure_date") or "")
+        days_ago = 21
+        if tx_date_str:
+            try:
+                tx_dt = datetime.strptime(tx_date_str[:10], "%Y-%m-%d").replace(tzinfo=UTC)
+                days_ago = max(0, (now - tx_dt).days)
+            except Exception:
+                days_ago = 21
+        min_days_ago = min(min_days_ago, days_ago)
+
+        # Half-life = 21 days: lambda = ln(2)/21 ~= 0.033
+        decay = math.exp(-0.033 * days_ago)
+        bracket_w = _parse_congress_bracket_weight(t.get("amount", ""))
+        trade_weights.append(bracket_w * decay)
+
+    distinct_count = len(unique_members)
+    cluster_mult = 1.0 + 0.35 * max(0, distinct_count - 1)
+    raw_signal = sum(trade_weights) * cluster_mult
+
+    # Scaling: A conviction sum of ~3.0 achieves base_weight
+    scaled_pts = min(base_weight, raw_signal * (base_weight / 3.0))
+    congress_score = round(max(0.0, scaled_pts), 1)
+
+    reason = f"congress_buys={len(trades)} trades ({distinct_count} members) (+{congress_score:.1f})"
+
+    return {
+        "congress_score": congress_score,
+        "trade_count": len(trades),
+        "distinct_members": distinct_count,
+        "latest_trade_days_ago": min_days_ago if min_days_ago != 999 else None,
+        "reason": reason,
+    }
 
 
 def fetch_quiver_quant_data(ticker: str) -> Optional[Dict[str, Any]]:

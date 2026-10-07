@@ -374,10 +374,42 @@ def evaluate_covered_call_candidate(ticker: str) -> Optional[Dict[str, Any]]:
         score -= 30.0  # Penalty for holding call across binary earnings event
         score = min(score, 60.0)  # Absolute safety ceiling for earnings collision
 
-    final_score = max(5.0, min(99.0, round(score, 1)))
-
     missing_sources = []
     degradation_warnings = []
+
+    # 5. Downside Safety & Alternative Data Confirmation (Up to +10 pts bonus / -15 pts penalty)
+    # For covered calls, insider/congress buying provides downside floor protection against capital loss.
+    # Conversely, heavy corporate insider dumping flags extreme tail-risk.
+    insider_bonus = 0.0
+    insider_penalty = 0.0
+    congress_bonus = 0.0
+
+    try:
+        from stockpicker.core import get_finnhub_insider_trades
+        ins_data = get_finnhub_insider_trades(ticker)
+        ins_score = ins_data.get("insider_score", 0.0)
+        net_tx = ins_data.get("net_transactions", 0)
+        if ins_score > 0 or net_tx > 10000:
+            insider_bonus = 6.0  # Downside floor confirmation
+        elif ins_score < -5.0 or net_tx < -100000:
+            insider_penalty = 15.0  # Elevated underlying downside risk
+            degradation_warnings.append("Heavy corporate insider selling detected - elevated underlying downside risk")
+    except Exception:
+        pass
+
+    try:
+        from stockpicker.alternative_data_client import fetch_congressional_trades
+        c_trades = fetch_congressional_trades(ticker, days=45)
+        if c_trades:
+            congress_bonus = 4.0  # Bipartisan policy / contract hedge
+    except Exception:
+        pass
+
+    score += (insider_bonus + congress_bonus - insider_penalty)
+    if insider_penalty > 0:
+        score = min(score, 60.0)  # Safety ceiling under heavy insider dumping
+
+    final_score = max(5.0, min(99.0, round(score, 1)))
 
     if used_synthetic_options:
         missing_sources.append("Live Options Chain (Yahoo HTTP 429)")
@@ -407,6 +439,9 @@ def evaluate_covered_call_candidate(ticker: str) -> Optional[Dict[str, Any]]:
         "est_atr_pct": round(est_atr_pct * 100, 2),
         "days_to_earnings": days_to_earnings if (days_to_earnings != 999 and not is_etf) else None,
         "earnings_risk_flag": earnings_risk_flag,
+        "insider_bonus": insider_bonus,
+        "insider_penalty": insider_penalty,
+        "congress_bonus": congress_bonus,
         "income_score": final_score,
         "strategy_track": "INCOME",
         "data_quality": data_quality,
