@@ -526,11 +526,23 @@ function renderStockPicksTable() {
             `;
         }
 
-        // Score Pill Styling
+        // Score Pill Styling & Conviction Tier
         let scoreClass = 'score-high';
+        let convictionLabel = 'Strong';
         const numScore = parseFloat(score);
-        if (isNaN(numScore) || numScore < 70) scoreClass = 'score-low';
-        else if (numScore < 80) scoreClass = 'score-med';
+        if (isNaN(numScore) || numScore < 50) {
+            scoreClass = 'score-speculative';
+            convictionLabel = 'Speculative';
+        } else if (numScore < 65) {
+            scoreClass = 'score-low';
+            convictionLabel = 'Baseline';
+        } else if (numScore < 80) {
+            scoreClass = 'score-med';
+            convictionLabel = 'Moderate';
+        } else {
+            scoreClass = 'score-high';
+            convictionLabel = 'Strong';
+        }
 
         const metricsHtml = formatPickMetrics(pick);
 
@@ -547,10 +559,11 @@ function renderStockPicksTable() {
                     </div>
                 </td>
                 <td style="text-align: center;">
-                    <div class="sp-score-wrapper">
+                    <div class="sp-score-wrapper" title="Quantitative Conviction: ${score} / 100 (${convictionLabel} Conviction Tier)">
                         <div class="sp-score-pill ${scoreClass}">
                             <span>${score}</span>
                         </div>
+                        <span class="sp-conviction-badge ${scoreClass}">${convictionLabel}</span>
                         ${pick.is_degraded ? `
                             <span class="sp-degraded-tag" title="${(pick.degradation_warnings || []).join('; ') || 'Data feeds partial'}">
                                 ⚠️ Degraded
@@ -621,6 +634,7 @@ function renderStockPicksTable() {
                             <div class="dossier-card">
                                 <h4 style="color: #38bdf8;">🏛️ Alternative Data & Catalysts</h4>
                                 <div style="font-size: 0.85em; color: #cbd5e1; line-height: 1.6;">
+                                    <div><strong>Conviction Rating:</strong> <span style="font-weight: 700;" class="${scoreClass}">${score} / 100 (${convictionLabel} Tier)</span></div>
                                     <div><strong>USAspending Awards:</strong> ${(dossier.usaspending_contracts && dossier.usaspending_contracts.length) ? `${dossier.usaspending_contracts.length} active awards` : 'No recent public federal awards'}</div>
                                     <div><strong>Congressional Trading:</strong> ${(dossier.congressional_trades && dossier.congressional_trades.length) ? `${dossier.congressional_trades.length} filings detected` : 'Neutral insider/congressional flow'}</div>
                                     <div><strong>Solvency Rating:</strong> ${dossier.solvency_rating || 'Adequate'}</div>
