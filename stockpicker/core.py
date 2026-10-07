@@ -1139,29 +1139,45 @@ _yf_crumb_time = None
 
 def get_yahoo_crumb_and_cookies(force_refresh: bool = False):
     """
-    Get or refresh Yahoo Finance crumb and cookies via requests.get.
+    Get or refresh Yahoo Finance crumb and cookies via requests.Session.
+    Visits finance.yahoo.com options page first to obtain valid browser session cookies
+    before querying getcrumb on query1.finance.yahoo.com.
     """
     global _yf_crumb, _yf_cookies, _yf_crumb_time
     now = time.time()
     if not force_refresh and _yf_crumb is not None and _yf_cookies is not None and (now - (_yf_crumb_time or 0) < 3600):
         return _yf_crumb, _yf_cookies
 
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+    }
+
     try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Accept': '*/*',
-            'Accept-Language': 'en-US,en;q=0.5',
-        }
+        s = requests.Session()
+        s.headers.update(headers)
+        s.get('https://finance.yahoo.com/quote/SPY/options', timeout=10)
+        r_crumb = s.get('https://query1.finance.yahoo.com/v1/test/getcrumb', timeout=10)
+        if r_crumb.status_code == 200 and r_crumb.text:
+            _yf_crumb = r_crumb.text.strip()
+            _yf_cookies = s.cookies
+            _yf_crumb_time = now
+            return _yf_crumb, _yf_cookies
+    except Exception as e:
+        logger.debug(f"Failed to acquire Yahoo Finance crumb via session: {e}")
+
+    try:
         r_fc = requests.get('https://fc.yahoo.com', headers=headers, timeout=10)
         cookies = r_fc.cookies
-        r_crumb = requests.get('https://query2.finance.yahoo.com/v1/test/getcrumb', headers=headers, cookies=cookies, timeout=10)
+        r_crumb = requests.get('https://query1.finance.yahoo.com/v1/test/getcrumb', headers=headers, cookies=cookies, timeout=10)
         if r_crumb.status_code == 200 and r_crumb.text:
             _yf_crumb = r_crumb.text.strip()
             _yf_cookies = cookies
             _yf_crumb_time = now
             return _yf_crumb, _yf_cookies
     except Exception as e:
-        logger.debug(f"Failed to acquire Yahoo Finance crumb: {e}")
+        logger.debug(f"Failed to acquire Yahoo Finance crumb via fc: {e}")
 
     return None, None
 
@@ -1842,10 +1858,12 @@ def build_evidence_dossier(
         dossier_warnings.append("Alternative catalyst data feeds unavailable (public contracts and congressional filings unverified)")
 
     if strategy_track == "INCOME":
+        from .income_screener import KNOWN_ETFS
+        is_etf = ticker.upper() in KNOWN_ETFS
         if not options_data or options_data.get("monthly_yield_est") is None:
             dossier_missing.append("Options Chain Greeks")
             dossier_warnings.append("Covered call options Greeks / premium yield unverified")
-        elif options_data.get("days_to_earnings") is None:
+        elif options_data.get("days_to_earnings") is None and not is_etf:
             dossier_missing.append("Earnings Calendar")
             dossier_warnings.append("Earnings date unavailable - binary event risk unverified")
 

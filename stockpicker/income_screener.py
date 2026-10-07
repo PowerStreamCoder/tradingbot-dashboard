@@ -18,8 +18,8 @@ import requests
 logger = logging.getLogger(__name__)
 UTC = timezone.utc
 
-YF_OPTIONS_URL = "https://query2.finance.yahoo.com/v7/finance/options/{ticker}"
-YF_QUOTE_SUMMARY_URL = "https://query2.finance.yahoo.com/v10/finance/quoteSummary/{ticker}"
+YF_OPTIONS_URL = "https://query1.finance.yahoo.com/v7/finance/options/{ticker}"
+YF_QUOTE_SUMMARY_URL = "https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker}"
 
 DEFAULT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"

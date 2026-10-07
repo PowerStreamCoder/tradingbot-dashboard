@@ -148,7 +148,13 @@ async function runStockPickerNow() {
             } else {
                 showToast(`ℹ️ 0 picks generated: ${result.message || 'No candidates met scoring criteria.'}`, 'warning');
             }
-            loadStockPicks();
+            // Immediately render the fresh run results returned from POST /run
+            if (result.actionable_leads && result.actionable_leads.length > 0) {
+                rawStockPickerData = result;
+                updateStockPickerMetrics(result);
+                renderStockPicksTable();
+            }
+            await loadStockPicks(true);
         } else {
             showToast(`❌ ${result.message || 'StockPicker run failed'}`, 'error');
         }
@@ -170,7 +176,7 @@ async function runStockPickerNow() {
 // DATA FETCHING & FILTERING
 // =============================================================================
 
-async function loadStockPicks() {
+async function loadStockPicks(forceRefresh = false) {
     const tbody = document.getElementById('stock-picks-tbody');
     if (tbody && !rawStockPickerData) {
         tbody.innerHTML = `
@@ -184,7 +190,11 @@ async function loadStockPicks() {
     }
 
     try {
-        const response = await fetch('/api/stock-picks');
+        const url = forceRefresh ? `/api/stock-picks?_t=${Date.now()}` : '/api/stock-picks';
+        const response = await fetch(url, {
+            cache: forceRefresh ? 'no-store' : 'default',
+            headers: forceRefresh ? { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' } : {}
+        });
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
