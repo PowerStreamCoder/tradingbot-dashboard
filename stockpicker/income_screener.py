@@ -14,6 +14,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 import requests
+from stockpicker.core import YF_DEFAULT_HEADERS, get_yahoo_crumb_and_cookies
 
 logger = logging.getLogger(__name__)
 UTC = timezone.utc
@@ -21,9 +22,7 @@ UTC = timezone.utc
 YF_OPTIONS_URL = "https://query1.finance.yahoo.com/v7/finance/options/{ticker}"
 YF_QUOTE_SUMMARY_URL = "https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker}"
 
-DEFAULT_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-}
+DEFAULT_HEADERS = YF_DEFAULT_HEADERS
 
 # Low-volatility, option-rich candidate universe for Covered Call Income scouting
 INCOME_UNIVERSE = [
@@ -54,7 +53,7 @@ def _clear_income_screener_caches():
 
 def fetch_yahoo_options(ticker: str) -> Optional[Dict[str, Any]]:
     """
-    Fetch nearest monthly option chain from Yahoo Finance REST API.
+    Fetch nearest monthly option chain (~20-50 DTE) from Yahoo Finance REST API.
     Cached for 15 minutes to reduce HTTP 429 rate limits.
 
     Returns:
@@ -67,29 +66,47 @@ def fetch_yahoo_options(ticker: str) -> Optional[Dict[str, Any]]:
         if now - cached_time < 900:  # 15 min TTL
             return cached_data
 
-    from stockpicker.core import _yf_crumb, _yf_cookies, get_yahoo_crumb_and_cookies
+    crumb, cookies = get_yahoo_crumb_and_cookies()
     url = YF_OPTIONS_URL.format(ticker=ticker)
     headers = DEFAULT_HEADERS
     params = {}
-    crumb, cookies = _yf_crumb, _yf_cookies
     if crumb:
         params["crumb"] = crumb
 
     try:
-        r = requests.get(url, headers=headers, params=params, cookies=cookies, timeout=6)
+        r = requests.get(url, headers=headers, params=params, cookies=cookies, timeout=8)
         if r.status_code in (401, 429) and (now - _last_crumb_refresh > 60):
             _last_crumb_refresh = now
             crumb, cookies = get_yahoo_crumb_and_cookies(force_refresh=True)
             if crumb:
                 params["crumb"] = crumb
-                r = requests.get(url, headers=headers, params=params, cookies=cookies, timeout=6)
+                r = requests.get(url, headers=headers, params=params, cookies=cookies, timeout=8)
 
         if r.status_code == 200:
             data = r.json()
             result = data.get("optionChain", {}).get("result", [])
             if result:
-                _options_cache[ticker] = (now, result[0])
-                return result[0]
+                res_data = result[0]
+                exp_dates = res_data.get("expirationDates", [])
+                target_exp = None
+                for exp in exp_dates:
+                    days_out = (exp - now) / 86400
+                    if 20 <= days_out <= 50:
+                        target_exp = exp
+                        break
+
+                current_returned_exp = (res_data.get("options", [{}])[0] or {}).get("expirationDate")
+                if target_exp and target_exp != current_returned_exp:
+                    target_params = dict(params)
+                    target_params["date"] = target_exp
+                    r_exp = requests.get(url, headers=headers, params=target_params, cookies=cookies, timeout=8)
+                    if r_exp.status_code == 200:
+                        exp_res = r_exp.json().get("optionChain", {}).get("result", [])
+                        if exp_res:
+                            res_data = exp_res[0]
+
+                _options_cache[ticker] = (now, res_data)
+                return res_data
     except Exception as e:
         logger.warning(f"[INCOME-SCREENER] Failed to fetch options for {ticker}: {e}")
     return None
@@ -240,25 +257,39 @@ def evaluate_covered_call_candidate(ticker: str) -> Optional[Dict[str, Any]]:
         if not calls:
             return None
 
-        # Target an OTM call ~2% to 5% above current market price (Delta ~0.25 - 0.30 proxy)
+        # Target an OTM call ~1% to 6% above current market price (Delta ~0.25 - 0.35 proxy)
         target_strike_min = current_price * 1.01
         target_strike_max = current_price * 1.06
 
         eligible_calls = [
             c for c in calls
-            if target_strike_min <= c.get("strike", 0) <= target_strike_max and c.get("bid", 0) > 0
+            if target_strike_min <= c.get("strike", 0) <= target_strike_max and (c.get("bid", 0) > 0 or c.get("lastPrice", 0) > 0)
         ]
 
-        selected_call = eligible_calls[0] if eligible_calls else calls[0]
+        if not eligible_calls:
+            # Fallback range ~0.5% to 8% OTM
+            eligible_calls = [
+                c for c in calls
+                if (current_price * 1.005) <= c.get("strike", 0) <= (current_price * 1.08) and (c.get("bid", 0) > 0 or c.get("lastPrice", 0) > 0)
+            ]
+
+        # Prioritize contracts with liquid open interest (>= 100)
+        liquid_calls = [c for c in eligible_calls if c.get("openInterest", 0) >= 100]
+        selected_call = liquid_calls[0] if liquid_calls else (eligible_calls[0] if eligible_calls else (calls[0] if calls else {}))
+
         strike = selected_call.get("strike", current_price)
         bid = selected_call.get("bid", 0.0)
         ask = selected_call.get("ask", 0.0)
+        last_price = selected_call.get("lastPrice", 0.0)
         open_interest = selected_call.get("openInterest", 0)
         implied_vol = selected_call.get("impliedVolatility", 0.20)
 
-        monthly_yield = (bid / current_price) if current_price > 0 else 0.0
+        # In pre-market or outside US trading hours, Yahoo options report bid/ask as 0.0,
+        # but lastPrice is preserved. Use lastPrice as premium proxy when bid is 0.
+        premium_proxy = bid if bid > 0 else (last_price if last_price > 0 else 0.0)
+        monthly_yield = (premium_proxy / current_price) if current_price > 0 else 0.0
         annualized_yield = monthly_yield * 12.0
-        spread = ask - bid
+        spread = (ask - bid) if (bid > 0 and ask > 0) else round(premium_proxy * 0.05, 2)
 
         fifty_two_high = quote.get("fiftyTwoWeekHigh", current_price)
         fifty_two_low = quote.get("fiftyTwoWeekLow", current_price)
@@ -356,11 +387,11 @@ def evaluate_covered_call_candidate(ticker: str) -> Optional[Dict[str, Any]]:
         missing_sources.append("Earnings Calendar")
         degradation_warnings.append("Earnings calendar date unavailable (binary volatility risk unverified)")
 
-    if open_interest < 100:
+    if open_interest < 100 and not used_synthetic_options:
         degradation_warnings.append(f"Low open interest ({open_interest}) - contract liquidity degraded")
 
     data_quality = "DEGRADED" if used_synthetic_options else ("PARTIAL" if missing_sources else "FULL")
-    is_degraded = bool(missing_sources or degradation_warnings)
+    is_degraded = bool(missing_sources or used_synthetic_options)
 
     return {
         "ticker": ticker,
