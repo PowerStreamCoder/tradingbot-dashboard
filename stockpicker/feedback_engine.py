@@ -60,6 +60,7 @@ TRACKED_FACTORS = [
     "price_momentum_1d",
     "analyst_views",
     "insider_buys",
+    "congress_buys",
     "growth_quality",
     "persistence",
     "explosiveness",
@@ -981,6 +982,7 @@ def _extract_factor_scores(candidate: Dict) -> Dict[str, float]:
             "growth_quality": r"growth_quality=[+-]?[\d.]+\s*\(([+-]?[\d.]+)\)",
             "persistence": r"persistence=\w+\s*\(([+-]?[\d.]+)\)",
             "insider_buys": r"insider.*\(([+-]?[\d.]+)\)",
+            "congress_buys": r"congress.*\(([+-]?[\d.]+)\)",
         }
         for factor_name, pattern in patterns.items():
             match = re.search(pattern, reasons_str)
