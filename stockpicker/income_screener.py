@@ -46,7 +46,7 @@ _last_crumb_refresh: float = 0.0
 
 def _clear_income_screener_caches():
     """Clear options and earnings caches for testing."""
-    global _options_cache, _earnings_date_cache, _last_crumb_refresh
+    global _last_crumb_refresh
     _options_cache.clear()
     _earnings_date_cache.clear()
     _last_crumb_refresh = 0.0

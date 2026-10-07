@@ -1222,7 +1222,6 @@ _finnhub_earnings_cache: Dict[str, Tuple[float, Optional[float]]] = {}
 
 def _clear_core_caches():
     """Clear in-memory caches for testing."""
-    global _fundamental_cache, _fundamental_scores_cache, _av_earnings_cache, _finnhub_earnings_cache
     _fundamental_cache.clear()
     _fundamental_scores_cache.clear()
     _av_earnings_cache.clear()
