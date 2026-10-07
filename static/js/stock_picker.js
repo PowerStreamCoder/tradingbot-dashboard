@@ -918,6 +918,38 @@ async function confirmRejectLead() {
 // AUTO-REFRESH & TAB HOOKS
 // =============================================================================
 
+function renderReadyState() {
+    const tbody = document.getElementById('stock-picks-tbody');
+    if (tbody && !rawStockPickerData) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="8" style="text-align: center; padding: 50px 20px; color: #94a3b8;">
+                    <div style="font-size: 2.2em; margin-bottom: 10px;">🎯</div>
+                    <div style="font-size: 1.15em; font-weight: 600; color: #f1f5f9; margin-bottom: 6px;">Ready to Scan Dual-Track Markets</div>
+                    <div style="font-size: 0.9em; max-width: 500px; margin: 0 auto 18px auto; line-height: 1.45;">
+                        Click <strong>Run Now</strong> to trigger a real-time scan across Growth &amp; Income tracks, or load the last saved run from history.
+                    </div>
+                    <div style="display: flex; gap: 12px; justify-content: center; align-items: center;">
+                        <button onclick="runStockPickerNow()" style="padding: 9px 18px; background: #27ae60; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.95em;">
+                            ▶️ Run Now
+                        </button>
+                        <button onclick="loadStockPicks(true)" style="padding: 9px 18px; background: #334155; color: #cbd5e1; border: 1px solid #475569; border-radius: 6px; cursor: pointer; font-weight: 500; font-size: 0.95em;">
+                            📋 Load Last Saved Run
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }
+    const statusBadge = document.getElementById('sp-run-status-badge');
+    if (statusBadge && !rawStockPickerData) {
+        statusBadge.textContent = 'Ready to Run';
+        statusBadge.style.background = 'rgba(56, 189, 248, 0.15)';
+        statusBadge.style.color = '#38bdf8';
+        statusBadge.style.borderColor = 'rgba(56, 189, 248, 0.3)';
+    }
+}
+
 function startStockPickerRefresh() {
     const now = Date.now();
     if (now - lastTabSwitchTime < 1000) return;
@@ -928,8 +960,14 @@ function startStockPickerRefresh() {
         stockPickerRefreshInterval = null;
     }
 
-    loadStockPicks();
-    stockPickerRefreshInterval = setInterval(loadStockPicks, 60000);
+    // Do NOT automatically pre-load data before the operator triggers a run.
+    // If a run has already occurred in this session, keep auto-refresh active.
+    if (rawStockPickerData) {
+        loadStockPicks();
+        stockPickerRefreshInterval = setInterval(loadStockPicks, 60000);
+    } else {
+        renderReadyState();
+    }
 }
 
 function stopStockPickerRefresh() {
