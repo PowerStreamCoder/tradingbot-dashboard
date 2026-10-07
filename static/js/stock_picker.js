@@ -115,6 +115,27 @@ async function runStockPickerNow() {
         runButton.innerHTML = '⏳ Running...';
     }
 
+    const statusBadge = document.getElementById('sp-run-status-badge');
+    if (statusBadge) {
+        statusBadge.textContent = '⏳ Running Live Scan...';
+        statusBadge.style.background = 'rgba(245, 158, 11, 0.15)';
+        statusBadge.style.color = '#f59e0b';
+        statusBadge.style.borderColor = 'rgba(245, 158, 11, 0.3)';
+    }
+
+    const tbody = document.getElementById('stock-picks-tbody');
+    if (tbody) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="8" class="sp-table-loading" style="padding: 48px 16px; text-align: center;">
+                    <div class="sp-spinner"></div>
+                    <div style="margin-top: 14px; font-weight: 600; font-size: 1.1em; color: #38bdf8;">🔄 Scanning dual-track markets with live data feeds...</div>
+                    <div style="margin-top: 6px; font-size: 0.88em; color: #94a3b8;">Analyzing SEC EDGAR filings, Finnhub fundamentals & live options chains. Results will update automatically.</div>
+                </td>
+            </tr>
+        `;
+    }
+
     isRunningStockPicker = true;
     showToast('🔄 Scanning dual-track markets with Gemini Flash & alternative data...', 'info');
 
@@ -148,6 +169,15 @@ async function runStockPickerNow() {
             } else {
                 showToast(`ℹ️ 0 picks generated: ${result.message || 'No candidates met scoring criteria.'}`, 'warning');
             }
+
+            if (statusBadge) {
+                const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                statusBadge.textContent = `✅ Live Scan: ${nowTime}`;
+                statusBadge.style.background = 'rgba(16, 185, 129, 0.15)';
+                statusBadge.style.color = '#34d399';
+                statusBadge.style.borderColor = 'rgba(16, 185, 129, 0.3)';
+            }
+
             // Immediately render the fresh run results returned from POST /run
             if (result.actionable_leads && result.actionable_leads.length > 0) {
                 rawStockPickerData = result;
@@ -201,6 +231,20 @@ async function loadStockPicks(forceRefresh = false) {
 
         const data = await response.json();
         rawStockPickerData = data;
+
+        const statusBadge = document.getElementById('sp-run-status-badge');
+        if (statusBadge && data.run_timestamp) {
+            try {
+                const runDate = new Date(data.run_timestamp);
+                const timeStr = runDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                statusBadge.textContent = `📋 Saved Run: ${timeStr}`;
+                statusBadge.style.background = 'rgba(56, 189, 248, 0.15)';
+                statusBadge.style.color = '#38bdf8';
+                statusBadge.style.borderColor = 'rgba(56, 189, 248, 0.3)';
+            } catch (e) {
+                statusBadge.textContent = '📋 Saved Run';
+            }
+        }
 
         updateStockPickerMetrics(data);
         renderStockPicksTable();

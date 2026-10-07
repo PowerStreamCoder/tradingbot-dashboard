@@ -1136,6 +1136,12 @@ _yf_crumb = None
 _yf_cookies = None
 _yf_crumb_time = None
 
+YF_DEFAULT_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.5',
+}
+
 
 def get_yahoo_crumb_and_cookies(force_refresh: bool = False):
     """
@@ -1148,11 +1154,7 @@ def get_yahoo_crumb_and_cookies(force_refresh: bool = False):
     if not force_refresh and _yf_crumb is not None and _yf_cookies is not None and (now - (_yf_crumb_time or 0) < 3600):
         return _yf_crumb, _yf_cookies
 
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-    }
+    headers = YF_DEFAULT_HEADERS
 
     try:
         s = requests.Session()
@@ -1205,7 +1207,7 @@ def get_yahoo_financial_snapshot(ticker: str) -> Dict:
     try:
         modules = 'financialData,defaultKeyStatistics,price,summaryDetail,calendarEvents'
         url = YF_QUOTE_SUMMARY.format(ticker=ticker)
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        headers = YF_DEFAULT_HEADERS
         params = {'modules': modules}
 
         crumb, cookies = _yf_crumb, _yf_cookies
