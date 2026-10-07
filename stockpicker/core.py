@@ -801,8 +801,8 @@ def heuristic_rank(records: List[Dict]) -> List[Dict]:
             if score > best_match_score:
                 best_match_score, industry = score, ind
 
-        # Calculate explosiveness: baseline 5.0 + engagement + keyword density
-        explosive = 5.0 + min(4.5, rec.get('engagement', 0) / 2000 + best_match_score * 0.8)
+        # Calculate explosiveness: baseline 5.0 + engagement + keyword density (score >= 2 reaches 7.6+)
+        explosive = 5.0 + min(4.5, rec.get('engagement', 0) / 2000 + best_match_score * 1.3)
 
         out.append({
             'headline': rec.get('headline'),
@@ -1826,14 +1826,15 @@ def build_evidence_dossier(
     }
 
     if options_data:
-        dossier["options_yield_metrics"] = options_data
+        clean_opt = {k: v for k, v in options_data.items() if k != "evidence_dossier"}
+        dossier["options_yield_metrics"] = clean_opt
         dossier.update({
-            "monthly_yield_est": options_data.get("monthly_yield_est"),
-            "annualized_yield_est": options_data.get("annualized_yield_est"),
-            "strike": options_data.get("strike"),
-            "open_interest": options_data.get("open_interest"),
-            "days_to_earnings": options_data.get("days_to_earnings"),
-            "earnings_risk_flag": options_data.get("earnings_risk_flag", False),
+            "monthly_yield_est": clean_opt.get("monthly_yield_est"),
+            "annualized_yield_est": clean_opt.get("annualized_yield_est"),
+            "strike": clean_opt.get("strike"),
+            "open_interest": clean_opt.get("open_interest"),
+            "days_to_earnings": clean_opt.get("days_to_earnings"),
+            "earnings_risk_flag": clean_opt.get("earnings_risk_flag", False),
         })
 
     return dossier

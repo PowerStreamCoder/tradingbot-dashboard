@@ -138,8 +138,13 @@ async function runStockPickerNow() {
         if (result.status === 'success') {
             const pickCount = result.pick_count || 0;
             const duration = result.duration_seconds || 0;
+            const fbReasons = result.fallback_reasons || result.status_messages || [];
             if (pickCount > 0) {
-                showToast(`✅ Generated ${pickCount} picks in ${duration}s`, 'success');
+                let toastMsg = `✅ Generated ${pickCount} picks in ${duration}s`;
+                if (fbReasons.length > 0) {
+                    toastMsg += ` (Auto-fallback applied for ${fbReasons.length} track(s))`;
+                }
+                showToast(toastMsg, 'success');
             } else {
                 showToast(`ℹ️ 0 picks generated: ${result.message || 'No candidates met scoring criteria.'}`, 'warning');
             }
@@ -303,6 +308,29 @@ function updateStockPickerMetrics(data) {
             }
         } else {
             alertBanner.style.display = 'none';
+        }
+    }
+
+    // Auto-fallback / informational pipeline messages banner
+    const fallbackBanner = document.getElementById('sp-fallback-info-alert');
+    const fallbackText = document.getElementById('sp-fallback-info-text');
+    const fallbackReasons = data.fallback_reasons || data.status_messages || data.summary?.fallback_reasons || [];
+    const informationalMsg = data.message;
+
+    if (fallbackBanner) {
+        if (fallbackReasons.length > 0) {
+            fallbackBanner.style.display = 'flex';
+            if (fallbackText) {
+                const listItems = fallbackReasons.map(r => `<div style="margin-bottom: 3px;">• ${r}</div>`).join('');
+                fallbackText.innerHTML = `<strong>Pipeline Notice:</strong><div style="margin-top: 4px;">${listItems}</div>`;
+            }
+        } else if (informationalMsg && (informationalMsg.includes('fallback') || informationalMsg.includes('Auto-fallback'))) {
+            fallbackBanner.style.display = 'flex';
+            if (fallbackText) {
+                fallbackText.innerHTML = `<strong>Pipeline Notice:</strong> <span>${informationalMsg}</span>`;
+            }
+        } else {
+            fallbackBanner.style.display = 'none';
         }
     }
 

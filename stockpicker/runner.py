@@ -281,10 +281,28 @@ def run_stockpicker() -> Optional[Dict[str, Any]]:
         ranked = rank_news(news)
         logger.info(f"✓ Ranked {len(ranked)} items")
 
+        fallback_reasons = []
+
         # Step 3: Track 1 - Growth Equity Scoring
         logger.info("Step 3/5: Scoring Track 1 (Growth Equity) candidates...")
         growth_candidates = score_candidates(ranked, weight_adjustments=weight_adjustments) if ranked else []
-        logger.info(f"✓ Scored {len(growth_candidates)} growth candidates")
+        
+        # Auto-fallback: if news exists but none met explosiveness threshold, fall back to pure fundamentals
+        if not growth_candidates:
+            news_count = len(news) if news else 0
+            logger.info(f"No news reached explosiveness threshold (≥7.5) among {news_count} items. Activating auto-fallback to fundamental analysis...")
+            from stockpicker.core import generate_fundamentals_picks
+            fallback_ranked = generate_fundamentals_picks(top_n=10)
+            if fallback_ranked:
+                growth_candidates = score_candidates(fallback_ranked, weight_adjustments=weight_adjustments)
+                fb_msg = (
+                    f"Growth Track: No news met explosiveness threshold (≥7.5) among {news_count} items fetched. "
+                    f"Auto-fallback activated: evaluated top candidates using SEC EDGAR fundamental metrics."
+                )
+                fallback_reasons.append(fb_msg)
+                logger.info(f"✓ Growth auto-fallback generated {len(growth_candidates)} candidates")
+        else:
+            logger.info(f"✓ Scored {len(growth_candidates)} growth candidates")
 
         # Step 4: Track 2 - Covered Call Income Screening
         logger.info("Step 4/5: Screening Track 2 (Covered Call Income) candidates...")
@@ -308,7 +326,7 @@ def run_stockpicker() -> Optional[Dict[str, Any]]:
                     "degradation_warnings": inc.get("degradation_warnings", []),
                 },
                 strategy_track="INCOME",
-                options_data=inc
+                options_data={k: v for k, v in inc.items() if k != "evidence_dossier"}
             )
             inc["evidence_dossier"] = dossier
             inc["data_quality"] = dossier.get("data_quality", "FULL")
@@ -317,6 +335,16 @@ def run_stockpicker() -> Optional[Dict[str, Any]]:
             inc["degradation_warnings"] = dossier.get("degradation_warnings", [])
             inc["composite_score"] = inc.get("income_score", 50.0)
             inc["status"] = "PENDING_REVIEW"
+        
+        income_fallback_count = sum(1 for c in income_candidates if c.get("used_synthetic_options") or any("Live Options Chain" in s for s in c.get("missing_sources", [])))
+        if income_fallback_count > 0:
+            fb_msg = (
+                f"Income Track: Live options chain rate-limited (Yahoo HTTP 429) for {income_fallback_count} symbols. "
+                f"Auto-fallback activated: evaluated candidates using volatility & options premium proxy model."
+            )
+            fallback_reasons.append(fb_msg)
+            logger.info(f"✓ Income auto-fallback recorded: {fb_msg}")
+
         logger.info(f"✓ Screened {len(income_candidates)} income candidates with dossiers")
 
         # Step 5: Deduping, State-Aware Partitioning, and Lead Promotion
@@ -429,8 +457,12 @@ def run_stockpicker() -> Optional[Dict[str, Any]]:
             "rejected_cooldown_count": len(rejected_cooldown),
             "degraded_candidate_count": degraded_count,
             "missing_sources_detected": all_missing_sources,
-            "overall_data_quality": overall_dq
+            "overall_data_quality": overall_dq,
+            "fallback_reasons": fallback_reasons,
+            "messages": fallback_reasons,
         }
+
+        overall_message = " | ".join(fallback_reasons) if fallback_reasons else f"Generated {len(actionable_leads)} actionable leads ({len(growth_picks)} growth, {len(income_picks)} income)"
 
         # Step 6: Write to Firestore
         logger.info("Writing state-aware results to Firestore (stock_picks/current)...")
@@ -445,6 +477,9 @@ def run_stockpicker() -> Optional[Dict[str, Any]]:
             'already_accepted': already_accepted,
             'rejected_cooldown': rejected_cooldown,
             'summary': summary,
+            'message': overall_message,
+            'status_messages': fallback_reasons,
+            'fallback_reasons': fallback_reasons,
             'overall_data_quality': overall_dq,
             'degraded_candidate_count': degraded_count,
             'missing_sources_detected': all_missing_sources,

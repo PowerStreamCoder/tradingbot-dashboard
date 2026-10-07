@@ -3066,17 +3066,22 @@ async def run_stock_picker(request: Request):
             _stock_picks_cache['timestamp'] = None
 
         picks_list = picks.get('picks', []) if isinstance(picks, dict) else (picks or [])
+        custom_msg = picks.get('message') if isinstance(picks, dict) else None
+        status_msgs = picks.get('status_messages', []) if isinstance(picks, dict) else []
+        fallback_reasons = picks.get('fallback_reasons', []) if isinstance(picks, dict) else []
 
         # Build response
         resp = {
             'status': 'success',
             'picks': picks_list,
             'pick_count': len(picks_list),
-            'message': (
+            'message': custom_msg or (
                 f'Generated {len(picks_list)} picks successfully'
                 if picks_list else
                 'No picks generated (no explosive news found with threshold ≥7.5)'
             ),
+            'status_messages': status_msgs,
+            'fallback_reasons': fallback_reasons,
             'duration_seconds': duration
         }
         if isinstance(picks, dict):

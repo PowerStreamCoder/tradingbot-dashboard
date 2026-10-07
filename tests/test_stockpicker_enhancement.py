@@ -437,3 +437,55 @@ def test_parameter_advisor_handles_degraded_inputs():
     assert "inputs degraded" in advice["advisory_summary"]
 
 
+@patch("stockpicker.runner.firestore.Client")
+@patch("stockpicker.runner.fetch_all_news")
+@patch("stockpicker.runner.rank_news")
+@patch("stockpicker.runner.score_candidates")
+@patch("stockpicker.income_screener.screen_income_candidates")
+@patch("stockpicker.core.build_evidence_dossier")
+def test_stockpicker_auto_fallback_and_informational_messages(
+    mock_dossier, mock_screen_income, mock_score_candidates, mock_rank_news, mock_fetch_news, mock_firestore
+):
+    """Verify runner auto-fallback when news has no explosive items, and income fallback messaging."""
+    mock_fetch_news.return_value = [{"headline": "Mundane report", "summary": "ordinary"}]
+    # News ranked but score_candidates returns empty because all items < 7.5
+    mock_rank_news.return_value = [{"headline": "Mundane report", "explosiveness": 5.2, "industry": "Financials"}]
+    
+    # First call returns empty, second call (fallback) returns candidates
+    mock_score_candidates.side_effect = [
+        [],  # News candidates filtered out (< 7.5)
+        [{
+            "ticker": "FUND_SYM", "symbol": "FUND_SYM", "strategy_track": "GROWTH",
+            "composite_score": 62.0, "status": "PENDING_REVIEW", "evidence_dossier": {},
+            "missing_sources": [], "degradation_warnings": []
+        }]
+    ]
+
+    mock_screen_income.return_value = [{
+        "ticker": "SPY", "symbol": "SPY", "strategy_track": "INCOME",
+        "income_score": 90.0, "used_synthetic_options": True,
+        "missing_sources": ["Live Options Chain (Yahoo HTTP 429)"],
+        "degradation_warnings": ["Yahoo options endpoint rate-limited (HTTP 429). Synthetic options yield estimated from price volatility model."]
+    }]
+    mock_dossier.return_value = {"solvency_rating": "Adequate", "bull_drivers": [], "risk_warnings": []}
+
+    mock_db = MagicMock()
+    mock_firestore.return_value = mock_db
+    mock_doc = MagicMock()
+    mock_doc.exists = False
+    mock_db.collection().document().get.return_value = mock_doc
+
+    res = run_stockpicker()
+
+    assert res is not None
+    assert res["status"] == "success"
+    assert len(res["growth_picks"]) >= 1
+    assert len(res["income_picks"]) >= 1
+    # Check informative status messages and fallback reasons
+    assert len(res["fallback_reasons"]) >= 2
+    assert any("Growth Track: No news met explosiveness threshold" in m for m in res["fallback_reasons"])
+    assert any("Income Track: Live options chain rate-limited" in m for m in res["fallback_reasons"])
+    assert "Growth Track" in res["message"]
+    assert "Income Track" in res["message"]
+
+
