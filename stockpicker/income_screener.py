@@ -9,6 +9,7 @@ Evaluates equities and ETFs for Covered Call income suitability based on:
 """
 
 import os
+import time
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -31,14 +32,41 @@ INCOME_UNIVERSE = [
     "BAC", "WFC", "USB", "KMB", "DUK", "SO", "NEE", "MCD", "WMT"
 ]
 
+# Known ETF symbols with no binary single-stock corporate earnings risk
+KNOWN_ETFS = {
+    "SPY", "IWM", "DIA", "QQQ", "XLF", "XLE", "XLV", "XLI", "XLP",
+    "XLU", "XLK", "XLC", "XLB", "XBI", "SMH", "VNQ", "TLT", "EEM",
+    "EFA", "VTI", "VOO", "VEA", "VWO", "GLD", "SLV", "GDX"
+}
+
+_options_cache: Dict[str, Any] = {}
+_earnings_date_cache: Dict[str, Any] = {}
+_last_crumb_refresh: float = 0.0
+
+
+def _clear_income_screener_caches():
+    """Clear options and earnings caches for testing."""
+    global _options_cache, _earnings_date_cache, _last_crumb_refresh
+    _options_cache.clear()
+    _earnings_date_cache.clear()
+    _last_crumb_refresh = 0.0
+
 
 def fetch_yahoo_options(ticker: str) -> Optional[Dict[str, Any]]:
     """
     Fetch nearest monthly option chain from Yahoo Finance REST API.
+    Cached for 15 minutes to reduce HTTP 429 rate limits.
 
     Returns:
         Dict with current price, expiration dates, and calls chain.
     """
+    global _last_crumb_refresh
+    now = time.time()
+    if ticker in _options_cache:
+        cached_time, cached_data = _options_cache[ticker]
+        if now - cached_time < 900:  # 15 min TTL
+            return cached_data
+
     from stockpicker.core import _yf_crumb, _yf_cookies, get_yahoo_crumb_and_cookies
     url = YF_OPTIONS_URL.format(ticker=ticker)
     headers = DEFAULT_HEADERS
@@ -48,17 +76,19 @@ def fetch_yahoo_options(ticker: str) -> Optional[Dict[str, Any]]:
         params["crumb"] = crumb
 
     try:
-        r = requests.get(url, headers=headers, params=params, cookies=cookies, timeout=4)
-        if r.status_code in (401, 429):
+        r = requests.get(url, headers=headers, params=params, cookies=cookies, timeout=6)
+        if r.status_code in (401, 429) and (now - _last_crumb_refresh > 60):
+            _last_crumb_refresh = now
             crumb, cookies = get_yahoo_crumb_and_cookies(force_refresh=True)
             if crumb:
                 params["crumb"] = crumb
-                r = requests.get(url, headers=headers, params=params, cookies=cookies, timeout=4)
+                r = requests.get(url, headers=headers, params=params, cookies=cookies, timeout=6)
 
         if r.status_code == 200:
             data = r.json()
             result = data.get("optionChain", {}).get("result", [])
             if result:
+                _options_cache[ticker] = (now, result[0])
                 return result[0]
     except Exception as e:
         logger.warning(f"[INCOME-SCREENER] Failed to fetch options for {ticker}: {e}")
@@ -67,8 +97,19 @@ def fetch_yahoo_options(ticker: str) -> Optional[Dict[str, Any]]:
 
 def fetch_earnings_date(ticker: str) -> Optional[datetime]:
     """
-    Fetch next scheduled earnings date from Yahoo Finance quoteSummary.
+    Fetch next scheduled earnings date from Yahoo Finance or Finnhub.
+    Returns None for ETFs as they do not have corporate earnings.
     """
+    global _last_crumb_refresh
+    if ticker.upper() in KNOWN_ETFS:
+        return None
+
+    now = time.time()
+    if ticker in _earnings_date_cache:
+        cached_time, cached_dt = _earnings_date_cache[ticker]
+        if now - cached_time < 43200:  # 12 hr TTL
+            return cached_dt
+
     from stockpicker.core import _yf_crumb, _yf_cookies, get_yahoo_crumb_and_cookies
     url = f"{YF_QUOTE_SUMMARY_URL.format(ticker=ticker)}?modules=calendarEvents"
     headers = DEFAULT_HEADERS
@@ -78,12 +119,13 @@ def fetch_earnings_date(ticker: str) -> Optional[datetime]:
         params["crumb"] = crumb
 
     try:
-        r = requests.get(url, headers=headers, params=params, cookies=cookies, timeout=15)
-        if r.status_code in (401, 429):
+        r = requests.get(url, headers=headers, params=params, cookies=cookies, timeout=10)
+        if r.status_code in (401, 429) and (now - _last_crumb_refresh > 60):
+            _last_crumb_refresh = now
             crumb, cookies = get_yahoo_crumb_and_cookies(force_refresh=True)
             if crumb:
                 params["crumb"] = crumb
-                r = requests.get(url, headers=headers, params=params, cookies=cookies, timeout=15)
+                r = requests.get(url, headers=headers, params=params, cookies=cookies, timeout=10)
 
         if r.status_code == 200:
             data = r.json()
@@ -92,9 +134,33 @@ def fetch_earnings_date(ticker: str) -> Optional[datetime]:
             if earnings_data:
                 ts = earnings_data[0].get("raw")
                 if ts:
-                    return datetime.fromtimestamp(ts, tz=UTC)
+                    dt = datetime.fromtimestamp(ts, tz=UTC)
+                    _earnings_date_cache[ticker] = (now, dt)
+                    return dt
     except Exception as e:
-        logger.debug(f"[INCOME-SCREENER] No earnings date found for {ticker}: {e}")
+        logger.debug(f"[INCOME-SCREENER] Yahoo earnings date failed for {ticker}: {e}")
+
+    # Fallback to Finnhub earnings calendar
+    finnhub_key = os.getenv("FINNHUB_API_KEY")
+    if finnhub_key:
+        try:
+            today_str = datetime.now(UTC).strftime('%Y-%m-%d')
+            future_str = (datetime.now(UTC) + timedelta(days=120)).strftime('%Y-%m-%d')
+            r_fh = requests.get(
+                "https://finnhub.io/api/v1/calendar/earnings",
+                params={"symbol": ticker, "from": today_str, "to": future_str, "token": finnhub_key},
+                timeout=8
+            )
+            if r_fh.status_code == 200:
+                cal = r_fh.json().get("earningsCalendar", [])
+                if cal and cal[0].get("date"):
+                    dt = datetime.strptime(cal[0]["date"], "%Y-%m-%d").replace(tzinfo=UTC)
+                    _earnings_date_cache[ticker] = (now, dt)
+                    return dt
+        except Exception as e:
+            logger.debug(f"[INCOME-SCREENER] Finnhub earnings calendar failed for {ticker}: {e}")
+
+    _earnings_date_cache[ticker] = (now, None)
     return None
 
 
@@ -221,11 +287,16 @@ def evaluate_covered_call_candidate(ticker: str) -> Optional[Dict[str, Any]]:
         open_interest = 250
         spread = ask - bid
 
-    # Earnings check
+    # Earnings check (ETFs have no binary earnings event risk)
+    is_etf = ticker.upper() in KNOWN_ETFS
     next_earnings = fetch_earnings_date(ticker)
     now = datetime.now(UTC)
-    days_to_earnings = (next_earnings - now).days if next_earnings else 999
-    earnings_risk_flag = (0 <= days_to_earnings <= 30)
+    if is_etf:
+        days_to_earnings = 999
+        earnings_risk_flag = False
+    else:
+        days_to_earnings = (next_earnings - now).days if next_earnings else 999
+        earnings_risk_flag = (0 <= days_to_earnings <= 30)
 
     # =========================================================================
     # Scoring Formula (0 to 100)
@@ -266,7 +337,7 @@ def evaluate_covered_call_candidate(ticker: str) -> Optional[Dict[str, Any]]:
         score -= 15.0
 
     # 4. Earnings Collision Safety (Up to +15 pts / Penalty -30 pts & score cap)
-    if 35 < days_to_earnings < 900:
+    if is_etf or (35 < days_to_earnings < 900):
         score += 15.0
     elif earnings_risk_flag:
         score -= 30.0  # Penalty for holding call across binary earnings event
@@ -281,7 +352,7 @@ def evaluate_covered_call_candidate(ticker: str) -> Optional[Dict[str, Any]]:
         missing_sources.append("Live Options Chain (Yahoo HTTP 429)")
         degradation_warnings.append("Yahoo options endpoint rate-limited (HTTP 429). Synthetic options yield estimated from price volatility model.")
 
-    if next_earnings is None:
+    if next_earnings is None and not is_etf:
         missing_sources.append("Earnings Calendar")
         degradation_warnings.append("Earnings calendar date unavailable (binary volatility risk unverified)")
 
@@ -303,7 +374,7 @@ def evaluate_covered_call_candidate(ticker: str) -> Optional[Dict[str, Any]]:
         "annualized_yield_est": round(annualized_yield * 100, 2),  # In %
         "implied_volatility": round(implied_vol * 100, 1),
         "est_atr_pct": round(est_atr_pct * 100, 2),
-        "days_to_earnings": days_to_earnings if days_to_earnings != 999 else None,
+        "days_to_earnings": days_to_earnings if (days_to_earnings != 999 and not is_etf) else None,
         "earnings_risk_flag": earnings_risk_flag,
         "income_score": final_score,
         "strategy_track": "INCOME",
@@ -332,7 +403,7 @@ def screen_income_candidates(tickers: Optional[Any] = None, top_n: int = 5) -> L
     from concurrent.futures import ThreadPoolExecutor
 
     logger.info(f"[INCOME-SCREENER] Screening {len(candidates_pool)} tickers for Covered Call Income...")
-    with ThreadPoolExecutor(max_workers=8) as ex:
+    with ThreadPoolExecutor(max_workers=3) as ex:
         eval_results = list(ex.map(evaluate_covered_call_candidate, candidates_pool))
 
     for res in eval_results:

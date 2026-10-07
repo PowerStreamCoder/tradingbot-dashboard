@@ -23,7 +23,7 @@ import requests
 import pandas as pd
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from collections import deque
 import logging
 
@@ -1216,9 +1216,23 @@ def get_yahoo_financial_snapshot(ticker: str) -> Dict:
         return {}
 
 
+_av_earnings_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_finnhub_earnings_cache: Dict[str, Tuple[float, Optional[float]]] = {}
+
+
+def _clear_core_caches():
+    """Clear in-memory caches for testing."""
+    global _fundamental_cache, _fundamental_scores_cache, _av_earnings_cache, _finnhub_earnings_cache
+    _fundamental_cache.clear()
+    _fundamental_scores_cache.clear()
+    _av_earnings_cache.clear()
+    _finnhub_earnings_cache.clear()
+
+
 def get_alpha_earnings(ticker: str) -> Dict:
     """
     Get earnings data from Alpha Vantage (OPTIONAL - requires ALPHAVANTAGE_API_KEY).
+    Cached for 24 hours to prevent exceeding the 25 calls/day free tier quota.
 
     Alpha Vantage provides:
     - Quarterly EPS actual vs. expected
@@ -1236,6 +1250,12 @@ def get_alpha_earnings(ticker: str) -> Dict:
 
     API Docs: https://www.alphavantage.co/documentation/
     """
+    now = time.time()
+    if ticker in _av_earnings_cache:
+        cached_time, cached_data = _av_earnings_cache[ticker]
+        if now - cached_time < 86400:  # 24h TTL
+            return cached_data
+
     key = env('ALPHAVANTAGE_API_KEY')
     if not key:
         logger.debug("Alpha Vantage API key not set, skipping earnings data")
@@ -1246,7 +1266,7 @@ def get_alpha_earnings(ticker: str) -> Dict:
             'function': 'EARNINGS',
             'symbol': ticker,
             'apikey': key
-        }, timeout=30)
+        }, timeout=15)
 
         if r.status_code != 200:
             return {}
@@ -1254,14 +1274,54 @@ def get_alpha_earnings(ticker: str) -> Dict:
         data = r.json()
         if isinstance(data, dict) and ('Information' in data or 'Note' in data):
             logger.warning(f"Alpha Vantage rate limit reached for {ticker}: {data.get('Information') or data.get('Note')}")
+            # Cache empty failure for 1 hour so we don't spam a rate-limited endpoint
+            _av_earnings_cache[ticker] = (now, {})
             return {}
 
         logger.debug(f"Fetched Alpha Vantage earnings data for {ticker}")
+        if isinstance(data, dict) and 'quarterlyEarnings' in data:
+            _av_earnings_cache[ticker] = (now, data)
         return data
 
     except Exception as e:
         logger.warning(f"Failed to get Alpha Vantage data for {ticker}: {e}")
         return {}
+
+
+def get_finnhub_earnings_surprise(ticker: str) -> Optional[float]:
+    """
+    Fetch quarterly EPS surprise from Finnhub (60 requests/minute free tier).
+    Provides resilient fallback when Alpha Vantage is rate-limited or hits 25 calls/day limit.
+
+    Returns:
+        float: EPS surprise percentage as decimal (e.g. 0.045 for +4.5%), or None
+    """
+    now = time.time()
+    if ticker in _finnhub_earnings_cache:
+        cached_time, val = _finnhub_earnings_cache[ticker]
+        if now - cached_time < 86400:
+            return val
+
+    key = env('FINNHUB_API_KEY')
+    if not key:
+        return None
+
+    try:
+        data = safe_get('https://finnhub.io/api/v1/stock/earnings', params={
+            'symbol': ticker,
+            'token': key
+        }, timeout=10)
+        if isinstance(data, list) and len(data) > 0:
+            surprise_pct = data[0].get('surprisePercent')
+            if surprise_pct not in (None, 'None'):
+                val = float(surprise_pct) / 100.0
+                _finnhub_earnings_cache[ticker] = (now, val)
+                return val
+    except Exception as e:
+        logger.debug(f"Finnhub earnings surprise query failed for {ticker}: {e}")
+
+    _finnhub_earnings_cache[ticker] = (now, None)
+    return None
 
 
 def latest_numeric(obj, path_list):
@@ -1432,6 +1492,24 @@ def compute_fundamental_score(ticker: str, weight_adjustments: Optional[Dict[str
                 eps_surprise = float(surprise_pct) / 100.0
         except (ValueError, TypeError, KeyError):
             eps_surprise = None
+
+    # Fallback 1: Finnhub earnings surprise (resilient against Alpha Vantage 25/day limit)
+    if eps_surprise is None:
+        eps_surprise = get_finnhub_earnings_surprise(ticker)
+
+    # Fallback 2: Yahoo Finance earnings history if available
+    if eps_surprise is None and yf:
+        history = (yf.get('earningsHistory') or {}).get('history') or []
+        if history and isinstance(history, list):
+            try:
+                latest_q = history[-1]
+                surp = latest_q.get('surprisePercent')
+                if isinstance(surp, dict):
+                    surp = surp.get('raw')
+                if surp is not None:
+                    eps_surprise = float(surp)
+            except Exception:
+                pass
 
     # Calculate composite score
     score = BASELINE_FUNDAMENTAL_SCORE  # Start at 50 (neutral)
@@ -1619,7 +1697,7 @@ def compute_fundamental_score(ticker: str, weight_adjustments: Optional[Dict[str
         if gross_margin is None and operating_margin is None:
             degradation_warnings.append("Margin metrics unavailable from Yahoo Finance (growth quality factor reduced)")
 
-    if not av or eps_surprise is None:
+    if eps_surprise is None:
         missing_sources.append("Alpha Vantage (EPS)")
         degradation_warnings.append("Earnings surprise (EPS) data unavailable (Alpha Vantage factor omitted)")
 
