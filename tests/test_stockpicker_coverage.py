@@ -665,5 +665,12 @@ def test_bot_focus_stockpicker_header_tile_presence():
     assert "function showStockPickerTab(" in content
     assert "function showBotFocusTab(" in content
 
+    # 5. showBotFocusTab restores all bot-focus sections and main-grid
+    assert "section:not(#stock-picker-section)" in content
+    assert "body.stock-picker-mode .main-grid" in content
+    assert "body.stock-picker-mode section:not(#stock-picker-section)" in content
+    assert "body.stock-picker-mode #stock-picker-section" in content
+    assert "display: block !important;" in content
+
 
 

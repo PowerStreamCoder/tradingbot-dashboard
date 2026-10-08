@@ -1035,6 +1035,14 @@ function navigateToBot(clientId, symbol) {
                 opt.setAttribute('aria-selected', isSelected ? 'true' : 'false');
             });
 
+            // Update URL without reload so browser reflects the selected bot
+            if (window.history && window.history.replaceState) {
+                const newUrl = new URL(window.location);
+                newUrl.searchParams.delete('show');
+                newUrl.searchParams.set('bot', targetId.toString());
+                window.history.replaceState({}, '', newUrl);
+            }
+
             if (typeof handleBotSelectorChange === 'function') {
                 handleBotSelectorChange({ target: selector });
                 return;

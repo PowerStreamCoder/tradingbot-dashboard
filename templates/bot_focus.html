@@ -817,7 +817,7 @@
     <script src="/static/js/config.js?v=2.7.0"></script>
 
     <script src="/static/js/bot_focus.js?v=2.9.1"></script>
-    <script src="/static/js/stock_picker.js?v=3.0.1"></script>
+    <script src="/static/js/stock_picker.js?v=3.0.2"></script>
 
     <script>
     // Toggle Stock Picker tab visibility and display dedicated Stock Picker header
@@ -871,41 +871,66 @@
 
     // Switch back to Bot Focus view cleanly
     function showBotFocusTab(event) {
-        if (document.body.classList.contains('stock-picker-mode')) {
-            if (event) event.preventDefault();
-            document.body.classList.remove('stock-picker-mode');
+        if (event) event.preventDefault();
+        document.body.classList.remove('stock-picker-mode');
 
-            // Hide stock picker elements
-            const stockPickerHeader = document.getElementById('stockPickerHeader');
-            if (stockPickerHeader) stockPickerHeader.style.display = 'none';
-            const stockPickerSection = document.getElementById('stock-picker-section');
-            if (stockPickerSection) stockPickerSection.style.display = 'none';
+        // Stop background stock picker refresh if active
+        if (typeof onStockPickerTabInactive === 'function') {
+            onStockPickerTabInactive();
+        } else if (typeof stopStockPickerRefresh === 'function') {
+            stopStockPickerRefresh();
+        }
 
-            // Show bot focus elements
-            const botFocusHeader = document.getElementById('botFocusHeader');
-            if (botFocusHeader) botFocusHeader.style.display = 'flex';
-            document.querySelectorAll('.market-clock, .main-content, .main-grid').forEach(el => {
-                el.style.display = '';
-            });
+        // Hide stock picker elements
+        const stockPickerHeader = document.getElementById('stockPickerHeader');
+        if (stockPickerHeader) stockPickerHeader.style.display = 'none';
+        const stockPickerSection = document.getElementById('stock-picker-section');
+        if (stockPickerSection) stockPickerSection.style.display = 'none';
 
-            // Update nav active state
-            document.querySelectorAll('.nav-link').forEach(link => link.classList.remove('active'));
-            const botFocusLink = document.getElementById('navLinkBotFocus') || document.querySelector('.nav-link[href="/bot-focus"]');
-            if (botFocusLink) botFocusLink.classList.add('active');
+        // Show bot focus elements: header, risk clock, and all bot focus tiles/sections
+        const botFocusHeader = document.getElementById('botFocusHeader');
+        if (botFocusHeader) botFocusHeader.style.display = 'flex';
+        document.querySelectorAll('.market-clock, .main-content, .main-grid, section:not(#stock-picker-section)').forEach(el => {
+            el.style.display = '';
+        });
 
-            // Restore page title
-            const pageTitleEl = document.getElementById('pageTitle');
-            if (pageTitleEl) pageTitleEl.textContent = 'Bot Focus - SMA Bot Dashboard';
-            document.title = 'Bot Focus - SMA Bot Dashboard';
+        // Update nav active state
+        document.querySelectorAll('.nav-link').forEach(link => link.classList.remove('active'));
+        const botFocusLink = document.getElementById('navLinkBotFocus') || document.querySelector('.nav-link[href="/bot-focus"]');
+        if (botFocusLink) botFocusLink.classList.add('active');
 
-            // Update URL without reload
-            if (window.history && window.history.replaceState) {
-                const newUrl = new URL(window.location);
-                newUrl.searchParams.delete('show');
-                window.history.replaceState({}, '', newUrl);
+        // Restore page title
+        const pageTitleEl = document.getElementById('pageTitle');
+        if (pageTitleEl) pageTitleEl.textContent = 'Bot Focus - SMA Bot Dashboard';
+        document.title = 'Bot Focus - SMA Bot Dashboard';
+
+        // Update URL without reload
+        if (window.history && window.history.replaceState) {
+            const newUrl = new URL(window.location);
+            newUrl.searchParams.delete('show');
+            window.history.replaceState({}, '', newUrl);
+        }
+
+        // Resize chart if already initialized so layout recalculates properly
+        if (typeof priceChart !== 'undefined' && priceChart) {
+            try {
+                priceChart.resize();
+                priceChart.update();
+            } catch (e) {
+                // Ignore chart resize error
             }
         }
     }
+
+    // Handle browser back/forward buttons between Bot Focus and Stock Picker
+    window.addEventListener('popstate', function() {
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('show') === 'stockpicker') {
+            showStockPickerTab(null);
+        } else {
+            showBotFocusTab(null);
+        }
+    });
 
     // Check URL parameters on page load
     window.addEventListener('DOMContentLoaded', function() {
@@ -920,7 +945,9 @@
     /* Stock Picker view mode header & layout rules:
        Keeps top title tile and navigation bar in the exact same position across pages */
     body.stock-picker-mode .market-clock,
-    body.stock-picker-mode #botFocusHeader {
+    body.stock-picker-mode #botFocusHeader,
+    body.stock-picker-mode .main-grid,
+    body.stock-picker-mode section:not(#stock-picker-section) {
         display: none !important;
     }
 
@@ -928,7 +955,12 @@
         display: flex !important;
     }
 
-    body:not(.stock-picker-mode) #stockPickerHeader {
+    body.stock-picker-mode #stock-picker-section {
+        display: block !important;
+    }
+
+    body:not(.stock-picker-mode) #stockPickerHeader,
+    body:not(.stock-picker-mode) #stock-picker-section {
         display: none !important;
     }
 
