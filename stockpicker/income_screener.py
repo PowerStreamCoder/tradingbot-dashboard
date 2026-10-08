@@ -291,9 +291,9 @@ def evaluate_covered_call_candidate(ticker: str) -> Optional[Dict[str, Any]]:
         annualized_yield = monthly_yield * 12.0
         spread = (ask - bid) if (bid > 0 and ask > 0) else round(premium_proxy * 0.05, 2)
 
-        fifty_two_high = quote.get("fiftyTwoWeekHigh", current_price)
-        fifty_two_low = quote.get("fiftyTwoWeekLow", current_price)
-        est_atr_pct = ((fifty_two_high - fifty_two_low) / current_price) / 10.0 if current_price > 0 else 0.015
+        fifty_two_high = quote.get("fiftyTwoWeekHigh") or (current_price * 1.15)
+        fifty_two_low = quote.get("fiftyTwoWeekLow") or (current_price * 0.85)
+        est_atr_pct = ((fifty_two_high - fifty_two_low) / current_price) / 10.0 if (current_price > 0 and fifty_two_high > fifty_two_low) else 0.015
     else:
         # Live options returned None (e.g. HTTP 429 rate limit) - resilient fallback
         quote_metrics = fetch_ticker_quote_metrics(ticker)
@@ -330,48 +330,72 @@ def evaluate_covered_call_candidate(ticker: str) -> Optional[Dict[str, Any]]:
         earnings_risk_flag = (0 <= days_to_earnings <= 30)
 
     # =========================================================================
-    # Scoring Formula (0 to 100)
+    # Scoring Formula (0 to 100 Calibrated Multi-Factor Model)
+    #
+    # Component Weights:
+    # 1. Premium Yield Quality:            Up to 35 pts (reward sweet spot 1.5% - 3.5%)
+    # 2. Volatility Stability (ATR %):     Up to 20 pts (reward stable range 0.8% - 2.5%)
+    # 3. Contract Liquidity & Spread:      Up to 20 pts (OI up to 12 pts, Spread up to 8 pts)
+    # 4. Earnings & Event Horizon Safety:  Up to 15 pts (safe horizon / ETF)
+    # 5. Downside Safety & Alt Data:       Up to 10 pts (insider + congress floor)
+    # -------------------------------------------------------------------------
+    # Theoretical Max: 35 + 20 + 20 + 15 + 10 = 100.0 pts
     # =========================================================================
-    score = 50.0  # Neutral baseline
+    score = 0.0
 
-    # 1. Premium Yield Contribution (Up to +30 pts)
-    # Sweet spot: 1.5% - 3.5% monthly premium
-    if 0.015 <= monthly_yield <= 0.040:
-        score += 30.0
-    elif 0.008 <= monthly_yield < 0.015:
-        score += 15.0
-    elif monthly_yield > 0.040:
-        score += 10.0  # High yield often implies dangerous underlying risk
+    # 1. Premium Yield Contribution (Up to 35 pts)
+    # Sweet spot for institutional covered calls: 1.5% - 3.5% monthly premium (~18% - 42% annualized).
+    # Thin yields (<0.8%) get lower conviction; excessively high yields (>3.5%) imply distress/tail-risk.
+    if 0.018 <= monthly_yield <= 0.035:
+        score += 35.0  # Prime sweet spot (high income with sustainable delta)
+    elif 0.014 <= monthly_yield < 0.018:
+        score += 30.0  # Solid attractive income
+    elif 0.010 <= monthly_yield < 0.014:
+        score += 24.0  # Moderate income
+    elif 0.007 <= monthly_yield < 0.010:
+        score += 18.0  # Low income (e.g., SPY ~0.8%, conservative index yield)
+    elif 0.003 <= monthly_yield < 0.007:
+        score += 10.0  # Very thin income
+    elif monthly_yield > 0.035:
+        score += 12.0  # High yield penalty: excessive premium often flags impending dividend cuts or crash risk
     else:
-        score -= 15.0  # Zero or negligible premium yield
+        score += 0.0   # Negligible or zero premium
 
-    # 2. Volatility Stability Contribution (Up to +20 pts)
-    # ATR % between 0.8% and 2.5% is ideal for covered calls
+    # 2. Volatility Stability Contribution (Up to 20 pts)
+    # ATR % between 0.8% and 2.5% is ideal for covered call stability
     if 0.008 <= est_atr_pct <= 0.025:
         score += 20.0
+    elif 0.005 <= est_atr_pct < 0.008 or 0.025 < est_atr_pct <= 0.035:
+        score += 12.0
     elif est_atr_pct > 0.035 or est_atr_pct < 0.001:
-        score -= 15.0  # Too volatile or completely flat
+        score += 0.0  # Too volatile or completely flat
 
-    # 3. Liquidity Contribution (Up to +15 pts)
+    # 3. Liquidity Contribution (Up to 20 pts: 12 pts Open Interest + 8 pts Bid-Ask Spread)
     if open_interest >= 500:
-        score += 15.0
+        score += 12.0
     elif open_interest >= 100:
-        score += 8.0
+        score += 7.0
+    elif open_interest >= 20:
+        score += 3.0
     else:
-        score -= 10.0  # Illiquid open interest
+        score += 0.0
 
     # Bid-Ask spread tightness (supports percentage and absolute spread)
     spread_pct = spread / current_price if current_price > 0 else 0
     if spread <= 0.15 or spread_pct <= 0.002:
-        score += 10.0
-    elif spread > 0.35 and spread_pct > 0.005:
-        score -= 15.0
+        score += 8.0
+    elif spread <= 0.35 and spread_pct <= 0.005:
+        score += 4.0
+    else:
+        score += 0.0
 
-    # 4. Earnings Collision Safety (Up to +15 pts / Penalty -30 pts & score cap)
+    # 4. Earnings Collision Safety (Up to 15 pts / Penalty -20 pts & score cap)
     if is_etf or (35 < days_to_earnings < 900):
         score += 15.0
+    elif 25 <= days_to_earnings <= 35:
+        score += 8.0
     elif earnings_risk_flag:
-        score -= 30.0  # Penalty for holding call across binary earnings event
+        score -= 20.0  # Penalty for holding call across binary earnings event
         score = min(score, 60.0)  # Absolute safety ceiling for earnings collision
 
     missing_sources = []
