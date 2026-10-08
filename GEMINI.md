@@ -1,5 +1,8 @@
 <!-- Auto-generated from AGENT_CONTEXT.md — do not edit manually -->
 <!-- Auto-generated from AGENT_CONTEXT.md — do not edit manually -->
+<!-- Auto-generated from AGENT_CONTEXT.md — do not edit manually -->
+<!-- Auto-generated from AGENT_CONTEXT.md — do not edit manually -->
+<!-- Auto-generated from AGENT_CONTEXT.md — do not edit manually -->
 # Dashboard — AI Agent Context
 
 ## Main entry points
@@ -117,26 +120,26 @@
 - Changelog: `../tradingbot-documentation/CHANGELOG.md`
 
 ## Code Knowledge Graph
-_Auto-updated 2026-09-10. Full graph: `tradingbot-tools/knowledge-graph/output/`_
+_Auto-updated 2026-10-08. Full graph: `tradingbot-tools/knowledge-graph/output/`_
 
 ### Key Classes
 | Class | File | Role |
 |---|---|---|
+| `ActionRecord` | `adaptive_feedback_engine.py` | In-memory mirror of a single Firestore adaptive_action_log d |
+| `AdaptiveCoveredCallAgent` | `adaptive_covered_call_agent.py` | Adaptive Covered Call Agent. |
+| `AdaptiveCoveredCallConfig` | `config.py` | Configuration for Adaptive Covered Call Agent. |
+| `AdaptiveEntryAgent` | `adaptive_entry_agent.py` | Adaptive Entry Agent. |
+| `AdaptiveEntryConfig` | `config.py` | Configuration for Adaptive Entry Agent. |
+| `AdaptiveFeedbackEngine` | `adaptive_feedback_engine.py` | Records adaptive agent decisions, links outcomes on position |
+| `AdaptivePnLAgent` | `adaptive_pnl_agent.py` | Adaptive Profit Loss Agent. |
+| `AdaptivePnLConfig` | `config.py` | Configuration for Adaptive Profit Loss Agent. |
+| `AgentOrchestrator` | `agent_orchestrator.py` | Agent Orchestrator. |
+| `ArbitrationDecision` | `agent_orchestrator.py` | Outcome of exit verdict arbitration (Phase 4). |
+| `AssetArchetype` | `security_profile_provider.py` |  |
 | `AsyncFillMonitor` | `execution_manager.py` | Tracks orders that timed out but may fill asynchronously. |
+| `Bare` | `tests/test_option_notifications.py` |  |
 | `BasePaperTrader` | `base.py` | Base class for IBKR paper trading bots. |
-| `BotConfig` | `services/bot_manager.py` | Configuration for a single bot. |
-| `BotData` | `main.py` |  |
-| `BotManager` | `services/bot_manager.py` | Manages multiple trading bot processes. |
-| `BotProcess` | `services/bot_manager.py` | Running bot process information. |
-| `Bucket` | `base.py` | A position slot with allocated capital. |
-| `BucketData` | `main.py` | Bucket status data model for active trading positions. |
-| `CircuitBreakerState` | `exit_handler.py` | Circuit breaker state for retry loop rate limiting. |
-| `CoveredCallManager` | `options_manager.py` | Manages covered call strategy decisions. |
-| `DashboardClient` | `dashboard.py` | Client for communicating with the trading dashboard API. |
-| `DashboardConfig` | `dashboard.py` | Configuration for dashboard integration. |
-| `DashboardData` | `main.py` |  |
-| `EntryFilterChain` | `entry_filters.py` | Orchestrates multiple entry filters in sequence. |
-| `EntryHandlerConfig` | `entry_handler.py` | Configuration for UnifiedEntryHandler behaviour. |
+| `BotAttributionRecord` | `services/pnl_statement_engine.py` |  |
 
 ### Trade Entry Lifecycle
 SMACrossoverTrader detects SMA5/SMA20 crossover on 1-hour bar → EntryFilterChain validates: RegimeFilter, MultiTimeframeFilter, volatility guards → UnifiedEntryHandler.execute_entry() → ExecutionManager.execute() → BasePaperTrader.on_entry_fill()
@@ -153,8 +156,23 @@ BasePaperTrader.reqHistoricalData() → SMACrossoverTrader._compute_sma() → SM
 ### Bot Heartbeat
 BasePaperTrader._heartbeat_loop() → Writes last_heartbeat timestamp, connection status, and SMA values to Firestore bot_status/{bot_id}
 
+### Known Failure Modes & Diagnostic Playbook
+| Error ID | Symptom | Quick Resolution |
+|---|---|---|
+| `ERR_NAIVE_DATETIME` | Trade timestamps mismatched or offset datetime err | Use datetime.now(timezone.utc) or utcnow() helper. All Firestore  |
+| `ERR_PHANTOM_EXIT` | Bot triggers exit callback for position no longer  | Check ib.positions() before processing fill and enforce exec_id d |
+| `ERR_IBKR_HMDS_162` | Bot receives 0 historical bars on startup and rema | Use bar_size '5 mins' and whatToShow='TRADES'. |
+| `ERR_OPTION_PNL_ZERO` | Tick-based exit calculations evaluate covered call | Pass bucket parameter explicitly to _check_exit_conditions to pul |
+| `ERR_PENDING_SUBMIT_TIMEOUT` | Bot classified as unhealthy on latency spike or th | Set unhealthy threshold to 7 timeouts and add 60-second cooldown  |
+| `ERR_ASYNC_FILL_ORPHAN` | IBKR fills order after bot gave up waiting, causin | Use AsyncFillMonitor to track timed-out order IDs for 60 seconds. |
+
+- Full catalog: `tradingbot-tools/knowledge-graph/output/error_catalog.md`
+- Playbook: `tradingbot-documentation/bug-resolution/SELF_HEALING_PLAYBOOK.md`
+- CLI matcher: `python3 tradingbot-tools/scripts/diagnose_incident.py -q '<error>'`
+
 ### For deeper questions
-Read `tradingbot-tools/knowledge-graph/output/bots_graph.md` for code structure
-or `output/flows.md` for detailed data flow narratives.
+- Code structure: `tradingbot-tools/knowledge-graph/output/bots_graph.md`
+- Runtime flows: `tradingbot-tools/knowledge-graph/output/flows.md`
+- Incident diagnostics: `tradingbot-tools/knowledge-graph/output/error_catalog.md`
 
 <!-- END CODE KNOWLEDGE GRAPH -->
