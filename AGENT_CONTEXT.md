@@ -1,9 +1,3 @@
-<!-- Auto-generated from AGENT_CONTEXT.md — do not edit manually -->
-<!-- Auto-generated from AGENT_CONTEXT.md — do not edit manually -->
-<!-- Auto-generated from AGENT_CONTEXT.md — do not edit manually -->
-<!-- Auto-generated from AGENT_CONTEXT.md — do not edit manually -->
-<!-- Auto-generated from AGENT_CONTEXT.md — do not edit manually -->
-<!-- Auto-generated from AGENT_CONTEXT.md — do not edit manually -->
 # Dashboard — AI Agent Context
 
 ## Main entry points
@@ -181,9 +175,10 @@ BasePaperTrader._heartbeat_loop() → Writes last_heartbeat timestamp, connectio
 | `ERR_PENDING_SUBMIT_TIMEOUT` | Bot classified as unhealthy on latency spike or th | Set unhealthy threshold to 7 timeouts and add 60-second cooldown  |
 | `ERR_ASYNC_FILL_ORPHAN` | IBKR fills order after bot gave up waiting, causin | Use AsyncFillMonitor to track timed-out order IDs for 60 seconds. |
 
-- Full catalog: `tradingbot-tools/knowledge-graph/output/error_catalog.md`
-- Playbook: `tradingbot-documentation/bug-resolution/SELF_HEALING_PLAYBOOK.md`
-- CLI matcher: `python3 tradingbot-tools/scripts/diagnose_incident.py -q '<error>'`
+### Quick Verification Tools
+- Fast parameter eval: `python3 tradingbot-tools/scripts/quick_backtest_eval.py --symbol <TICKER> --compact`
+- Hypothesis comparison: `python3 tradingbot-tools/scripts/quick_backtest_eval.py --symbol <TICKER> --compare --param <key=val>`
+- Incident diagnostic: `python3 tradingbot-tools/scripts/diagnose_incident.py -q '<error>'`
 
 ### For deeper questions
 - Code structure: `tradingbot-tools/knowledge-graph/output/bots_graph.md`
