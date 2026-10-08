@@ -482,10 +482,11 @@ function renderStockPicksTable() {
         let actionButtons = '';
 
         if (status === 'PROVISIONED') {
-            const botId = pick.bot_id || `${sym.toLowerCase()}_sma`;
+            const clientId = pick.client_id || (pick.bot_id && pick.bot_id.replace(/\D/g, '')) || '';
+            const botTarget = clientId || sym;
             statusBadge = `<span class="sp-status-pill provisioned"><span class="status-pulse green"></span> 🤖 ${pick.status_label || 'Bot Active'}</span>`;
             actionButtons = `
-                <a href="${pick.dashboard_link || `/bot/${botId}`}" class="sp-btn sp-btn-view">
+                <a href="${pick.dashboard_link || `/bot-focus?bot=${botTarget}`}" onclick="event.preventDefault(); navigateToBot('${clientId}', '${sym}');" class="sp-btn sp-btn-view" title="Focus on ${sym} Bot">
                     <span>📊</span> View Bot
                 </a>
             `;
@@ -1000,6 +1001,55 @@ function onStockPickerTabInactive() {
     stopStockPickerRefresh();
 }
 
+/**
+ * Navigate to a specific bot in the Bot Focus dashboard.
+ * If already on the Bot Focus page, smoothly transitions from the Stock Picker tab
+ * to the selected bot without a full page reload.
+ */
+function navigateToBot(clientId, symbol) {
+    // 1. Switch back from Stock Picker tab to Bot Focus tab if active
+    if (typeof showBotFocusTab === 'function') {
+        showBotFocusTab(null);
+    }
+
+    // 2. Attempt direct selector switch on current page
+    const selector = document.getElementById('botSelector');
+    let targetId = clientId ? parseInt(clientId) : null;
+
+    if (selector) {
+        if (!targetId && symbol) {
+            const opt = Array.from(selector.options).find(o => o.textContent.toUpperCase().includes(symbol.toUpperCase()));
+            if (opt) targetId = parseInt(opt.value);
+        }
+
+        if (targetId && !isNaN(targetId)) {
+            selector.value = targetId.toString();
+            localStorage.setItem('selectedBotId', targetId.toString());
+
+            // Synchronize custom dropdown if present
+            const customOptions = document.querySelectorAll('.custom-bot-option');
+            customOptions.forEach(opt => {
+                const optId = opt.getAttribute('data-client-id');
+                const isSelected = optId === targetId.toString();
+                opt.classList.toggle('selected', isSelected);
+                opt.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+            });
+
+            if (typeof handleBotSelectorChange === 'function') {
+                handleBotSelectorChange({ target: selector });
+                return;
+            }
+        }
+    }
+
+    // 3. Fallback: Save preference to localStorage and navigate
+    if (targetId && !isNaN(targetId)) {
+        localStorage.setItem('selectedBotId', targetId.toString());
+    }
+    const target = targetId || symbol;
+    window.location.href = `/bot-focus?bot=${target}`;
+}
+
 
 // =============================================================================
 // EXPORTS
@@ -1020,4 +1070,5 @@ if (typeof window !== 'undefined') {
     window.stopStockPickerRefresh = stopStockPickerRefresh;
     window.onStockPickerTabActive = onStockPickerTabActive;
     window.onStockPickerTabInactive = onStockPickerTabInactive;
+    window.navigateToBot = navigateToBot;
 }

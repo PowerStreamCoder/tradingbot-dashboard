@@ -18,7 +18,7 @@ Features:
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse
 import httpx
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta, timezone
@@ -458,7 +458,10 @@ async def check_access_code(request: Request, call_next):
         print(f"No valid session for path: {request.url.path}, cookie: {session_id[:10]}...")
 
     # If trying to access main page or dashboard without auth, show login
-    if request.url.path in ["/", "/dashboard", "/bot-focus", "/pnl-reporting", "/learning-review", "/governance-review"]:
+    if (
+        request.url.path in ["/", "/dashboard", "/bot-focus", "/nvda-focus", "/pnl-reporting", "/learning-review", "/governance-review"]
+        or request.url.path.startswith("/bot/")
+    ):
         return HTMLResponse(content=get_login_page(), status_code=200)
 
     # For API GET/DELETE endpoints without auth, return 401
@@ -835,6 +838,13 @@ async def bot_focus():
         return FileResponse(bot_focus_path)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Bot Focus dashboard not found")
+
+@app.get("/bot/{bot_id}")
+async def bot_legacy_redirect(bot_id: str):
+    """
+    Redirect legacy /bot/{bot_id} (e.g. /bot/3 or /bot/iwm_sma) to /bot-focus?bot={bot_id}
+    """
+    return RedirectResponse(url=f"/bot-focus?bot={bot_id}", status_code=302)
 
 @app.get("/pnl-reporting", response_class=HTMLResponse)
 async def pnl_reporting():
@@ -3510,7 +3520,7 @@ async def provision_bot_from_pick(request: Request):
                     match["bot_id"] = bot_id
                     match["client_id"] = next_id
                     match["provisioned_at"] = now_str
-                    match["dashboard_link"] = f"/bot/{bot_id}"
+                    match["dashboard_link"] = f"/bot-focus?bot={next_id}"
                     match["status_label"] = f"Bot Active (client_id: {next_id})"
                     match.pop("provisioning_error", None)
                     match.pop("failure_stage", None)
@@ -3523,7 +3533,7 @@ async def provision_bot_from_pick(request: Request):
                         "bot_id": bot_id,
                         "client_id": next_id,
                         "provisioned_at": now_str,
-                        "dashboard_link": f"/bot/{bot_id}",
+                        "dashboard_link": f"/bot-focus?bot={next_id}",
                         "status_label": f"Bot Active (client_id: {next_id})"
                     })
                 data["already_accepted"] = already_accepted

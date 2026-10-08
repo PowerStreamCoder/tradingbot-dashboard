@@ -88,19 +88,48 @@ async function loadBotConfig() {
             return false;
         }
 
-        // Populate bot selector dropdown
-        populateBotSelector(activeBots, data.bots);
+        // Check if user specified a bot via URL parameter or saved preference
+        const urlParams = new URLSearchParams(window.location.search);
+        const queryBot = urlParams.get('bot') || urlParams.get('client_id');
+        const querySymbol = urlParams.get('symbol');
 
-        // Check if user has a saved bot preference
-        const savedBotId = localStorage.getItem('selectedBotId');
-        let selectedBot = activeBots[0]; // Default to first bot
-
-        if (savedBotId) {
-            const preferredBot = activeBots.find(b => b.client_id === parseInt(savedBotId));
-            if (preferredBot) {
-                selectedBot = preferredBot;
+        let selectedBot = null;
+        if (queryBot || querySymbol) {
+            const matched = activeBots.find(b => {
+                if (queryBot) {
+                    const parsedId = parseInt(queryBot);
+                    if (!isNaN(parsedId) && b.client_id === parsedId) return true;
+                    if (b.name && b.name.toLowerCase() === queryBot.toLowerCase()) return true;
+                    if (b.symbol && b.symbol.toLowerCase() === queryBot.toLowerCase()) return true;
+                    if (b.script && b.script.toLowerCase().includes(queryBot.toLowerCase())) return true;
+                }
+                if (querySymbol) {
+                    if (b.symbol && b.symbol.toUpperCase() === querySymbol.toUpperCase()) return true;
+                }
+                return false;
+            });
+            if (matched) {
+                selectedBot = matched;
+                localStorage.setItem('selectedBotId', selectedBot.client_id.toString());
             }
         }
+
+        if (!selectedBot) {
+            const savedBotId = localStorage.getItem('selectedBotId');
+            if (savedBotId) {
+                const preferredBot = activeBots.find(b => b.client_id === parseInt(savedBotId));
+                if (preferredBot) {
+                    selectedBot = preferredBot;
+                }
+            }
+        }
+
+        if (!selectedBot) {
+            selectedBot = activeBots[0]; // Default to first bot
+        }
+
+        // Populate bot selector dropdown
+        populateBotSelector(activeBots, data.bots);
 
         // Validate required fields
         const requiredFields = ['client_id', 'symbol', 'name', 'script'];

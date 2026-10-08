@@ -388,7 +388,7 @@ def run_stockpicker() -> Optional[Dict[str, Any]]:
                 cand["initial_score"] = initial_score
                 cand["score_delta"] = f"+{score_delta}" if score_delta >= 0 else str(score_delta)
                 cand["status_label"] = f"Bot Active (client_id: {client_id})"
-                cand["dashboard_link"] = f"/bot/{bot_id}"
+                cand["dashboard_link"] = f"/bot-focus?bot={client_id}"
 
                 already_accepted.append(cand)
                 return
