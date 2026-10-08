@@ -3,6 +3,8 @@
 <!-- Auto-generated from AGENT_CONTEXT.md — do not edit manually -->
 <!-- Auto-generated from AGENT_CONTEXT.md — do not edit manually -->
 <!-- Auto-generated from AGENT_CONTEXT.md — do not edit manually -->
+<!-- Auto-generated from AGENT_CONTEXT.md — do not edit manually -->
+<!-- Auto-generated from AGENT_CONTEXT.md — do not edit manually -->
 # Dashboard — AI Agent Context
 
 ## Main entry points
@@ -156,6 +158,20 @@ BasePaperTrader.reqHistoricalData() → SMACrossoverTrader._compute_sma() → SM
 ### Bot Heartbeat
 BasePaperTrader._heartbeat_loop() → Writes last_heartbeat timestamp, connection status, and SMA values to Firestore bot_status/{bot_id}
 
+### Exit Priority Cascade (11-Level Short-Circuit)
+`overnight_gap → emergency → stop_loss → atr_stop → peak_giveback_shield → trailing_stop → regime_flip → sma_slope → profit_target → max_hold → hold`
+
+### Critical Order Invariants
+| Invariant | Rule Summary | Enforced In |
+|---|---|---|
+| `INV_RTH_ORDER_ROUTING` | US equity market orders are prohibited outside RTH (9:3 | `execution_manager.py` |
+| `INV_BUCKET_ALLOCATION_LIMIT` | Active positions are strictly partitioned by Bucket slo | `base.py`, `entry_handler.py` |
+| `INV_CIRCUIT_BREAKER_COOLDOWN` | If consecutive order timeouts reach 7, the bot activate | `exit_handler.py`, `execution_manager.py` |
+| `INV_COVERED_CALL_COLLATERAL` | Covered calls require holding >= 100 shares of underlyi | `options_manager.py`, `sma_crossover_trader.py` |
+| `INV_OFFSET_AWARE_UTC` | All timestamps across Firestore documents, state calcul | `base.py`, `dashboard.py`, `timestamp_utils.py` |
+
+- Full contracts: `tradingbot-tools/knowledge-graph/output/invariants_and_contracts.md`
+
 ### Known Failure Modes & Diagnostic Playbook
 | Error ID | Symptom | Quick Resolution |
 |---|---|---|
@@ -173,6 +189,7 @@ BasePaperTrader._heartbeat_loop() → Writes last_heartbeat timestamp, connectio
 ### For deeper questions
 - Code structure: `tradingbot-tools/knowledge-graph/output/bots_graph.md`
 - Runtime flows: `tradingbot-tools/knowledge-graph/output/flows.md`
+- Order invariants & contracts: `tradingbot-tools/knowledge-graph/output/invariants_and_contracts.md`
 - Incident diagnostics: `tradingbot-tools/knowledge-graph/output/error_catalog.md`
 
 <!-- END CODE KNOWLEDGE GRAPH -->
