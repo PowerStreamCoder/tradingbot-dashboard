@@ -269,7 +269,7 @@ def get_client_id_for_bot(bot_id: int) -> int:
         # We'll match by position in the bots array for now
         # bot_id=1 maps to first bot's client_id, bot_id=2 to second, etc.
 
-        if 1 <= bot_id <= len(bots):
+        if isinstance(bot_id, int) and 1 <= bot_id <= len(bots):
             bot_config = bots[bot_id - 1]  # Convert 1-indexed to 0-indexed
             client_id = bot_config.get('client_id', bot_id)
             logger.debug(f"Mapped bot_id={bot_id} to client_id={client_id} (symbol: {bot_config.get('symbol')})")
@@ -709,7 +709,7 @@ class DashboardData:
         # Process each trade
         for trade in self.trades:
             try:
-                trade_time = datetime.fromisoformat(trade["timestamp"].replace('Z', '+00:00'))
+                trade_time = datetime.fromisoformat(trade["timestamp"].replace('Z', '+00:00')).replace(tzinfo=None)
                 bot_id = trade.get("botId", 1)  # Default to bot1 if not specified
                 bot_key = f"bot{bot_id}"
                 pnl_value = trade.get("profitLoss", 0.0)
@@ -745,6 +745,10 @@ class DashboardData:
                 pnl[period][key]["pnl"] = round(pnl[period][key]["pnl"], 2)
 
         return pnl
+
+    def get_pnl_data(self) -> Dict:
+        """Alias for calculate_pnl for backward compatibility."""
+        return self.calculate_pnl()
 
 # Initialize dashboard data
 dashboard_data = DashboardData()
@@ -1133,7 +1137,7 @@ async def get_metrics(request: Request):
             day_ago = now - timedelta(days=1)
             trades_24h = len([
                 t for t in dashboard_data.trades
-                if datetime.fromisoformat(t["timestamp"].replace('Z', '+00:00')) >= day_ago
+                if datetime.fromisoformat(t["timestamp"].replace('Z', '+00:00')).replace(tzinfo=None) >= day_ago
             ])
 
             # Get P&L summary
@@ -1641,7 +1645,7 @@ async def export_trade_history(start_month: str, end_month: str):
             if symbol in ('TEST', 'TESTBOT') or bot_name in ('TEST', 'TESTBOT'):
                 continue  # Skip test trades
 
-            trade_time = datetime.fromisoformat(trade['timestamp'].replace('Z', '+00:00'))
+            trade_time = datetime.fromisoformat(trade['timestamp'].replace('Z', '+00:00')).replace(tzinfo=None)
             if start_date <= trade_time <= end_date:
                 trades.append(trade)
 
@@ -1670,7 +1674,7 @@ async def export_trade_history(start_month: str, end_month: str):
             worksheet.write(0, col, header, header_format)
 
         # Sort trades by timestamp (oldest first for display)
-        sorted_trades = sorted(trades, key=lambda t: datetime.fromisoformat(t['timestamp'].replace('Z', '+00:00')))
+        sorted_trades = sorted(trades, key=lambda t: datetime.fromisoformat(t['timestamp'].replace('Z', '+00:00')).replace(tzinfo=None))
 
         # Write data rows (newest first in Excel)
         for row, trade in enumerate(reversed(sorted_trades), start=1):
@@ -1687,7 +1691,7 @@ async def export_trade_history(start_month: str, end_month: str):
             # Format timestamp
             timestamp = trade.get('timestamp', '')
             if timestamp:
-                dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00')).replace(tzinfo=None)
                 worksheet.write(row, 7, dt.strftime('%Y-%m-%d %H:%M:%S'))
 
             # Write P/L with color
@@ -1910,7 +1914,6 @@ async def stop_bots():
     Sends HTTP request to Flask API running on VM.
     """
     try:
-        import httpx
         # Call VM API to stop bots
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.post(f'{BOT_CONTROL_API_URL}/stop-bots')
@@ -1940,7 +1943,6 @@ async def restart_bots():
     Bots will reload latest code and configuration on restart.
     """
     try:
-        import httpx
         # Call VM API to restart bots
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.post(f'{BOT_CONTROL_API_URL}/restart-bots')
@@ -1980,7 +1982,6 @@ async def reset_bot(bot_name: str):
         raise HTTPException(status_code=400, detail=f"Invalid bot name format: {bot_name}")
 
     try:
-        import httpx
         # Call VM API to reset bot
         async with httpx.AsyncClient(timeout=120.0) as client:  # 2 minute timeout for reset
             response = await client.post(f'{BOT_CONTROL_API_URL}/reset-bot/{bot_name}')
@@ -2233,7 +2234,6 @@ async def switch_profile(request: Request):
 
         # Get current profile first (for audit trail)
         try:
-            import httpx
             async with httpx.AsyncClient(timeout=5.0) as client:
                 current_response = await client.get(f'{BOT_CONTROL_API_URL}/current-profile')
                 if current_response.status_code == 200:
@@ -2307,7 +2307,6 @@ async def switch_profile(request: Request):
         # No positions - safe to proceed with switch
         logger.info(f"[SWITCH-PROFILE] Forwarding switch request to VM API (profile={profile})")
 
-        import httpx
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f'{BOT_CONTROL_API_URL}/switch-profile',
@@ -3349,19 +3348,23 @@ async def get_parameter_advice(
     except Exception:
         pass
 
-    advice = generate_expert_parameter_advice(
-        symbol=sym,
-        strategy_track=strategy_track,
-        capital_allocation=capital_allocation,
-        current_price=price,
-        est_atr_pct=atr_pct,
-        implied_volatility=iv,
-        solvency_rating=solvency,
-        is_degraded=is_degraded if 'is_degraded' in locals() else False,
-        missing_sources=missing_sources if 'missing_sources' in locals() else None,
-        degradation_warnings=degradation_warnings if 'degradation_warnings' in locals() else None
-    )
-    return advice
+    try:
+        advice = generate_expert_parameter_advice(
+            symbol=sym,
+            strategy_track=strategy_track,
+            capital_allocation=capital_allocation,
+            current_price=price,
+            est_atr_pct=atr_pct,
+            implied_volatility=iv,
+            solvency_rating=solvency,
+            is_degraded=is_degraded if 'is_degraded' in locals() else False,
+            missing_sources=missing_sources if 'missing_sources' in locals() else None,
+            degradation_warnings=degradation_warnings if 'degradation_warnings' in locals() else None
+        )
+        return advice
+    except Exception as e:
+        logger.exception(f"Error generating parameter advice for {sym}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate parameter advice: {e}")
 
 
 @app.post("/api/stock-picks/provision-bot")

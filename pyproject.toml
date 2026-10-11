@@ -1,0 +1,20 @@
+[tool.coverage.run]
+source = ["main", "services", "stockpicker"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+fail_under = 98
+show_missing = true
+skip_covered = true
+sort = "cover"
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "--cov=main --cov=services --cov=stockpicker --cov-report=term-missing"
+filterwarnings = ["ignore::DeprecationWarning", "ignore::pytest.PytestReturnNotNoneWarning"]
