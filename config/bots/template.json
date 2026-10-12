@@ -36,11 +36,6 @@
     "cc_income_mode_min_hold_hours": 96.0,
     "cc_option_profit_target_pct": 0.50,
     "cc_close_at_dte_threshold": 3,
-    "cc_enable_roll_up_and_out": false,
-    "cc_roll_trigger_atr_distance": 0.5,
-    "cc_roll_min_net_credit": 0.05,
-    "cc_roll_min_roll_interval_hours": 48.0,
-    "cc_roll_max_per_position": 2,
     "cc_unrecoverable_block_portfolio": false,
     "use_delta_filter": false,
     "min_delta": 0.25,
@@ -79,7 +74,8 @@
     "use_min_edge_gate": false,
     "min_edge_cost_pct": 0.0015,
     "min_edge_multiple": 3.0,
-    "min_edge_expected_move_atr_mult": 1.0
+    "min_edge_expected_move_atr_mult": 1.0,
+    "crossover_expiration_seconds": 28800
   },
   "trading_behavior": {
     "allow_extended_hours": false,
