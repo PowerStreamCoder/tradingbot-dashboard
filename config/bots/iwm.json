@@ -69,7 +69,8 @@
     "confirmation_min_seconds": 15,
     "confirmation_mode": "atr_max_floor",
     "confirmation_min_pct_floor": 0.0008,
-    "confirmation_atr_multiplier": 0.2
+    "confirmation_atr_multiplier": 0.2,
+    "crossover_expiration_seconds": 28800
   },
   "trading_behavior": {
     "allow_extended_hours": true,
