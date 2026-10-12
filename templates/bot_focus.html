@@ -380,44 +380,6 @@
             </div>
         </section>
 
-        <!-- Bot Configuration & Strategy Parameters Section -->
-        <section class="tile bot-params-tile" id="botParamsSection">
-            <div class="tile-header params-tile-header">
-                <div class="params-header-left">
-                    <div class="params-title-line">
-                        <h2>⚙️ Strategy Parameters & Bot Configuration</h2>
-                        <span class="param-symbol-badge" id="paramSymbolBadge">--</span>
-                        <span class="param-status-badge active" id="paramStatusBadge">ACTIVE PARAMS</span>
-                    </div>
-                    <p class="params-desc" id="paramBotDesc">Loading active trading bot parameters...</p>
-                </div>
-                <div class="params-header-right">
-                    <div class="params-tabs" id="paramsTabs">
-                        <button type="button" class="param-tab active" data-category="all">All</button>
-                        <button type="button" class="param-tab" data-category="capital">💰 Capital</button>
-                        <button type="button" class="param-tab" data-category="risk">🛑 Risk & Stops</button>
-                        <button type="button" class="param-tab" data-category="entry">🎯 Entry</button>
-                        <button type="button" class="param-tab" data-category="calls">📜 Covered Calls</button>
-                        <button type="button" class="param-tab" data-category="regime">🧭 Regime</button>
-                        <button type="button" class="param-tab" data-category="adaptive">⚡ Adaptive</button>
-                        <button type="button" class="param-tab" data-category="coordination">🔄 Coordination</button>
-                    </div>
-                    <button type="button" class="btn-toggle-params" id="toggleParamsBtn" title="Collapse or expand configuration section">
-                        <span id="toggleParamsIcon">▲</span> <span id="toggleParamsText">Collapse</span>
-                    </button>
-                </div>
-            </div>
-
-            <div class="params-body" id="paramsBody">
-                <div class="params-grid" id="paramsCardsGrid">
-                    <!-- Populated dynamically by bot_focus.js -->
-                    <div class="params-loading-placeholder">
-                        <span class="params-spinner"></span> Loading bot parameters...
-                    </div>
-                </div>
-            </div>
-        </section>
-
         <!-- Orders Table -->
         <section class="tile orders-tile">
             <div class="tile-header">
@@ -455,6 +417,44 @@
                         </tr>
                     </tbody>
                 </table>
+            </div>
+        </section>
+
+        <!-- Bot Configuration & Strategy Parameters Section -->
+        <section class="tile bot-params-tile" id="botParamsSection">
+            <div class="tile-header params-tile-header">
+                <div class="params-header-left">
+                    <div class="params-title-line">
+                        <h2>⚙️ Strategy Parameters & Bot Configuration</h2>
+                        <span class="param-symbol-badge" id="paramSymbolBadge">--</span>
+                        <span class="param-status-badge active" id="paramStatusBadge">ACTIVE PARAMS</span>
+                    </div>
+                    <p class="params-desc" id="paramBotDesc">Loading active trading bot parameters...</p>
+                </div>
+                <div class="params-header-right">
+                    <div class="params-tabs" id="paramsTabs">
+                        <button type="button" class="param-tab active" data-category="all">All</button>
+                        <button type="button" class="param-tab" data-category="capital">💰 Capital</button>
+                        <button type="button" class="param-tab" data-category="risk">🛑 Risk & Stops</button>
+                        <button type="button" class="param-tab" data-category="entry">🎯 Entry</button>
+                        <button type="button" class="param-tab" data-category="calls">📜 Covered Calls</button>
+                        <button type="button" class="param-tab" data-category="regime">🧭 Regime</button>
+                        <button type="button" class="param-tab" data-category="adaptive">⚡ Adaptive</button>
+                        <button type="button" class="param-tab" data-category="coordination">🔄 Coordination</button>
+                    </div>
+                    <button type="button" class="btn-toggle-params" id="toggleParamsBtn" title="Collapse or expand configuration section">
+                        <span id="toggleParamsIcon">▲</span> <span id="toggleParamsText">Collapse</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="params-body" id="paramsBody">
+                <div class="params-grid" id="paramsCardsGrid">
+                    <!-- Populated dynamically by bot_focus.js -->
+                    <div class="params-loading-placeholder">
+                        <span class="params-spinner"></span> Loading bot parameters...
+                    </div>
+                </div>
             </div>
         </section>
 
@@ -519,13 +519,13 @@
                             <th>SIDE</th>
                             <th>QTY</th>
                             <th>REASON</th>
-                            <th>DETAILS</th>
+                            <th>ACTIONS</th>
                         </tr>
                     </thead>
                     <tbody id="tradeHistoryBody">
                         <!-- Dynamically populated -->
                         <tr>
-                            <td colspan="12" style="text-align: center; padding: 20px; color: #a0aec0;">
+                            <td colspan="15" style="text-align: center; padding: 20px; color: #a0aec0;">
                                 Loading trade history...
                             </td>
                         </tr>

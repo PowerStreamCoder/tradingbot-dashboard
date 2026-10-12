@@ -1537,6 +1537,36 @@ body {
     border-color: rgba(59, 130, 246, 0.6);
 }
 
+/* Delete trade button */
+.delete-trade-btn {
+    padding: 4px 10px;
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    border-radius: 6px;
+    color: #f87171;
+    font-size: 0.85em;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.delete-trade-btn:hover {
+    background: rgba(239, 68, 68, 0.3);
+    border-color: rgba(239, 68, 68, 0.7);
+    color: #fca5a5;
+}
+
+.delete-trade-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.trade-actions-cell {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
 /* P&L columns */
 td.profit {
     color: #10b981;

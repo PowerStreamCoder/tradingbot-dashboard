@@ -269,7 +269,7 @@ def get_client_id_for_bot(bot_id: int) -> int:
         # We'll match by position in the bots array for now
         # bot_id=1 maps to first bot's client_id, bot_id=2 to second, etc.
 
-        if 1 <= bot_id <= len(bots):
+        if isinstance(bot_id, int) and 1 <= bot_id <= len(bots):
             bot_config = bots[bot_id - 1]  # Convert 1-indexed to 0-indexed
             client_id = bot_config.get('client_id', bot_id)
             logger.debug(f"Mapped bot_id={bot_id} to client_id={client_id} (symbol: {bot_config.get('symbol')})")
@@ -644,6 +644,16 @@ class DashboardData:
             for doc in trades_query.stream():
                 trade = doc.to_dict()
 
+                # Attach doc ID if available
+                doc_id_val = getattr(doc, 'id', None)
+                if doc_id_val and isinstance(doc_id_val, str):
+                    trade['id'] = doc_id_val
+                    trade['doc_id'] = doc_id_val
+
+                # Ensure trade_id is available at top level
+                if 'trade_id' not in trade and 'analysis_metadata' in trade and isinstance(trade.get('analysis_metadata'), dict):
+                    trade['trade_id'] = trade['analysis_metadata'].get('trade_id')
+
                 # Filter out test trades (TEST, TESTBOT symbols)
                 # Check both 'symbol' and 'botName' fields (tests use botName)
                 symbol = trade.get('symbol', '').upper()
@@ -709,7 +719,7 @@ class DashboardData:
         # Process each trade
         for trade in self.trades:
             try:
-                trade_time = datetime.fromisoformat(trade["timestamp"].replace('Z', '+00:00'))
+                trade_time = datetime.fromisoformat(trade["timestamp"].replace('Z', '+00:00')).replace(tzinfo=None)
                 bot_id = trade.get("botId", 1)  # Default to bot1 if not specified
                 bot_key = f"bot{bot_id}"
                 pnl_value = trade.get("profitLoss", 0.0)
@@ -745,6 +755,10 @@ class DashboardData:
                 pnl[period][key]["pnl"] = round(pnl[period][key]["pnl"], 2)
 
         return pnl
+
+    def get_pnl_data(self) -> Dict:
+        """Alias for calculate_pnl for backward compatibility."""
+        return self.calculate_pnl()
 
 # Initialize dashboard data
 dashboard_data = DashboardData()
@@ -1133,7 +1147,7 @@ async def get_metrics(request: Request):
             day_ago = now - timedelta(days=1)
             trades_24h = len([
                 t for t in dashboard_data.trades
-                if datetime.fromisoformat(t["timestamp"].replace('Z', '+00:00')) >= day_ago
+                if datetime.fromisoformat(t["timestamp"].replace('Z', '+00:00')).replace(tzinfo=None) >= day_ago
             ])
 
             # Get P&L summary
@@ -1421,6 +1435,16 @@ async def get_all_trade_history(days: int = 60, response: Response = None):
         for doc in trades_query.stream():
             trade = doc.to_dict()
 
+            # Attach doc ID if available
+            doc_id_val = getattr(doc, 'id', None)
+            if doc_id_val and isinstance(doc_id_val, str):
+                trade['id'] = doc_id_val
+                trade['doc_id'] = doc_id_val
+
+            # Ensure trade_id is available at top level
+            if 'trade_id' not in trade and 'analysis_metadata' in trade and isinstance(trade.get('analysis_metadata'), dict):
+                trade['trade_id'] = trade['analysis_metadata'].get('trade_id')
+
             # Filter out test trades (TEST, TESTBOT symbols)
             # Check both 'symbol' and 'botName' fields (tests use botName)
             symbol = trade.get('symbol', '').upper()
@@ -1641,7 +1665,7 @@ async def export_trade_history(start_month: str, end_month: str):
             if symbol in ('TEST', 'TESTBOT') or bot_name in ('TEST', 'TESTBOT'):
                 continue  # Skip test trades
 
-            trade_time = datetime.fromisoformat(trade['timestamp'].replace('Z', '+00:00'))
+            trade_time = datetime.fromisoformat(trade['timestamp'].replace('Z', '+00:00')).replace(tzinfo=None)
             if start_date <= trade_time <= end_date:
                 trades.append(trade)
 
@@ -1670,7 +1694,7 @@ async def export_trade_history(start_month: str, end_month: str):
             worksheet.write(0, col, header, header_format)
 
         # Sort trades by timestamp (oldest first for display)
-        sorted_trades = sorted(trades, key=lambda t: datetime.fromisoformat(t['timestamp'].replace('Z', '+00:00')))
+        sorted_trades = sorted(trades, key=lambda t: datetime.fromisoformat(t['timestamp'].replace('Z', '+00:00')).replace(tzinfo=None))
 
         # Write data rows (newest first in Excel)
         for row, trade in enumerate(reversed(sorted_trades), start=1):
@@ -1687,7 +1711,7 @@ async def export_trade_history(start_month: str, end_month: str):
             # Format timestamp
             timestamp = trade.get('timestamp', '')
             if timestamp:
-                dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00')).replace(tzinfo=None)
                 worksheet.write(row, 7, dt.strftime('%Y-%m-%d %H:%M:%S'))
 
             # Write P/L with color
@@ -1873,24 +1897,116 @@ async def update_pnl_statement(data: PnLStatement):
     return {"status": "error", "message": "Deprecated endpoint - P&L calculated client-side"}
 
 @app.delete("/api/trade-history/delete")
-async def delete_trade(timestamp: str):
+async def delete_trade(
+    timestamp: Optional[str] = None,
+    trade_id: Optional[str] = None,
+    entry_order_id: Optional[str] = None,
+    doc_id: Optional[str] = None
+):
     """
-    Delete a trade by timestamp from Firestore and in-memory cache.
-    Requires exact ISO timestamp match.
+    Delete a trade from Firestore and in-memory caches.
+    Can match by timestamp, doc_id, entry_order_id, or trade_id.
+    Ensures zero discrepancies:
+    - Deletes trade document from Firestore
+    - Cleans up associated option events
+    - Invalidates 30s trade history cache (_trade_history_cache)
+    - Invalidates 30s bot metrics cache (_bot_metrics_cache)
+    - Updates in-memory dashboard_data.trades list
     """
     try:
-        # Find and delete from Firestore
-        query = dashboard_data.trades_ref.where('timestamp', '==', timestamp)
-        docs = list(query.stream())
+        docs = []
+
+        # 1. Query by timestamp if provided (for backwards compatibility with existing clients/tests)
+        if timestamp:
+            query = dashboard_data.trades_ref.where('timestamp', '==', timestamp)
+            docs = list(query.stream())
+
+        # 2. Query by doc_id if provided and not yet found
+        if not docs and doc_id:
+            try:
+                doc_snap = dashboard_data.trades_ref.document(str(doc_id)).get()
+                if getattr(doc_snap, 'exists', False):
+                    docs.append(doc_snap)
+            except Exception as e:
+                print(f"Warning looking up doc_id {doc_id}: {e}")
+
+        # 3. Query by entryOrderId if provided and not yet found
+        if not docs and entry_order_id:
+            try:
+                eid_int = int(entry_order_id)
+                query = dashboard_data.trades_ref.where('entryOrderId', '==', eid_int)
+                docs = list(query.stream())
+            except (ValueError, TypeError):
+                pass
+            if not docs:
+                query = dashboard_data.trades_ref.where('entryOrderId', '==', str(entry_order_id))
+                docs = list(query.stream())
+
+        # 4. Query by trade_id in analysis_metadata if provided and not yet found
+        if not docs and trade_id:
+            query = dashboard_data.trades_ref.where('analysis_metadata.trade_id', '==', trade_id)
+            docs = list(query.stream())
+            if not docs:
+                query = dashboard_data.trades_ref.where('trade_id', '==', trade_id)
+                docs = list(query.stream())
 
         if docs:
             deleted_count = 0
+            timestamps_to_remove = set()
+            entry_orders_to_clean = set()
+            doc_ids_to_remove = set()
+
             for doc in docs:
+                d_id = getattr(doc, 'id', None)
+                if d_id and isinstance(d_id, str):
+                    doc_ids_to_remove.add(d_id)
+
+                trade_dict = {}
+                if hasattr(doc, 'to_dict') and callable(doc.to_dict):
+                    trade_dict = doc.to_dict() or {}
+
+                doc_ts = trade_dict.get('timestamp') or timestamp
+                if doc_ts:
+                    timestamps_to_remove.add(doc_ts)
+
+                e_id = trade_dict.get('entryOrderId') or trade_dict.get('analysis_metadata', {}).get('entry_order_id') or entry_order_id
+                if e_id is not None:
+                    entry_orders_to_clean.add(e_id)
+
                 doc.reference.delete()
                 deleted_count += 1
 
+            # Clean up associated option events if any
+            for e_id in entry_orders_to_clean:
+                try:
+                    if hasattr(dashboard_data, 'db') and dashboard_data.db is not None:
+                        opt_ref = dashboard_data.db.collection('option_events')
+                        try:
+                            opt_query = opt_ref.where('entryOrderId', '==', int(e_id))
+                            for opt_doc in opt_query.stream():
+                                opt_doc.reference.delete()
+                        except (ValueError, TypeError):
+                            pass
+                except Exception as e:
+                    print(f"Warning cleaning option events for {e_id}: {e}")
+
+            # Invalidate trade history cache
+            with _trade_history_cache['lock']:
+                _trade_history_cache['data'] = None
+                _trade_history_cache['timestamp'] = None
+
+            # Invalidate bot metrics cache
+            with _bot_metrics_cache['lock']:
+                _bot_metrics_cache['data'].clear()
+                _bot_metrics_cache['timestamp'].clear()
+
             # Remove from in-memory cache
-            dashboard_data.trades = [t for t in dashboard_data.trades if t.get('timestamp') != timestamp]
+            dashboard_data.trades = [
+                t for t in dashboard_data.trades
+                if (not t.get('id') or t.get('id') not in doc_ids_to_remove)
+                and (not t.get('timestamp') or t.get('timestamp') not in timestamps_to_remove)
+                and (not t.get('entryOrderId') or (t.get('entryOrderId') not in entry_orders_to_clean and str(t.get('entryOrderId')) not in {str(x) for x in entry_orders_to_clean}))
+            ]
 
             return {
                 "status": "success",
@@ -1910,7 +2026,6 @@ async def stop_bots():
     Sends HTTP request to Flask API running on VM.
     """
     try:
-        import httpx
         # Call VM API to stop bots
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.post(f'{BOT_CONTROL_API_URL}/stop-bots')
@@ -1940,7 +2055,6 @@ async def restart_bots():
     Bots will reload latest code and configuration on restart.
     """
     try:
-        import httpx
         # Call VM API to restart bots
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.post(f'{BOT_CONTROL_API_URL}/restart-bots')
@@ -1980,7 +2094,6 @@ async def reset_bot(bot_name: str):
         raise HTTPException(status_code=400, detail=f"Invalid bot name format: {bot_name}")
 
     try:
-        import httpx
         # Call VM API to reset bot
         async with httpx.AsyncClient(timeout=120.0) as client:  # 2 minute timeout for reset
             response = await client.post(f'{BOT_CONTROL_API_URL}/reset-bot/{bot_name}')
@@ -2233,7 +2346,6 @@ async def switch_profile(request: Request):
 
         # Get current profile first (for audit trail)
         try:
-            import httpx
             async with httpx.AsyncClient(timeout=5.0) as client:
                 current_response = await client.get(f'{BOT_CONTROL_API_URL}/current-profile')
                 if current_response.status_code == 200:
@@ -2307,7 +2419,6 @@ async def switch_profile(request: Request):
         # No positions - safe to proceed with switch
         logger.info(f"[SWITCH-PROFILE] Forwarding switch request to VM API (profile={profile})")
 
-        import httpx
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f'{BOT_CONTROL_API_URL}/switch-profile',
@@ -3349,19 +3460,23 @@ async def get_parameter_advice(
     except Exception:
         pass
 
-    advice = generate_expert_parameter_advice(
-        symbol=sym,
-        strategy_track=strategy_track,
-        capital_allocation=capital_allocation,
-        current_price=price,
-        est_atr_pct=atr_pct,
-        implied_volatility=iv,
-        solvency_rating=solvency,
-        is_degraded=is_degraded if 'is_degraded' in locals() else False,
-        missing_sources=missing_sources if 'missing_sources' in locals() else None,
-        degradation_warnings=degradation_warnings if 'degradation_warnings' in locals() else None
-    )
-    return advice
+    try:
+        advice = generate_expert_parameter_advice(
+            symbol=sym,
+            strategy_track=strategy_track,
+            capital_allocation=capital_allocation,
+            current_price=price,
+            est_atr_pct=atr_pct,
+            implied_volatility=iv,
+            solvency_rating=solvency,
+            is_degraded=is_degraded if 'is_degraded' in locals() else False,
+            missing_sources=missing_sources if 'missing_sources' in locals() else None,
+            degradation_warnings=degradation_warnings if 'degradation_warnings' in locals() else None
+        )
+        return advice
+    except Exception as e:
+        logger.exception(f"Error generating parameter advice for {sym}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate parameter advice: {e}")
 
 
 @app.post("/api/stock-picks/provision-bot")

@@ -187,13 +187,13 @@ class TestDashboardAPI(unittest.TestCase):
         self.assertIn("capital", iwm_params)
         self.assertIn("risk_management", iwm_params)
         self.assertIn("covered_calls", iwm_params)
-        self.assertEqual(iwm_params["capital"]["capital_per_bucket_long"], 30000.0)
+        self.assertEqual(iwm_params["capital"]["capital_per_bucket_long"], 32500.0)
 
         nvda_params = load_bot_parameters("NVDA")
         self.assertIsNotNone(nvda_params)
         self.assertEqual(nvda_params.get("symbol"), "NVDA")
         self.assertIn("capital", nvda_params)
-        self.assertEqual(nvda_params["capital"]["capital_per_bucket_long"], 35000.0)
+        self.assertEqual(nvda_params["capital"]["capital_per_bucket_long"], 25000.0)
 
         # Test non-existent symbol returns None
         bad_params = load_bot_parameters("NONEXISTENT")
