@@ -695,6 +695,45 @@ class TestDashboardMutations:
             res = client.delete("/api/trade-history/delete?timestamp=2026-10-10T12:00:00Z")
             assert res.status_code == 500
 
+    def test_delete_trade_multi_identifiers_and_cache(self, auth_client):
+        client, _ = auth_client
+
+        # Test delete by doc_id
+        mock_doc = MagicMock()
+        mock_doc.id = "doc123"
+        mock_doc.get.return_value = mock_doc
+        mock_doc.to_dict.return_value = {
+            "entryOrderId": 12345,
+            "timestamp": "2026-10-10T12:00:00Z"
+        }
+        mock_doc.exists = True
+
+        mock_opt = MagicMock()
+        mock_opt_query = MagicMock()
+        mock_opt_query.stream.return_value = [mock_opt]
+
+        with patch.object(dashboard_data.trades_ref, "document", return_value=mock_doc), \
+             patch.object(dashboard_data.db, "collection") as mock_col:
+            mock_col.return_value.where.return_value = mock_opt_query
+            res = client.delete("/api/trade-history/delete?doc_id=doc123")
+            assert res.status_code == 200
+            assert res.json()["status"] == "success"
+            mock_doc.reference.delete.assert_called()
+
+        # Test delete by entry_order_id
+        mock_query = MagicMock()
+        mock_query.stream.return_value = [mock_doc]
+        with patch.object(dashboard_data.trades_ref, "where", return_value=mock_query):
+            res = client.delete("/api/trade-history/delete?entry_order_id=12345")
+            assert res.status_code == 200
+            assert res.json()["status"] == "success"
+
+        # Test delete by trade_id
+        with patch.object(dashboard_data.trades_ref, "where", return_value=mock_query):
+            res = client.delete("/api/trade-history/delete?trade_id=NVDA_20261010_120000_1")
+            assert res.status_code == 200
+            assert res.json()["status"] == "success"
+
 
 # ============================================================================
 # 6. MAIN.PY: BOT CONTROL & POSITION MANAGEMENT

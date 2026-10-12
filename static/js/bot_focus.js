@@ -3104,7 +3104,12 @@ function renderTradeHistoryRows(tradesToRender) {
                 <td><span class="side-badge ${side.toLowerCase()}">${side}</span></td>
                 <td>${quantity}</td>
                 <td style="font-size: 0.9em;">${reason}</td>
-                <td><button class="view-details-btn" onclick="showTradeDetails('${trade.trade_id || ''}', '${trade.entryOrderId}')">View</button></td>
+                <td>
+                    <div class="trade-actions-cell">
+                        <button class="view-details-btn" onclick="showTradeDetails('${trade.trade_id || ''}', '${trade.entryOrderId}')" title="View trade details">View</button>
+                        <button class="delete-trade-btn" onclick="confirmDeleteTradeHistoryItem('${trade.id || ''}', '${trade.entryOrderId || ''}', '${trade.timestamp || ''}', '${trade.trade_id || (trade.analysis_metadata?.trade_id || '')}', '${seqNum}')" title="Delete trade ${seqNum}">Delete</button>
+                    </div>
+                </td>
             </tr>
         `;
     }).join('');
@@ -3227,6 +3232,110 @@ function formatTradeTimestamp(timestamp) {
         return timestamp.substring(0, 16).replace('T', ' ');
     }
 }
+
+/**
+ * Prompt confirmation and delete a trade from history and database.
+ * Reconciles trade history, bot metrics, badge counts, and table rows to eliminate discrepancies.
+ */
+async function confirmDeleteTradeHistoryItem(docId, entryOrderId, timestamp, tradeId, seqNum) {
+    const trade = (window._cachedTradeHistory || []).find(t =>
+        (docId && t.id === docId) ||
+        (entryOrderId && String(t.entryOrderId) === String(entryOrderId)) ||
+        (timestamp && t.timestamp === timestamp) ||
+        (tradeId && (t.trade_id === tradeId || t.analysis_metadata?.trade_id === tradeId))
+    ) || {};
+
+    const seqDisplay = seqNum || trade.sequence_display || trade.seqNum || '?';
+    const symbol = trade.symbol || trade.analysis_metadata?.symbol || CONFIG.symbol || '';
+    const stockPnl = trade.stock_pnl !== undefined ? trade.stock_pnl : (trade.profitLoss || 0);
+    const optionPnl = trade.option_pnl || 0;
+    const totalPnl = (stockPnl + optionPnl);
+    const pnlFormatted = (totalPnl >= 0 ? '+' : '') + '$' + Math.abs(totalPnl).toFixed(2);
+    const entryPrice = trade.entryPrice ? `$${trade.entryPrice.toFixed(2)}` : '--';
+    const exitPrice = trade.exitPrice ? `$${trade.exitPrice.toFixed(2)}` : '--';
+
+    const confirmMsg = `Are you sure you want to delete trade #${seqDisplay} (${symbol})?\n\n` +
+        `• Total P&L: ${pnlFormatted}\n` +
+        `• Entry Price: ${entryPrice}\n` +
+        `• Exit Price: ${exitPrice}\n\n` +
+        `This will permanently remove the trade record and automatically update all metrics, P&L calculations, and badge counts.\n\n` +
+        `This action cannot be undone.`;
+
+    if (!confirm(confirmMsg)) {
+        return;
+    }
+
+    try {
+        // Show busy indicator
+        document.body.style.cursor = 'wait';
+
+        const params = new URLSearchParams();
+        if (docId) params.append('doc_id', docId);
+        if (timestamp) params.append('timestamp', timestamp);
+        if (entryOrderId) params.append('entry_order_id', entryOrderId);
+        if (tradeId) params.append('trade_id', tradeId);
+
+        const response = await fetch(`/api/trade-history/delete?${params.toString()}`, {
+            method: 'DELETE',
+            credentials: 'include',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            let errorDetail = `Status ${response.status}`;
+            try {
+                const errData = await response.json();
+                errorDetail = errData.detail || errData.message || errorDetail;
+            } catch (_) {}
+            throw new Error(errorDetail);
+        }
+
+        const result = await response.json();
+        console.log(`[TRADE HISTORY] Successfully deleted trade #${seqDisplay}:`, result);
+
+        // Optimistically remove from window._cachedTradeHistory immediately to avoid delay
+        if (window._cachedTradeHistory) {
+            window._cachedTradeHistory = window._cachedTradeHistory.filter(t =>
+                !(docId && t.id === docId) &&
+                !(entryOrderId && String(t.entryOrderId) === String(entryOrderId)) &&
+                !(timestamp && t.timestamp === timestamp) &&
+                !(tradeId && (t.trade_id === tradeId || t.analysis_metadata?.trade_id === tradeId))
+            );
+            updateTradeHistoryBadges(window._cachedTradeHistory);
+            applyTradeHistoryFilters();
+            const countEl = document.getElementById('tradeCount');
+            if (countEl) {
+                const currentProfile = (await getCurrentProfile().catch(() => 'paper')) || 'paper';
+                countEl.textContent = `Last ${window._cachedTradeHistory.length} ${currentProfile.toUpperCase()} trades`;
+            }
+        }
+
+        // Close trade modal if currently viewing this trade
+        if (typeof closeTradeModal === 'function') {
+            closeTradeModal();
+        }
+
+        // Parallel refresh across all affected endpoints to ensure NO discrepancies:
+        // 1. updateTradeHistory() - fresh pull from /api/trade-history/all
+        // 2. updateTradesData() - fresh bot metrics (todayPnl, netPnl, totalTrades, winRate, sharpe, drawdown)
+        // 3. updateBotOverview() - bot status overview
+        await Promise.all([
+            updateTradeHistory(),
+            typeof updateTradesData === 'function' ? updateTradesData() : Promise.resolve(),
+            typeof updateBotOverview === 'function' ? updateBotOverview() : Promise.resolve()
+        ]);
+
+    } catch (err) {
+        console.error('Error deleting trade:', err);
+        alert(`❌ Error deleting trade: ${err.message}`);
+    } finally {
+        document.body.style.cursor = 'default';
+    }
+}
+window.confirmDeleteTradeHistoryItem = confirmDeleteTradeHistoryItem;
+window.deleteTrade = confirmDeleteTradeHistoryItem;
 
 /**
  * Update logs data

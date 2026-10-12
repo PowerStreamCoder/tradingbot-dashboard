@@ -644,6 +644,16 @@ class DashboardData:
             for doc in trades_query.stream():
                 trade = doc.to_dict()
 
+                # Attach doc ID if available
+                doc_id_val = getattr(doc, 'id', None)
+                if doc_id_val and isinstance(doc_id_val, str):
+                    trade['id'] = doc_id_val
+                    trade['doc_id'] = doc_id_val
+
+                # Ensure trade_id is available at top level
+                if 'trade_id' not in trade and 'analysis_metadata' in trade and isinstance(trade.get('analysis_metadata'), dict):
+                    trade['trade_id'] = trade['analysis_metadata'].get('trade_id')
+
                 # Filter out test trades (TEST, TESTBOT symbols)
                 # Check both 'symbol' and 'botName' fields (tests use botName)
                 symbol = trade.get('symbol', '').upper()
@@ -1425,6 +1435,16 @@ async def get_all_trade_history(days: int = 60, response: Response = None):
         for doc in trades_query.stream():
             trade = doc.to_dict()
 
+            # Attach doc ID if available
+            doc_id_val = getattr(doc, 'id', None)
+            if doc_id_val and isinstance(doc_id_val, str):
+                trade['id'] = doc_id_val
+                trade['doc_id'] = doc_id_val
+
+            # Ensure trade_id is available at top level
+            if 'trade_id' not in trade and 'analysis_metadata' in trade and isinstance(trade.get('analysis_metadata'), dict):
+                trade['trade_id'] = trade['analysis_metadata'].get('trade_id')
+
             # Filter out test trades (TEST, TESTBOT symbols)
             # Check both 'symbol' and 'botName' fields (tests use botName)
             symbol = trade.get('symbol', '').upper()
@@ -1877,24 +1897,116 @@ async def update_pnl_statement(data: PnLStatement):
     return {"status": "error", "message": "Deprecated endpoint - P&L calculated client-side"}
 
 @app.delete("/api/trade-history/delete")
-async def delete_trade(timestamp: str):
+async def delete_trade(
+    timestamp: Optional[str] = None,
+    trade_id: Optional[str] = None,
+    entry_order_id: Optional[str] = None,
+    doc_id: Optional[str] = None
+):
     """
-    Delete a trade by timestamp from Firestore and in-memory cache.
-    Requires exact ISO timestamp match.
+    Delete a trade from Firestore and in-memory caches.
+    Can match by timestamp, doc_id, entry_order_id, or trade_id.
+    Ensures zero discrepancies:
+    - Deletes trade document from Firestore
+    - Cleans up associated option events
+    - Invalidates 30s trade history cache (_trade_history_cache)
+    - Invalidates 30s bot metrics cache (_bot_metrics_cache)
+    - Updates in-memory dashboard_data.trades list
     """
     try:
-        # Find and delete from Firestore
-        query = dashboard_data.trades_ref.where('timestamp', '==', timestamp)
-        docs = list(query.stream())
+        docs = []
+
+        # 1. Query by timestamp if provided (for backwards compatibility with existing clients/tests)
+        if timestamp:
+            query = dashboard_data.trades_ref.where('timestamp', '==', timestamp)
+            docs = list(query.stream())
+
+        # 2. Query by doc_id if provided and not yet found
+        if not docs and doc_id:
+            try:
+                doc_snap = dashboard_data.trades_ref.document(str(doc_id)).get()
+                if getattr(doc_snap, 'exists', False):
+                    docs.append(doc_snap)
+            except Exception as e:
+                print(f"Warning looking up doc_id {doc_id}: {e}")
+
+        # 3. Query by entryOrderId if provided and not yet found
+        if not docs and entry_order_id:
+            try:
+                eid_int = int(entry_order_id)
+                query = dashboard_data.trades_ref.where('entryOrderId', '==', eid_int)
+                docs = list(query.stream())
+            except (ValueError, TypeError):
+                pass
+            if not docs:
+                query = dashboard_data.trades_ref.where('entryOrderId', '==', str(entry_order_id))
+                docs = list(query.stream())
+
+        # 4. Query by trade_id in analysis_metadata if provided and not yet found
+        if not docs and trade_id:
+            query = dashboard_data.trades_ref.where('analysis_metadata.trade_id', '==', trade_id)
+            docs = list(query.stream())
+            if not docs:
+                query = dashboard_data.trades_ref.where('trade_id', '==', trade_id)
+                docs = list(query.stream())
 
         if docs:
             deleted_count = 0
+            timestamps_to_remove = set()
+            entry_orders_to_clean = set()
+            doc_ids_to_remove = set()
+
             for doc in docs:
+                d_id = getattr(doc, 'id', None)
+                if d_id and isinstance(d_id, str):
+                    doc_ids_to_remove.add(d_id)
+
+                trade_dict = {}
+                if hasattr(doc, 'to_dict') and callable(doc.to_dict):
+                    trade_dict = doc.to_dict() or {}
+
+                doc_ts = trade_dict.get('timestamp') or timestamp
+                if doc_ts:
+                    timestamps_to_remove.add(doc_ts)
+
+                e_id = trade_dict.get('entryOrderId') or trade_dict.get('analysis_metadata', {}).get('entry_order_id') or entry_order_id
+                if e_id is not None:
+                    entry_orders_to_clean.add(e_id)
+
                 doc.reference.delete()
                 deleted_count += 1
 
+            # Clean up associated option events if any
+            for e_id in entry_orders_to_clean:
+                try:
+                    if hasattr(dashboard_data, 'db') and dashboard_data.db is not None:
+                        opt_ref = dashboard_data.db.collection('option_events')
+                        try:
+                            opt_query = opt_ref.where('entryOrderId', '==', int(e_id))
+                            for opt_doc in opt_query.stream():
+                                opt_doc.reference.delete()
+                        except (ValueError, TypeError):
+                            pass
+                except Exception as e:
+                    print(f"Warning cleaning option events for {e_id}: {e}")
+
+            # Invalidate trade history cache
+            with _trade_history_cache['lock']:
+                _trade_history_cache['data'] = None
+                _trade_history_cache['timestamp'] = None
+
+            # Invalidate bot metrics cache
+            with _bot_metrics_cache['lock']:
+                _bot_metrics_cache['data'].clear()
+                _bot_metrics_cache['timestamp'].clear()
+
             # Remove from in-memory cache
-            dashboard_data.trades = [t for t in dashboard_data.trades if t.get('timestamp') != timestamp]
+            dashboard_data.trades = [
+                t for t in dashboard_data.trades
+                if (not t.get('id') or t.get('id') not in doc_ids_to_remove)
+                and (not t.get('timestamp') or t.get('timestamp') not in timestamps_to_remove)
+                and (not t.get('entryOrderId') or (t.get('entryOrderId') not in entry_orders_to_clean and str(t.get('entryOrderId')) not in {str(x) for x in entry_orders_to_clean}))
+            ]
 
             return {
                 "status": "success",
