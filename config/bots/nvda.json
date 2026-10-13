@@ -79,7 +79,7 @@
   },
   "neutral_regime": {
     "use_neutral_regime_entries": true,
-    "neutral_entry_mode": "conservatve"
+    "neutral_entry_mode": "conservative"
   },
   "threshold_coordination": {
     "min_move_for_call_atr": 1.0,
