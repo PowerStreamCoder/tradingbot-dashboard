@@ -75,15 +75,21 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Sync bots.json from config repo
+      - name: Sync bots.json + bots/ from config repo
         uses: actions/checkout@v4
         with:
           repository: PowerStreamCoder/tradingbot-config
           path: _config_repo
           token: ${{ secrets.PAT_TOKEN }}
-          sparse-checkout: bots.json
+          # bots.json is the registry (name/symbol/client_id); bots/*.json are the
+          # per-bot parameter profiles served at /api/bot-params. Both must be
+          # bundled in the image or a newly-registered bot shows no parameters.
+          sparse-checkout: |
+            bots.json
+            bots/
+          sparse-checkout-cone-mode: false
 
-      - name: Update local bots.json if changed
+      - name: Update local config from config repo if changed
         run: |
           if [ -f _config_repo/bots.json ]; then
             if ! diff -q config/bots.json _config_repo/bots.json >/dev/null 2>&1; then
@@ -95,6 +101,14 @@ jobs:
             fi
           else
             echo "⚠️  Could not fetch bots.json from config repo"
+          fi
+          # Per-bot parameter profiles (served by /api/bot-params).
+          if [ -d _config_repo/bots ]; then
+            mkdir -p config/bots
+            cp _config_repo/bots/*.json config/bots/ 2>/dev/null || true
+            echo "✅ config/bots/ synced ($(ls config/bots/*.json 2>/dev/null | wc -l) profiles)"
+          else
+            echo "⚠️  Could not fetch bots/ from config repo"
           fi
           rm -rf _config_repo
 

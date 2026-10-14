@@ -2,7 +2,7 @@
   "symbol": "IWM",
   "description": "IWM-specific parameters - conservative small-cap with selective covered calls",
   "capital": {
-    "capital_per_bucket_long": 30000.0,
+    "capital_per_bucket_long": 32500.0,
     "capital_per_bucket_short": 1000.0,
     "buckets_per_group": 1
   },
@@ -34,19 +34,22 @@
     "cc_suitability_min_iv_hv_ratio": 0.9,
     "cc_mode": "INCOME",
     "cc_income_mode_min_hold_hours": 96.0,
-    "cc_option_profit_target_pct": 0.50,
+    "cc_option_profit_target_pct": 0.5,
     "cc_close_at_dte_threshold": 3,
     "cc_unrecoverable_block_portfolio": false,
     "use_delta_filter": false,
     "min_delta": 0.25,
-    "max_delta": 0.35
+    "max_delta": 0.35,
+    "_comment_expiration": "14 DTE = 336h term. Retained after measurement: shortening to 4 DTE was tested and is materially WORSE - call median hold collapsed 24.0h -> 1.0h and return fell 37.74% -> 21.90%, because a near-dated call is bought straight back (approaching_strike fires almost immediately and the thin premium fails the call_min_premium_pct gate). A longer tenor is what makes the premium worth collecting at all."
   },
   "exit_logic": {
-    "use_atr_targets": false,
+    "use_atr_targets": true,
     "use_atr_stop": true,
     "atr_stop_multiplier": 2.0,
-    "use_sma_slope_exit": false,
-    "sma_slope_threshold": -0.001
+    "atr_stop_replaces_hard_stop": true,
+    "use_sma_slope_exit": true,
+    "sma_slope_threshold": -0.001,
+    "_comment_backstop": "atr_stop_replaces_hard_stop=true: the ~k*ATR stop is the real risk floor; stop_loss_threshold (-5%) is a catastrophe backstop that effectively never fires behind the fast-exit stack. Behavior-neutral flag that makes the intent explicit and silences the inert-stop warning (bots #231)."
   },
   "regime": {
     "use_regime_filter": true,
@@ -68,9 +71,11 @@
     "confirmation_ticks_required": 10,
     "confirmation_min_seconds": 15,
     "confirmation_mode": "atr_max_floor",
-    "confirmation_min_pct_floor": 0.0008,
-    "confirmation_atr_multiplier": 0.2,
-    "crossover_expiration_seconds": 28800
+    "confirmation_min_pct_floor": 0.0005,
+    "confirmation_atr_multiplier": 0.1,
+    "crossover_expiration_seconds": 28800,
+    "_comment_confirmation": "Walk-forward validated (4x 180d windows, 2024-09..2026-09): loosening the confirmation band (atr_multiplier 0.2->0.1, pct_floor 0.0008->0.0005) improved return in 4/4 windows (median +0.71pp/window) with max-drawdown unchanged (median -0.06pp). Confirmation latency, not crossover TTL, is the binding constraint on the ETF class - the same loosening did NOT help the stock class (NVDA 1/4), so stock configs are left unchanged.",
+    "_comment_ttl": "crossover_expiration_seconds 28800 (8h) set for cross-symbol consistency with nvda.json (2026-10-12). Measured NEUTRAL for IWM: the ETF class converts almost no candidates regardless of TTL (2y replay: 411 candidates -> 5-6 fills at 1h and at 8h; return/DD unchanged to within a rounding error). The binding ETF constraint remains confirmation latency + the queue->fill path, per _comment_confirmation above."
   },
   "trading_behavior": {
     "allow_extended_hours": true,
@@ -87,7 +92,11 @@
     "take_profit_without_call_atr": 6.0,
     "min_move_for_call_absolute_pct": 0.001,
     "take_profit_absolute_pct": 0.005,
-    "max_hold_hours": 0.0
+    "max_hold_hours": 144.0,
+    "cc_expected_position_hold_hours": 24.0,
+    "cc_min_tenor_monetization_fraction": 0.25,
+    "cc_horizon_check_enabled": true,
+    "_comment_cc_horizon": "max_hold_hours 144h = 42.9% of the 14-DTE (336h) term, above the 25% (84h) monetization floor, so the load-time check judges the CAP and passes: max(144,24)=144h >= 84h. cc_expected_position_hold_hours is 24h - the MEASURED median hold, not the cap - so the declaration describes real behaviour instead of the best case. Both facts are reported deliberately: the cap says how long the position MAY be held, the expected value says how long it actually is."
   },
   "adaptive_pnl": {
     "enable_adaptive_pnl": true,
@@ -137,9 +146,10 @@
   },
   "orchestrator": {
     "enable_orchestrator": true,
-    "strategy_intent": "COVERED_CALL_INCOME",
+    "strategy_intent": "SURFACE_ALL",
     "income_mode_mtf_relaxation": 0.15,
-    "_comment": "Valid options: SURFACE_ALL, AUTO, COVERED_CALL_INCOME, TREND_MOMENTUM_GROWTH, VOLATILITY_DEFENSIVE, NEUTRAL_RANGE_HARVEST"
+    "_comment_cc_min_hold": "Churn-exit deferral floor. 96h, NOT 24h: measured, a 24h floor lets churn exits back in almost immediately and 30/37 calls close in under 6h, which destroys the overlay. At 96h the median call hold is 24h with only 8/36 under 6h. Defers profit_target / trailing_stop / intraday_peak_giveback_shield / break_even_lock_exit / partial_scale_out while a call is open. Hard risk controls (emergency, stop_loss, atr_stop, overnight_gap, regime_flip, sma_slope) and the terminal time exits are never deferred. Effect: PF 0.96 -> 1.07, max drawdown 18.85% -> 8.65%.",
+    "_comment": "Valid postures: SURFACE_ALL, AUTO, TREND_MOMENTUM_GROWTH, VOLATILITY_DEFENSIVE, NEUTRAL_RANGE_HARVEST. Covered-call mode comes ONLY from cc_mode (#202) — COVERED_CALL_INCOME is no longer a valid strategy_intent."
   },
   "macro_signals": {
     "enable_macro_signals": true,
