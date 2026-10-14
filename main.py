@@ -51,6 +51,7 @@ logger = logging.getLogger(__name__)
 
 # P&L Statement Engine
 from services.pnl_statement_engine import aggregate_portfolio_pnl, PortfolioStatementResponse
+from services.performance_engine import calculate_engine_performance, EnginePerformanceResponse
 
 
 # Initialize rate limiter
@@ -869,6 +870,14 @@ async def pnl_reporting():
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="P&L Reporting page not found")
 
+@app.get("/performance", response_class=HTMLResponse)
+async def performance_page():
+    """Serve the Trading Engine Performance & Benchmarking page"""
+    perf_path = os.path.join(TEMPLATES_DIR, "performance.html")
+    if not os.path.exists(perf_path):
+        raise HTTPException(status_code=404, detail="Performance dashboard page not found")
+    return FileResponse(perf_path)
+
 @app.get("/api/pnl-statement", response_model=PortfolioStatementResponse)
 async def get_pnl_statement(
     period: str = "YTD",
@@ -922,6 +931,54 @@ async def get_pnl_statement(
     except Exception as e:
         logger.error(f"Error generating P&L statement: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to generate P&L statement: {str(e)}")
+
+
+@app.get("/api/engine-performance", response_model=EnginePerformanceResponse)
+async def get_engine_performance_endpoint(
+    period: str = "YTD",
+    bot: str = "ALL",
+    mode: str = "all",
+    benchmark: str = "SPY",
+    response: Response = None
+):
+    """
+    Get comprehensive Trading Engine Performance, Scorecard, and Public Benchmarks.
+    Evaluates execution quality, risk-adjusted returns, per-bot attribution, and diagnostic levers.
+    """
+    try:
+        trade_res = await get_all_trade_history(days=365, response=None)
+        trades_list = trade_res.get("trades", []) if isinstance(trade_res, dict) else []
+
+        configs = load_bot_configs().get("bots", [])
+        bot_overview_raw = dashboard_data._load_bot_data() or {}
+
+        account_overview = None
+        try:
+            acct_doc = dashboard_data.db.collection('account_overview').document('current').get()
+            if acct_doc.exists:
+                account_overview = acct_doc.to_dict()
+        except Exception:
+            pass
+
+        perf_data = calculate_engine_performance(
+            trades=trades_list,
+            bot_overview_data=bot_overview_raw,
+            bot_configs=configs,
+            account_overview_data=account_overview,
+            period=period,
+            bot_scope=bot,
+            mode=mode,
+            benchmark_symbol=benchmark
+        )
+
+        if response:
+            cache_status = "HIT" if perf_data.cached else "MISS"
+            response.headers["X-Cache-Status"] = f"{cache_status} (age: {perf_data.cache_age_seconds}s)"
+
+        return perf_data
+    except Exception as e:
+        logger.error(f"Error generating engine performance report: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to generate engine performance: {str(e)}")
 
 
 @app.get("/api/bot-configs")

@@ -36,6 +36,7 @@ def test_navigation_bar_consistency_across_templates():
     template_files = [
         "bot_focus.html",
         "index.html",
+        "performance.html",
         "learning_review.html",
         "governance_review.html"
     ]
@@ -43,6 +44,7 @@ def test_navigation_bar_consistency_across_templates():
     expected_nav_order = [
         "/bot-focus",
         "/pnl-reporting",
+        "/performance",
         "/learning-review",
         "/governance-review",
         "/bot-focus?show=stockpicker"
