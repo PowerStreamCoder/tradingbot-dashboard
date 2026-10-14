@@ -19,7 +19,7 @@
 - Run all tests: `pytest tests/ -v`
 - Run API tests only: `pytest tests/api -q`
 - Deploy: `git push origin main` → GitHub Actions → Cloud Run (~3 min, automatic)
-- Production URL: https://trading-dashboard-879908494858.us-central1.run.app
+- Production URL: https://trading-dashboard-w2n5czslna-uc.a.run.app
 
 ## Common mappings
 - All API route definitions: `main.py` (search for `@app.get` / `@app.post`)
