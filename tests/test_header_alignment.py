@@ -91,3 +91,35 @@ def test_header_css_dimensions_and_alignment():
     # Header-left h1 line-height and font-size
     assert "line-height: 28px;" in css_content
     assert "font-size: 22px;" in css_content
+
+
+def test_custom_bot_dropdown_visibility_and_stacking():
+    """Verify that the bot header and dropdown menu have proper stacking context to render above the nav-bar."""
+    css_path = STATIC_DIR / "css" / "bot_focus.css"
+    assert css_path.exists()
+    css_content = css_path.read_text(encoding="utf-8")
+
+    # .bot-header has position: relative and z-index: 100 to sit above nav-bar in stacking context
+    bot_header_match = re.search(r'\.bot-header\s*\{([^}]+)\}', css_content)
+    assert bot_header_match is not None
+    assert "position: relative;" in bot_header_match.group(1)
+    assert "z-index: 100;" in bot_header_match.group(1)
+
+    # .nav-bar has z-index lower than .bot-header
+    nav_bar_match = re.search(r'\.nav-bar\s*\{([^}]+)\}', css_content)
+    assert nav_bar_match is not None
+    assert "z-index: 10;" in nav_bar_match.group(1)
+
+    # .bot-selector-custom-wrapper has positioning and z-index
+    wrapper_match = re.search(r'\.bot-selector-custom-wrapper\s*\{([^}]+)\}', css_content)
+    assert wrapper_match is not None
+    assert "position: relative;" in wrapper_match.group(1)
+    assert "z-index: 110;" in wrapper_match.group(1)
+
+    # .custom-bot-menu has absolute position, high z-index, and solid background
+    menu_match = re.search(r'\.custom-bot-menu\s*\{([^}]+)\}', css_content)
+    assert menu_match is not None
+    assert "position: absolute;" in menu_match.group(1)
+    assert "z-index: 1000;" in menu_match.group(1)
+    assert "max-height:" in menu_match.group(1)
+
