@@ -505,8 +505,9 @@ class TestTradeHistoryAndExport:
         assert "trades" in res_all.json()
 
         with _trade_history_cache['lock']:
-            _trade_history_cache['data'] = None
-            _trade_history_cache['timestamp'] = None
+            _trade_history_cache['data'].clear()
+            _trade_history_cache['timestamp'].clear()
+            _trade_history_cache['ttl'].clear()
         with patch.object(dashboard_data.trades_ref, "where", side_effect=Exception("query fail")):
             res_err = client.get("/api/trade-history/all?days=30")
             assert res_err.status_code == 200

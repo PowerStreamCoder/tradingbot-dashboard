@@ -22,7 +22,7 @@ from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, Redirect
 import httpx
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Optional, Literal  # v5.0.0: Added Literal for trading_mode validation
+from typing import List, Dict, Optional, Literal, Any  # v5.0.0: Added Literal for trading_mode validation
 from pydantic import BaseModel
 from google.cloud import firestore
 import os
@@ -51,7 +51,11 @@ logger = logging.getLogger(__name__)
 
 # P&L Statement Engine
 from services.pnl_statement_engine import aggregate_portfolio_pnl, PortfolioStatementResponse
-from services.performance_engine import calculate_engine_performance, EnginePerformanceResponse
+from services.performance_engine import (
+    calculate_engine_performance,
+    EnginePerformanceResponse,
+    clear_performance_cache,
+)
 
 
 # Initialize rate limiter
@@ -77,13 +81,25 @@ BOT_CONTROL_API_URL = os.environ.get("BOT_CONTROL_API_URL", "http://136.115.134.
 authenticated_sessions = {}  # Local cache
 sessions_ref = None  # Firestore collection reference (initialized after DashboardData)
 
-# Cache for trade history to reduce Firestore reads
+# Cache for trade history to reduce Firestore reads.
+# Keyed by the lookback window (`days`) so callers requesting different windows
+# never receive each other's results. The performance engine asks for 3650 days
+# while the P&L statement asks for 365; sharing a single slot made one endpoint
+# silently serve the other's (older or narrower) trade set.
 _trade_history_cache = {
-    'data': None,
-    'timestamp': None,
+    'data': {},  # Keyed by days
+    'timestamp': {},  # Keyed by days
+    'ttl': {},  # Keyed by days -> TTL in seconds
     'lock': Lock()
 }
-TRADE_CACHE_TTL_SECONDS = 30  # Cache for 30 seconds
+TRADE_CACHE_TTL_SECONDS = 30  # Default cache TTL for 30 seconds
+# Longer TTL for the heavy long-horizon performance query. It scans a wide
+# window (up to the row cap) and only feeds analytics, so caching it longer
+# keeps Firestore reads to a minimum while the UI shows the data "as of" time.
+PERFORMANCE_TRADE_CACHE_TTL_SECONDS = 180
+# Backend row cap for the trade-history query. Also reported to the performance
+# engine so it can flag when a long window may be truncated by this cap.
+TRADE_HISTORY_ROW_CAP = 500
 
 # Cache for bot metrics to reduce Firestore reads
 _bot_metrics_cache = {
@@ -870,6 +886,74 @@ async def pnl_reporting():
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="P&L Reporting page not found")
 
+# ---------------------------------------------------------------------------
+# Performance feature helpers
+# ---------------------------------------------------------------------------
+# The trade-history query is capped at 500 docs, so requesting the maximum
+# window simply returns the most recent 500 trades while allowing long-horizon
+# periods (ALL / 1Y) to reach further back than the default 365-day window.
+PERFORMANCE_HISTORY_LOOKBACK_DAYS = 3650
+
+# Benchmark price series cache: {key: {"data": Optional[List[float]], "timestamp": datetime}}
+_benchmark_series_cache: Dict[str, Any] = {}
+_benchmark_series_lock = Lock()
+BENCHMARK_SERIES_TTL_SECONDS = 900  # 15 minutes
+
+
+def _period_lookback_days(period: str) -> int:
+    """Map a dashboard period identifier to a calendar-day lookback window."""
+    return {
+        "1D": 2,
+        "1W": 8,
+        "1M": 31,
+        "QTD": 95,
+        "YTD": 370,
+        "1Y": 370,
+        "ALL": PERFORMANCE_HISTORY_LOOKBACK_DAYS,
+    }.get((period or "").upper(), 370)
+
+
+def _fetch_benchmark_price_series(
+    symbol: str, period: str, now: Optional[datetime] = None
+) -> Optional[List[float]]:
+    """
+    Fetch a daily close price series for a benchmark symbol so the engine can
+    compute *real* buy-and-hold drawdown and volatility.
+
+    Returns None on any failure - the engine treats missing benchmark data as
+    "unavailable" rather than inventing values. Cached for 15 minutes to avoid
+    hammering the provider on the 30s dashboard refresh.
+    """
+    key = f"{symbol.upper()}_{period.upper()}"
+    now = now or datetime.now(timezone.utc)
+    with _benchmark_series_lock:
+        entry = _benchmark_series_cache.get(key)
+        if entry and (now - entry["timestamp"]).total_seconds() < BENCHMARK_SERIES_TTL_SECONDS:
+            return entry["data"]
+
+    series: Optional[List[float]] = None
+    try:
+        import yfinance as yf
+
+        start = now - timedelta(days=_period_lookback_days(period) + 5)
+        hist = yf.Ticker(symbol).history(
+            start=start.strftime("%Y-%m-%d"),
+            end=now.strftime("%Y-%m-%d"),
+            interval="1d",
+        )
+        if hist is not None and not hist.empty:
+            # Filter out NaN/invalid closes
+            closes = [float(c) for c in hist["Close"].tolist() if c == c and c > 0]
+            if len(closes) >= 2:
+                series = closes
+    except Exception as e:
+        logger.warning(f"Benchmark price series fetch failed for {symbol}: {e}")
+
+    with _benchmark_series_lock:
+        _benchmark_series_cache[key] = {"data": series, "timestamp": now}
+    return series
+
+
 @app.get("/performance", response_class=HTMLResponse)
 async def performance_page():
     """Serve the Trading Engine Performance & Benchmarking page"""
@@ -939,14 +1023,31 @@ async def get_engine_performance_endpoint(
     bot: str = "ALL",
     mode: str = "all",
     benchmark: str = "SPY",
+    force: bool = False,
     response: Response = None
 ):
     """
     Get comprehensive Trading Engine Performance, Scorecard, and Public Benchmarks.
     Evaluates execution quality, risk-adjusted returns, per-bot attribution, and diagnostic levers.
+
+    Pass ``force=true`` to bypass the analysis/trade/benchmark caches and recompute
+    from the latest Firestore data (used by the dashboard's manual Refresh).
     """
     try:
-        trade_res = await get_all_trade_history(days=365, response=None)
+        if force:
+            # Manual refresh: drop the analysis cache, this window's trade cache
+            # and the benchmark series so the caller never sees stale data.
+            clear_performance_cache()
+            with _trade_history_cache['lock']:
+                _trade_history_cache['data'].pop(PERFORMANCE_HISTORY_LOOKBACK_DAYS, None)
+                _trade_history_cache['timestamp'].pop(PERFORMANCE_HISTORY_LOOKBACK_DAYS, None)
+                _trade_history_cache['ttl'].pop(PERFORMANCE_HISTORY_LOOKBACK_DAYS, None)
+            with _benchmark_series_lock:
+                _benchmark_series_cache.clear()
+
+        # Use the maximum window so ALL / 1Y periods can reach beyond one year
+        # (the query still returns at most TRADE_HISTORY_ROW_CAP trades).
+        trade_res = await get_all_trade_history(days=PERFORMANCE_HISTORY_LOOKBACK_DAYS, response=None)
         trades_list = trade_res.get("trades", []) if isinstance(trade_res, dict) else []
 
         configs = load_bot_configs().get("bots", [])
@@ -960,6 +1061,11 @@ async def get_engine_performance_endpoint(
         except Exception:
             pass
 
+        # Only fetch benchmark price history when there is engine data to compare
+        benchmark_series = None
+        if trades_list:
+            benchmark_series = _fetch_benchmark_price_series(benchmark, period)
+
         perf_data = calculate_engine_performance(
             trades=trades_list,
             bot_overview_data=bot_overview_raw,
@@ -968,7 +1074,9 @@ async def get_engine_performance_endpoint(
             period=period,
             bot_scope=bot,
             mode=mode,
-            benchmark_symbol=benchmark
+            benchmark_symbol=benchmark,
+            benchmark_price_series=benchmark_series,
+            history_limit=TRADE_HISTORY_ROW_CAP
         )
 
         if response:
@@ -1464,14 +1572,25 @@ async def get_all_trade_history(days: int = 60, response: Response = None):
     try:
         now = datetime.now()
 
-        # Check cache (thread-safe)
+        # The long-horizon performance window is expensive (it scans up to the
+        # row cap) and only feeds analytics, so it is cached longer than the
+        # short statement window. TTL is derived from the window, never from a
+        # caller-supplied value, so the cache cannot be pinned externally.
+        ttl_seconds = (
+            PERFORMANCE_TRADE_CACHE_TTL_SECONDS
+            if days >= PERFORMANCE_HISTORY_LOOKBACK_DAYS
+            else TRADE_CACHE_TTL_SECONDS
+        )
+
+        # Check cache (thread-safe), scoped to this lookback window
         with _trade_history_cache['lock']:
-            cached_data = _trade_history_cache['data']
-            cached_time = _trade_history_cache['timestamp']
+            cached_data = _trade_history_cache['data'].get(days)
+            cached_time = _trade_history_cache['timestamp'].get(days)
+            cached_ttl = _trade_history_cache['ttl'].get(days, TRADE_CACHE_TTL_SECONDS)
 
             if cached_data and cached_time:
                 age_seconds = (now - cached_time).total_seconds()
-                if age_seconds < TRADE_CACHE_TTL_SECONDS:
+                if age_seconds < cached_ttl:
                     if response:
                         response.headers['X-Cache-Status'] = f'HIT (age: {int(age_seconds)}s)'
                     return cached_data
@@ -1483,10 +1602,10 @@ async def get_all_trade_history(days: int = 60, response: Response = None):
         # Calculate start date
         start_date = datetime.now() - timedelta(days=days)
 
-        # Query all trades since start_date (limited to 500 to prevent unbounded growth)
+        # Query all trades since start_date (capped to prevent unbounded growth)
         trades_query = dashboard_data.trades_ref.where(
             'timestamp', '>=', start_date.isoformat()
-        ).order_by('timestamp', direction=firestore.Query.DESCENDING).limit(500)
+        ).order_by('timestamp', direction=firestore.Query.DESCENDING).limit(TRADE_HISTORY_ROW_CAP)
 
         trades = []
         for doc in trades_query.stream():
@@ -1531,10 +1650,11 @@ async def get_all_trade_history(days: int = 60, response: Response = None):
 
         result = {"trades": trades, "days": days, "count": len(trades)}
 
-        # Update cache
+        # Update cache (scoped to this lookback window)
         with _trade_history_cache['lock']:
-            _trade_history_cache['data'] = result
-            _trade_history_cache['timestamp'] = now
+            _trade_history_cache['data'][days] = result
+            _trade_history_cache['timestamp'][days] = now
+            _trade_history_cache['ttl'][days] = ttl_seconds
 
         return result
     except Exception as e:
@@ -2049,8 +2169,9 @@ async def delete_trade(
 
             # Invalidate trade history cache
             with _trade_history_cache['lock']:
-                _trade_history_cache['data'] = None
-                _trade_history_cache['timestamp'] = None
+                _trade_history_cache['data'].clear()
+                _trade_history_cache['timestamp'].clear()
+                _trade_history_cache['ttl'].clear()
 
             # Invalidate bot metrics cache
             with _bot_metrics_cache['lock']:

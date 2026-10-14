@@ -642,16 +642,18 @@ def test_main_remaining_branches(auth_client):
         assert res_trades_err.json()["status"] == "error"
 
     # Lines 1406-1410 & 1433 & 1438-1439: get_all_trade_history cache HIT and trade filtering
+    # Cache is keyed by lookback window; the endpoint defaults to days=60.
     with _trade_history_cache['lock']:
-        _trade_history_cache['data'] = [{"symbol": "NVDA", "profitLoss": 100.0}]
-        _trade_history_cache['timestamp'] = datetime.now()
+        _trade_history_cache['data'][60] = [{"symbol": "NVDA", "profitLoss": 100.0}]
+        _trade_history_cache['timestamp'][60] = datetime.now()
     res_cached = client.get("/api/trade-history/all")
     assert res_cached.status_code == 200
 
     # Reset cache to test filtering
     with _trade_history_cache['lock']:
-        _trade_history_cache['data'] = None
-        _trade_history_cache['timestamp'] = None
+        _trade_history_cache['data'].clear()
+        _trade_history_cache['timestamp'].clear()
+        _trade_history_cache['ttl'].clear()
 
     test_trades_docs = [
         MagicMock(to_dict=lambda: {"symbol": "TEST", "botName": "TEST", "timestamp": "2026-10-10T10:00:00Z"}),
@@ -823,8 +825,9 @@ def test_main_remaining_branches(auth_client):
     mock_query = MagicMock()
     mock_query.stream.return_value = [doc_test_trade, doc_no_seq]
     with main._trade_history_cache['lock']:
-        main._trade_history_cache['data'] = None
-        main._trade_history_cache['timestamp'] = None
+        main._trade_history_cache['data'].clear()
+        main._trade_history_cache['timestamp'].clear()
+        main._trade_history_cache['ttl'].clear()
     with patch.object(dashboard_data.trades_ref, "where") as mock_tr_w:
         mock_tr_w.return_value.order_by.return_value.limit.return_value = mock_query
         res_trades = client.get("/api/trade-history/all?days=30")
