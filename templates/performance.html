@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Engine Performance &amp; Benchmarking - Trading Bots</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Base Styles -->
+    <link rel="stylesheet" href="/static/css/bot_focus.css?v=2.9.1">
+    <link rel="stylesheet" href="/static/css/pnl-reporting.css?v=3.0.0">
+    <link rel="stylesheet" href="/static/css/performance.css?v=1.0.0">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="perf-container">
+        <!-- Header -->
+        <header class="bot-header">
+            <div class="header-left">
+                <h1>
+                    <span class="bot-icon">⚡</span>
+                    Trading Engine Performance &amp; Scorecard
+                    <span class="statement-account-pill">IBKR Master Engine</span>
+                </h1>
+                <div class="bot-metadata">
+                    <span class="metadata-item">
+                        <span class="label">Purpose:</span>
+                        <span class="value">Multi-pillar execution rating, SEC Rule 605 / Barclay CTA benchmarking &amp; diagnostic roadmap</span>
+                    </span>
+                    <span class="metadata-separator">|</span>
+                    <span class="metadata-item">
+                        <span class="label">Active Bots:</span>
+                        <span class="value" id="activeBots">--</span>
+                    </span>
+                    <span class="metadata-separator">|</span>
+                    <span class="metadata-item">
+                        <span class="label">Last Updated:</span>
+                        <span class="value" id="lastUpdate">--</span>
+                    </span>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="refresh-status">
+                    <span class="pulse-dot"></span>
+                    <span id="syncStatusText">Live Feed Connected</span>
+                </div>
+                <button class="btn btn-action" id="btnExportPerformance" onclick="exportPerformanceCSV()">
+                    <span>📥</span> Export CSV
+                </button>
+            </div>
+        </header>
+
+        <!-- Navigation Bar -->
+        <nav class="nav-bar">
+            <a href="/bot-focus" class="nav-link">
+                🎯 Bot Focus
+            </a>
+            <a href="/pnl-reporting" class="nav-link">
+                💰 P&L Reporting
+            </a>
+            <a href="/performance" class="nav-link active">
+                ⚡ Performance
+            </a>
+            <a href="/learning-review" class="nav-link">
+                🧠 Learning &amp; Analysis
+            </a>
+            <a href="/governance-review" class="nav-link">
+                ⚖️ Governance Review
+            </a>
+            <a href="/bot-focus?show=stockpicker" class="nav-link">
+                📊 Stock Picker
+            </a>
+        </nav>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Horizon, Mode & Scope Controls Card -->
+            <div class="statement-controls-card">
+                <div class="control-group">
+                    <span class="control-label">Period Horizon</span>
+                    <div class="timeline-tabs" id="timelineTabs">
+                        <button class="timeline-tab" data-period="1D">Today (1D)</button>
+                        <button class="timeline-tab" data-period="1W">1W</button>
+                        <button class="timeline-tab" data-period="1M">1M</button>
+                        <button class="timeline-tab" data-period="QTD">QTD</button>
+                        <button class="timeline-tab active" data-period="YTD">YTD</button>
+                        <button class="timeline-tab" data-period="1Y">1 Year</button>
+                        <button class="timeline-tab" data-period="ALL">All Time</button>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <span class="control-label">Trading Mode</span>
+                    <div class="mode-tabs" id="modeTabs">
+                        <button class="mode-tab" data-mode="paper">🧪 Paper Mode</button>
+                        <button class="mode-tab" data-mode="live">🟢 Live Mode</button>
+                        <button class="mode-tab active" data-mode="all">🔄 Both (Live &amp; Paper)</button>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <span class="control-label">Bot Attribution Scope</span>
+                    <div class="bot-scope-pills" id="botScopePills">
+                        <div class="bot-scope-pill active" data-scope="ALL" onclick="setBotScope('ALL')">
+                            <span class="scope-dot" style="background:#818cf8;"></span> All Bots Combined
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Engine Health & Rating Hero Scorecard Banner -->
+            <div class="scorecard-banner">
+                <!-- Left: Big Grade Box -->
+                <div class="scorecard-grade-box">
+                    <div class="scorecard-grade-label">Engine Health Rating</div>
+                    <div class="grade-badge-huge" id="scorecardGrade">--</div>
+                    <div class="scorecard-numeric">Score: <span id="scorecardNumeric">-- / 100</span></div>
+                </div>
+
+                <!-- Middle: 4 Pillar Progress Meters -->
+                <div class="scorecard-pillars">
+                    <div class="pillar-item">
+                        <div class="pillar-header">
+                            <span class="pillar-title">⚡ Execution Quality (Slippage, Fill Rate, SEC 605)</span>
+                            <span class="pillar-score" id="scoreExec">--</span>
+                        </div>
+                        <div class="pillar-bar-bg">
+                            <div class="pillar-bar-fill bar-fill-exec" id="barExec" style="width: 0%;"></div>
+                        </div>
+                    </div>
+                    <div class="pillar-item">
+                        <div class="pillar-header">
+                            <span class="pillar-title">📈 Risk-Adjusted Alpha (Sharpe, Sortino, Calmar)</span>
+                            <span class="pillar-score" id="scoreRisk">--</span>
+                        </div>
+                        <div class="pillar-bar-bg">
+                            <div class="pillar-bar-fill bar-fill-risk" id="barRisk" style="width: 0%;"></div>
+                        </div>
+                    </div>
+                    <div class="pillar-item">
+                        <div class="pillar-header">
+                            <span class="pillar-title">🎯 Expectancy &amp; Edge (Profit Factor, Win Rate, Payoff)</span>
+                            <span class="pillar-score" id="scoreExp">--</span>
+                        </div>
+                        <div class="pillar-bar-bg">
+                            <div class="pillar-bar-fill bar-fill-exp" id="barExp" style="width: 0%;"></div>
+                        </div>
+                    </div>
+                    <div class="pillar-item">
+                        <div class="pillar-header">
+                            <span class="pillar-title">🛡️ Capital Preservation (Max Drawdown vs B&amp;H)</span>
+                            <span class="pillar-score" id="scoreCap">--</span>
+                        </div>
+                        <div class="pillar-bar-bg">
+                            <div class="pillar-bar-fill bar-fill-cap" id="barCap" style="width: 0%;"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right: Executive Narrative -->
+                <div class="scorecard-narrative">
+                    <div class="narrative-title">📋 Executive Assessment</div>
+                    <p class="narrative-text" id="scorecardNarrative">Evaluating operational parameters...</p>
+                </div>
+            </div>
+
+            <!-- Executive KPI Summary Grid -->
+            <div class="kpi-grid">
+                <div class="statement-kpi-card">
+                    <div class="kpi-card-header">
+                        <span class="kpi-card-title">Portfolio Net Value</span>
+                        <span class="kpi-card-icon">💼</span>
+                    </div>
+                    <div class="kpi-card-value font-mono" id="kpiNav">$0.00</div>
+                    <div class="kpi-card-subtext">Total allocated &amp; cash equity</div>
+                </div>
+
+                <div class="statement-kpi-card">
+                    <div class="kpi-card-header">
+                        <span class="kpi-card-title">Total Net P&amp;L</span>
+                        <span class="kpi-card-icon">💵</span>
+                    </div>
+                    <div class="kpi-card-value font-mono" id="kpiNetPnl">$0.00</div>
+                    <div class="kpi-card-subtext">Net after commissions &amp; slippage</div>
+                </div>
+
+                <div class="statement-kpi-card">
+                    <div class="kpi-card-header">
+                        <span class="kpi-card-title">Annualized Sharpe</span>
+                        <span class="kpi-card-icon">📈</span>
+                    </div>
+                    <div class="kpi-card-value font-mono" id="kpiSharpe">--</div>
+                    <div class="kpi-card-subtext">Target: &gt; 1.20 (Barclay CTA)</div>
+                </div>
+
+                <div class="statement-kpi-card">
+                    <div class="kpi-card-header">
+                        <span class="kpi-card-title">Sortino Ratio</span>
+                        <span class="kpi-card-icon">🛡️</span>
+                    </div>
+                    <div class="kpi-card-value font-mono" id="kpiSortino">--</div>
+                    <div class="kpi-card-subtext">Downside volatility isolation</div>
+                </div>
+
+                <div class="statement-kpi-card">
+                    <div class="kpi-card-header">
+                        <span class="kpi-card-title">Profit Factor</span>
+                        <span class="kpi-card-icon">⚖️</span>
+                    </div>
+                    <div class="kpi-card-value font-mono" id="kpiProfitFactor">--</div>
+                    <div class="kpi-card-subtext">Gross wins / gross losses</div>
+                </div>
+
+                <div class="statement-kpi-card">
+                    <div class="kpi-card-header">
+                        <span class="kpi-card-title">Trade Expectancy</span>
+                        <span class="kpi-card-icon">🎯</span>
+                    </div>
+                    <div class="kpi-card-value font-mono" id="kpiExpectancy">$0.00</div>
+                    <div class="kpi-card-subtext">Mathematical edge per trade</div>
+                </div>
+
+                <div class="statement-kpi-card">
+                    <div class="kpi-card-header">
+                        <span class="kpi-card-title">Avg Execution Slippage</span>
+                        <span class="kpi-card-icon">⚡</span>
+                    </div>
+                    <div class="kpi-card-value font-mono" id="kpiSlippage">$0.00/sh</div>
+                    <div class="kpi-card-subtext">E/Q Spread: <span id="kpiEqRatio" class="font-mono">--</span></div>
+                </div>
+
+                <div class="statement-kpi-card">
+                    <div class="kpi-card-header">
+                        <span class="kpi-card-title">Max Drawdown</span>
+                        <span class="kpi-card-icon">📉</span>
+                    </div>
+                    <div class="kpi-card-value font-mono" id="kpiMaxDd" style="color: #fbbf24;">0.00%</div>
+                    <div class="kpi-card-subtext" id="kpiDdReduction">-- safer vs B&amp;H</div>
+                </div>
+            </div>
+
+            <!-- Public Benchmarks Section -->
+            <div class="benchmarks-grid">
+                <!-- SEC Rule 605 Execution Quality Benchmark -->
+                <div class="benchmark-card">
+                    <div class="benchmark-card-header">
+                        <div class="benchmark-card-title">
+                            <span>🏛️</span> SEC Rule 605 Execution Standard
+                        </div>
+                        <div class="benchmark-card-badge">FINRA / IBKR Standard</div>
+                    </div>
+                    <table class="benchmark-table">
+                        <thead>
+                            <tr>
+                                <th>Parameter</th>
+                                <th>Engine Actual</th>
+                                <th>Public Standard</th>
+                                <th>Verdict</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tableSec605">
+                            <!-- Dynamically populated -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Institutional CTA Benchmark -->
+                <div class="benchmark-card">
+                    <div class="benchmark-card-header">
+                        <div class="benchmark-card-title">
+                            <span>📊</span> Institutional CTA / Quant Index
+                        </div>
+                        <div class="benchmark-card-badge">Barclay / HFRX</div>
+                    </div>
+                    <table class="benchmark-table">
+                        <thead>
+                            <tr>
+                                <th>Parameter</th>
+                                <th>Engine Actual</th>
+                                <th>CTA Median</th>
+                                <th>Verdict</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tableInstCta">
+                            <!-- Dynamically populated -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Benchmark Comparison Visuals & Buy-and-Hold Defense -->
+            <div class="benchmarks-grid">
+                <!-- Buy and Hold Defense Table -->
+                <div class="benchmark-card">
+                    <div class="benchmark-card-header">
+                        <div class="benchmark-card-title">
+                            <span>🛡️</span> Buy-and-Hold Risk Suppression
+                        </div>
+                        <div class="benchmark-card-badge">SPY Benchmark</div>
+                    </div>
+                    <table class="benchmark-table">
+                        <thead>
+                            <tr>
+                                <th>Metric</th>
+                                <th>Engine Actual</th>
+                                <th>Buy &amp; Hold</th>
+                                <th>Verdict</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tableBuyHold">
+                            <!-- Dynamically populated -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Radar Comparison Chart -->
+                <div class="benchmark-card" style="display: flex; flex-direction: column;">
+                    <div class="benchmark-card-header">
+                        <div class="benchmark-card-title">
+                            <span>🕸️</span> Multi-Pillar Performance Radar
+                        </div>
+                        <div class="benchmark-card-badge">Engine vs Institutional Median</div>
+                    </div>
+                    <div style="flex: 1; min-height: 240px; position: relative;">
+                        <canvas id="benchmarkRadarChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bot Performance Breakdown Section -->
+            <div class="bots-section">
+                <div class="section-header">
+                    <div class="section-title">
+                        <span>🤖</span> Performance per Bot &amp; Symbol Attribution
+                    </div>
+                </div>
+                <div class="bot-table-wrapper">
+                    <table class="bot-table">
+                        <thead>
+                            <tr>
+                                <th>Symbol &amp; Strategy</th>
+                                <th>Status</th>
+                                <th>Rating</th>
+                                <th>Trades</th>
+                                <th>Win Rate</th>
+                                <th>Net P&amp;L</th>
+                                <th>Profit Factor</th>
+                                <th>Sharpe</th>
+                                <th>Max DD</th>
+                                <th>Avg Slippage</th>
+                                <th>Diagnostic Finding</th>
+                            </tr>
+                        </thead>
+                        <tbody id="botsTableBody">
+                            <!-- Dynamically populated -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Automated Diagnostic Findings & Actionable Recommendations -->
+            <div class="diagnostics-section">
+                <div class="section-header">
+                    <div class="section-title">
+                        <span>💡</span> Automated Engine Diagnostics &amp; Prioritized Levers
+                    </div>
+                </div>
+                <div class="diagnostics-grid" id="diagnosticsGrid">
+                    <!-- Dynamically populated -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Client Script -->
+    <script src="/static/js/performance.js?v=1.0.0"></script>
+</body>
+</html>

@@ -1476,10 +1476,12 @@ class TestPnLStatementEngineCoverage:
         assert stmt_live.period == "1W"
 
         # 3. All periods in all/both mode
+        fixed_now = datetime(2026, 10, 12, 18, 0, 0, tzinfo=timezone.utc)
         for p in ["1D", "1W", "1M", "QTD", "1Y", "ALL"]:
             stmt_all = aggregate_portfolio_pnl(
                 trades=trades, bot_overview_data=bot_overview, bot_configs=configs,
-                account_overview_data=acct_overview, period=p, bot_scope="ALL", mode="all"
+                account_overview_data=acct_overview, period=p, bot_scope="ALL", mode="all",
+                now=fixed_now
             )
             assert stmt_all.trading_mode == "all"
             assert stmt_all.period == p
