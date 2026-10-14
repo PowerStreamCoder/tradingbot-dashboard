@@ -308,7 +308,6 @@ function renderProposedRule(rule, configChanges, finding) {
     if (isAdvisory) {
         const owners = [...new Set(escalations.map(e => e.owner).filter(Boolean))];
         const fields = escalations.map(e => e.field).filter(Boolean);
-        const noop = escalations.some(e => e.noop);
         const reasonHtml = owners.length
             ? `Approving this records the decision and routes it to the <code>${escapeHtml(owners.join(', '))}</code> ownership surface for review; it does <em>not</em> change the live strategy config.`
             : 'This candidate has no learning-owned, apply-eligible change to apply (it may be a no-op or purely informational).';
@@ -319,7 +318,6 @@ function renderProposedRule(rule, configChanges, finding) {
                     <strong>Advisory — not auto-applied.</strong>
                     ${reasonHtml}
                     ${fields.length ? `<div class="esc-fields">Field(s): ${fields.map(f => `<code>${escapeHtml(f)}</code>`).join(', ')}</div>` : ''}
-                    ${noop ? '<div class="esc-fields">Note: the proposed value already matches the current system default (no-op).</div>' : ''}
                 </div>
             </div>
         `;
