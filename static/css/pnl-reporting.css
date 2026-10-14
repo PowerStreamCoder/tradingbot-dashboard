@@ -4,23 +4,23 @@
    ========================================================================== */
 
 :root {
-    --bg-primary: #080c1e;
-    --bg-card: rgba(18, 24, 52, 0.75);
-    --bg-card-hover: rgba(26, 35, 75, 0.85);
-    --bg-tile: #151c3d;
-    --bg-subtle: #0d122b;
-    --border-color: rgba(99, 122, 185, 0.18);
-    --border-focus: rgba(102, 126, 234, 0.6);
+    --bg-primary: #0b0f19;
+    --bg-card: linear-gradient(135deg, rgba(30, 41, 59, 0.65) 0%, rgba(15, 23, 42, 0.8) 100%);
+    --bg-card-hover: linear-gradient(135deg, rgba(40, 53, 76, 0.75) 0%, rgba(20, 29, 52, 0.9) 100%);
+    --bg-tile: rgba(30, 41, 59, 0.6);
+    --bg-subtle: rgba(15, 23, 42, 0.6);
+    --border-color: rgba(148, 163, 184, 0.16);
+    --border-focus: rgba(99, 102, 241, 0.5);
     --accent-primary: #6366f1;
     --accent-glow: rgba(99, 102, 241, 0.35);
     --accent-cyan: #06b6d4;
     --accent-purple: #8b5cf6;
     --color-positive: #10b981;
-    --color-positive-bg: rgba(16, 185, 129, 0.12);
+    --color-positive-bg: rgba(16, 185, 129, 0.15);
     --color-negative: #f43f5e;
-    --color-negative-bg: rgba(244, 63, 94, 0.12);
+    --color-negative-bg: rgba(244, 63, 94, 0.15);
     --color-warning: #f59e0b;
-    --color-warning-bg: rgba(245, 158, 11, 0.12);
+    --color-warning-bg: rgba(245, 158, 11, 0.15);
     --text-primary: #f8fafc;
     --text-secondary: #94a3b8;
     --text-muted: #64748b;
@@ -28,8 +28,8 @@
     --font-mono: 'JetBrains Mono', monospace;
     --radius-sm: 8px;
     --radius-md: 14px;
-    --radius-lg: 20px;
-    --shadow-subtle: 0 4px 20px rgba(0, 0, 0, 0.25);
+    --radius-lg: 16px;
+    --shadow-subtle: 0 10px 30px -10px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.05);
     --transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
