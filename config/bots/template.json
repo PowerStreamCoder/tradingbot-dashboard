@@ -1,6 +1,6 @@
 {
   "symbol": "XXXX",
-  "description": "XXXX-specific parameters - describe your strategy here",
+  "description": "XXXX-specific parameters. Baseline = Total Return mode (long-only + covered-call overlay, HIGH_GROWTH_EQUITY, k×ATR stop as the real floor with -5% as a catastrophe backstop). To switch modes, copy the matching presets/mode_{growth,total_return,income}.json blocks over this baseline. Covered calls need capital_per_bucket_long >= 100 x share_price or they never fire (#239).",
   "capital": {
     "capital_per_bucket_long": 22000.0,
     "capital_per_bucket_short": 2000.0,
@@ -28,6 +28,10 @@
     "call_expiration_days": 7,
     "call_min_premium_pct": 0.004,
     "call_confirmation_bars": 0,
+    "call_strike_offset_low_vol": 0.015,
+    "call_strike_offset_normal": 0.018,
+    "call_strike_offset_sideways": 0.015,
+    "call_strike_offset_trending_down": 0.018,
     "use_cc_suitability_screen": false,
     "cc_suitability_max_atr_pct": 0.035,
     "cc_suitability_min_atr_pct": 0.004,
@@ -47,7 +51,7 @@
     "sma_slope_threshold": -0.001,
     "use_atr_stop": true,
     "atr_stop_multiplier": 2.0,
-    "atr_stop_replaces_hard_stop": false
+    "atr_stop_replaces_hard_stop": true
   },
   "regime": {
     "use_regime_filter": true,
@@ -92,7 +96,10 @@
     "take_profit_without_call_atr": 5.5,
     "min_move_for_call_absolute_pct": 0.003,
     "take_profit_absolute_pct": 0.006,
-    "max_hold_hours": 0.0
+    "max_hold_hours": 0.0,
+    "cc_expected_position_hold_hours": null,
+    "cc_min_tenor_monetization_fraction": 0.25,
+    "cc_horizon_check_enabled": true
   },
   "adaptive_pnl": {
     "enable_adaptive_pnl": true,
@@ -133,14 +140,14 @@
     "adx_trend_breakout_threshold": 25.0
   },
   "security_profile": {
-    "asset_archetype": "AUTO",
+    "asset_archetype": "HIGH_GROWTH_EQUITY",
     "enable_earnings_freeze": true,
     "enable_ex_dividend_shield": true
   },
   "orchestrator": {
     "enable_orchestrator": true,
     "strategy_intent": "SURFACE_ALL",
-    "_comment": "Valid options: SURFACE_ALL, AUTO, COVERED_CALL_INCOME, TREND_MOMENTUM_GROWTH, VOLATILITY_DEFENSIVE, NEUTRAL_RANGE_HARVEST",
+    "_comment": "Valid postures: SURFACE_ALL, AUTO, TREND_MOMENTUM_GROWTH, VOLATILITY_DEFENSIVE, NEUTRAL_RANGE_HARVEST. Covered-call mode comes ONLY from cc_mode (#202) — COVERED_CALL_INCOME is no longer a valid strategy_intent. Template defaults to SURFACE_ALL (mode-agnostic); copy a presets/mode_*.json to set the posture for Growth/Total Return/Income.",
     "income_mode_mtf_relaxation": 0.15
   },
   "macro_signals": {

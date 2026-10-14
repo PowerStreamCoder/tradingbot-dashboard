@@ -2,7 +2,7 @@
   "symbol": "NVDA",
   "description": "NVDA-specific parameters - aggressive growth strategy with covered calls",
   "capital": {
-    "capital_per_bucket_long": 35000.0,
+    "capital_per_bucket_long": 25000.0,
     "capital_per_bucket_short": 2000.0,
     "buckets_per_group": 2
   },
@@ -34,7 +34,7 @@
     "cc_suitability_min_iv_hv_ratio": 0.9,
     "cc_mode": "TOTAL_RETURN",
     "cc_income_mode_min_hold_hours": 96.0,
-    "cc_option_profit_target_pct": 0.50,
+    "cc_option_profit_target_pct": 0.5,
     "cc_close_at_dte_threshold": 3,
     "cc_unrecoverable_block_portfolio": false,
     "use_delta_filter": false,
@@ -45,8 +45,10 @@
     "use_atr_targets": false,
     "use_atr_stop": true,
     "atr_stop_multiplier": 2.0,
+    "atr_stop_replaces_hard_stop": true,
     "use_sma_slope_exit": false,
-    "sma_slope_threshold": -0.001
+    "sma_slope_threshold": -0.001,
+    "_comment_backstop": "atr_stop_replaces_hard_stop=true: the ~k*ATR stop is the real risk floor; stop_loss_threshold (-10%) is a catastrophe backstop that effectively never fires behind the fast-exit stack. Behavior-neutral flag that makes the intent explicit and silences the inert-stop warning (bots #231)."
   },
   "regime": {
     "use_regime_filter": true,
@@ -139,7 +141,7 @@
     "enable_orchestrator": true,
     "strategy_intent": "SURFACE_ALL",
     "income_mode_mtf_relaxation": 0.15,
-    "_comment": "Valid options: SURFACE_ALL, AUTO, COVERED_CALL_INCOME, TREND_MOMENTUM_GROWTH, VOLATILITY_DEFENSIVE, NEUTRAL_RANGE_HARVEST"
+    "_comment": "Valid postures: SURFACE_ALL, AUTO, TREND_MOMENTUM_GROWTH, VOLATILITY_DEFENSIVE, NEUTRAL_RANGE_HARVEST. Covered-call mode comes ONLY from cc_mode (#202) — COVERED_CALL_INCOME is no longer a valid strategy_intent."
   },
   "macro_signals": {
     "enable_macro_signals": true,

@@ -17,12 +17,39 @@
       "strategy": "sma_crossover",
       "enabled": true,
       "description": "NVDA SMA 5/20 crossover trader with covered calls"
+    },
+    {
+      "name": "msft_sma",
+      "symbol": "MSFT",
+      "client_id": 5,
+      "script": "bots/UniversalSMABot.py",
+      "strategy": "sma_crossover",
+      "enabled": true,
+      "description": "MSFT total-return: SMA 5/20 long + covered-call overlay; tuned ATR-20 + min-edge entry gate (2y 1h eval, Sharpe 1.4, DD 8.6% vs B&H 35.5%)"
+    },
+    {
+      "name": "cat_sma",
+      "symbol": "CAT",
+      "client_id": 6,
+      "script": "bots/UniversalSMABot.py",
+      "strategy": "sma_crossover",
+      "enabled": true,
+      "description": "CAT growth: SMA 5/20 directional long AND short (short path bug fixed), no covered calls"
+    },
+    {
+      "name": "qqq_sma",
+      "symbol": "QQQ",
+      "client_id": 7,
+      "script": "bots/UniversalSMABot.py",
+      "strategy": "sma_crossover",
+      "enabled": true,
+      "description": "QQQ income: SMA 5/20 long base + covered-call premium harvest (INCOME mode, no rolls); .5k clears the 100-share contract floor"
     }
   ],
   "defaults": {
-    "python_path": "/usr/bin/python3",
+    "python_path": "/home/i030983/venv311/bin/python3",
     "working_directory": "/home/i030983/tradingbots",
-    "restart_delay_seconds": 10,
+    "restart_delay_seconds": 35,
     "log_to_journal": true
   }
 }
