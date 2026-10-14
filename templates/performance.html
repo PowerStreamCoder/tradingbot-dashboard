@@ -38,16 +38,28 @@
                     </span>
                     <span class="metadata-separator">|</span>
                     <span class="metadata-item">
-                        <span class="label">Last Updated:</span>
+                        <span class="label">Data As Of:</span>
                         <span class="value" id="lastUpdate">--</span>
                     </span>
                 </div>
             </div>
             <div class="header-right">
+                <div class="refresh-control" title="Automatic refresh only runs while this tab is visible">
+                    <label for="refreshInterval">Auto-refresh</label>
+                    <select id="refreshInterval" class="refresh-interval-select">
+                        <option value="0">Off</option>
+                        <option value="30000">30s</option>
+                        <option value="60000" selected>1 min</option>
+                        <option value="300000">5 min</option>
+                    </select>
+                </div>
                 <div class="refresh-status">
                     <span class="pulse-dot"></span>
                     <span id="syncStatusText">Live Feed Connected</span>
                 </div>
+                <button class="btn btn-action" id="btnRefreshPerformance" onclick="refreshPerformance()">
+                    <span>🔄</span> Refresh
+                </button>
                 <button class="btn btn-action" id="btnExportPerformance" onclick="exportPerformanceCSV()">
                     <span>📥</span> Export CSV
                 </button>
@@ -110,6 +122,16 @@
                         </div>
                     </div>
                 </div>
+
+                <div class="control-group">
+                    <span class="control-label">Benchmark</span>
+                    <select class="benchmark-select" id="benchmarkSelect" onchange="setBenchmark(this.value)">
+                        <option value="SPY" selected>SPY (S&amp;P 500)</option>
+                        <option value="QQQ">QQQ (Nasdaq 100)</option>
+                        <option value="IWM">IWM (Russell 2000)</option>
+                        <option value="DIA">DIA (Dow 30)</option>
+                    </select>
+                </div>
             </div>
 
             <!-- Engine Health & Rating Hero Scorecard Banner -->
@@ -119,6 +141,7 @@
                     <div class="scorecard-grade-label">Engine Health Rating</div>
                     <div class="grade-badge-huge" id="scorecardGrade">--</div>
                     <div class="scorecard-numeric">Score: <span id="scorecardNumeric">-- / 100</span></div>
+                    <div class="scorecard-confidence" id="scorecardConfidence">Sample: --</div>
                 </div>
 
                 <!-- Middle: 4 Pillar Progress Meters -->
@@ -208,6 +231,15 @@
 
                 <div class="statement-kpi-card">
                     <div class="kpi-card-header">
+                        <span class="kpi-card-title">Calmar Ratio</span>
+                        <span class="kpi-card-icon">🎛️</span>
+                    </div>
+                    <div class="kpi-card-value font-mono" id="kpiCalmar">--</div>
+                    <div class="kpi-card-subtext">Annualized return / max drawdown</div>
+                </div>
+
+                <div class="statement-kpi-card">
+                    <div class="kpi-card-header">
                         <span class="kpi-card-title">Profit Factor</span>
                         <span class="kpi-card-icon">⚖️</span>
                     </div>
@@ -229,8 +261,8 @@
                         <span class="kpi-card-title">Avg Execution Slippage</span>
                         <span class="kpi-card-icon">⚡</span>
                     </div>
-                    <div class="kpi-card-value font-mono" id="kpiSlippage">$0.00/sh</div>
-                    <div class="kpi-card-subtext">E/Q Spread: <span id="kpiEqRatio" class="font-mono">--</span></div>
+                    <div class="kpi-card-value font-mono" id="kpiSlippage">--</div>
+                    <div class="kpi-card-subtext">Fill Confirmation: <span id="kpiFillConf" class="font-mono">--</span></div>
                 </div>
 
                 <div class="statement-kpi-card">
@@ -300,7 +332,7 @@
                         <div class="benchmark-card-title">
                             <span>🛡️</span> Buy-and-Hold Risk Suppression
                         </div>
-                        <div class="benchmark-card-badge">SPY Benchmark</div>
+                        <div class="benchmark-card-badge" id="buyHoldBadge">SPY Benchmark</div>
                     </div>
                     <table class="benchmark-table">
                         <thead>

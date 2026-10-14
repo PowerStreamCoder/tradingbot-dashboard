@@ -17,7 +17,7 @@
     "position_risk_per_trade_pct": 0.005,
     "position_stop_loss_atr_multiplier": 2.0,
     "position_min_shares": 100,
-    "position_max_capital": 25000
+    "position_max_capital": 39000
   },
   "covered_calls": {
     "use_covered_calls": true,
@@ -78,7 +78,7 @@
     "_comment_ttl": "crossover_expiration_seconds 28800 (8h) set for cross-symbol consistency with nvda.json (2026-10-12). Measured NEUTRAL for IWM: the ETF class converts almost no candidates regardless of TTL (2y replay: 411 candidates -> 5-6 fills at 1h and at 8h; return/DD unchanged to within a rounding error). The binding ETF constraint remains confirmation latency + the queue->fill path, per _comment_confirmation above."
   },
   "trading_behavior": {
-    "allow_extended_hours": true,
+    "allow_extended_hours": false,
     "skip_market_hours_check": false,
     "allow_short_entries": true
   },
