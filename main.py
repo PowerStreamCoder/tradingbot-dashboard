@@ -2726,7 +2726,8 @@ async def get_learning_stats():
             "total_approved": 10,
             "total_rejected": 3,
             "by_priority": {"high": 2, "medium": 3, "low": 0},
-            "by_type": {"eliminate": 3, "amplify": 1, "new_rule": 1},
+            "by_type": {"eliminate": 3, "amplify": 1, "new_rule": 1,
+                        "config_change": 0, "observation": 0},
             "potential_savings": 450.50
         }
     """
@@ -2740,7 +2741,8 @@ async def get_learning_stats():
             "total_approved": 0,
             "total_rejected": 0,
             "by_priority": {"high": 0, "medium": 0, "low": 0},
-            "by_type": {"eliminate": 0, "amplify": 0, "new_rule": 0},
+            "by_type": {"eliminate": 0, "amplify": 0, "new_rule": 0,
+                        "config_change": 0, "observation": 0},
             "potential_savings": 0.0
         }
 
