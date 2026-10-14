@@ -3,50 +3,65 @@
  * Extracted from inline styles in learning_review.html
  */
 
-/* Learning Container */
+/* Learning Container - Aligned with Performance Window */
 .learning-container {
-    max-width: 1920px;
+    max-width: 1440px;
     margin: 0 auto;
-    padding: var(--spacing-md);
+    padding: 0 1.5rem 3rem 1.5rem;
 }
 
 /* Stats Bar */
 .stats-bar {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-    gap: var(--spacing-md);
-    margin-bottom: var(--spacing-lg);
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1.25rem;
+    margin-bottom: 1.75rem;
 }
 
 .stat-card {
-    background: var(--bg-tile);
-    padding: var(--spacing-lg);
-    border-radius: var(--border-radius);
-    border: 1px solid var(--border-color);
+    background: linear-gradient(135deg, rgba(30, 41, 59, 0.65) 0%, rgba(15, 23, 42, 0.8) 100%);
+    padding: 1.5rem;
+    border-radius: 14px;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.05);
     text-align: center;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.stat-card:hover {
+    border-color: rgba(99, 102, 241, 0.4);
+    transform: translateY(-2px);
+    box-shadow: 0 14px 35px -10px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 .stat-card h3 {
-    color: var(--text-muted);
-    font-size: 12px;
-    margin-bottom: var(--spacing-sm);
+    color: #94a3b8;
+    font-size: 11px;
+    margin-bottom: 0.5rem;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.06em;
+    font-weight: 600;
 }
 
 .stat-card .value {
-    font-size: 2.5em;
+    font-size: 2.2em;
     font-weight: 700;
-    color: var(--accent-primary);
+    font-family: 'JetBrains Mono', monospace;
+    color: #f8fafc;
 }
 
 /* Filters Section */
 .filters-section {
-    background: var(--bg-tile);
-    padding: var(--spacing-md);
-    border-radius: var(--border-radius);
-    margin-bottom: var(--spacing-lg);
-    border: 1px solid var(--border-color);
+    background: linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.85) 100%);
+    padding: 14px 20px;
+    border-radius: 14px;
+    margin-bottom: 1.75rem;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.05);
     display: flex;
     align-items: center;
     gap: var(--spacing-md);
@@ -54,56 +69,65 @@
 }
 
 .filters-section label {
-    color: var(--text-secondary);
+    color: #94a3b8;
     font-weight: 600;
-    font-size: 13px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
 }
 
 .filters-section select {
     padding: 8px 16px;
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    background: var(--bg-secondary);
-    color: var(--text-primary);
-    font-size: 14px;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.8);
+    color: #f8fafc;
+    font-size: 13px;
+    font-family: 'Inter', sans-serif;
     cursor: pointer;
 }
 
 .filters-section select:focus {
     outline: none;
-    border-color: var(--accent-primary);
+    border-color: #6366f1;
 }
 
 .filters-section button {
     padding: 8px 20px;
-    background: var(--accent-primary);
+    background: #6366f1;
     color: white;
     border: none;
-    border-radius: 6px;
+    border-radius: 8px;
     font-weight: 600;
+    font-size: 13px;
     cursor: pointer;
-    transition: all 0.2s;
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.35);
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .filters-section button:hover {
-    background: var(--accent-secondary);
+    background: #4f46e5;
     transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.5);
 }
 
 /* Finding Cards */
 .finding-card {
-    background: var(--bg-tile);
-    border-radius: var(--border-radius);
-    padding: var(--spacing-lg);
-    margin-bottom: var(--spacing-lg);
-    border: 1px solid var(--border-color);
-    transition: all 0.3s;
+    background: linear-gradient(135deg, rgba(30, 41, 59, 0.65) 0%, rgba(15, 23, 42, 0.8) 100%);
+    border-radius: 14px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .finding-card:hover {
-    border-color: var(--accent-primary);
+    border-color: rgba(99, 102, 241, 0.4);
     transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(102, 126, 234, 0.15);
+    box-shadow: 0 14px 35px -10px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 .finding-header {
@@ -303,6 +327,50 @@
     color: var(--text-primary);
     font-size: 13px;
     line-height: 1.45;
+}
+
+.rule-escalation-banner {
+    background: rgba(69, 26, 3, 0.55);
+    border: 1px solid rgba(251, 191, 36, 0.4);
+    border-left: 4px solid #fbbf24;
+    padding: 12px 16px;
+    border-radius: 6px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    margin-bottom: 16px;
+}
+
+.rule-escalation-banner .esc-icon {
+    font-size: 20px;
+    line-height: 1;
+}
+
+.rule-escalation-banner .esc-body {
+    color: var(--text-primary);
+    font-size: 13px;
+    line-height: 1.45;
+}
+
+.rule-escalation-banner .esc-body strong {
+    color: #fbbf24;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    display: block;
+    margin-bottom: 3px;
+}
+
+.rule-escalation-banner .esc-fields {
+    margin-top: 6px;
+    color: var(--text-secondary, #cbd5e1);
+    font-size: 12px;
+}
+
+.rule-escalation-banner .esc-fields code {
+    background: rgba(15, 23, 42, 0.7);
+    padding: 1px 5px;
+    border-radius: 4px;
 }
 
 .rule-meta-grid {

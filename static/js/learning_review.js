@@ -247,12 +247,46 @@ const BRANCH_LABELS = {
 };
 
 /**
+ * Derive the field-ownership view of a candidate.
+ *
+ * Strict routing: only learning-owned fields are auto-applyable; anything the
+ * learning authority does not own is an escalation advisory. Understands BOTH
+ * the new payload shape (proposed_rule.apply_eligible / .escalations) and the
+ * legacy shape (top-level owner/escalation with decoder fields still sitting in
+ * config_changes) so already-queued candidates render correctly too.
+ */
+function deriveLearningApplyState(rule, configChanges, finding) {
+    rule = rule || {};
+    configChanges = configChanges || {};
+    const configKeys = Object.keys(configChanges);
+
+    let escalations = Array.isArray(rule.escalations) ? rule.escalations.slice()
+        : (Array.isArray(finding && finding.escalations) ? finding.escalations.slice() : []);
+    if (!escalations.length && Array.isArray(finding && finding.escalation)) {
+        escalations = finding.escalation
+            .filter(p => Array.isArray(p) && p.length === 2)
+            .map(([owner, field]) => ({ owner, field }));
+    }
+    const topOwner = finding && finding.owner;
+    if (!escalations.length && topOwner && topOwner !== 'learning' && configKeys.length) {
+        escalations = configKeys.map(field => ({ owner: topOwner, field }));
+    }
+
+    const escFields = new Set(escalations.map(e => e.field).filter(Boolean));
+    const learningKeys = configKeys.filter(k => !escFields.has(k));
+    const applyEligible = rule.apply_eligible === true
+        || (rule.apply_eligible === undefined && learningKeys.length > 0 && escalations.length === 0);
+    return { configKeys, escalations, escFields, learningKeys, applyEligible, isAdvisory: !applyEligible };
+}
+
+/**
  * Render structured proposed rule section
  */
 function renderProposedRule(rule, configChanges, finding) {
     rule = rule || {};
     configChanges = configChanges || {};
-    const configKeys = Object.keys(configChanges);
+    const state = deriveLearningApplyState(rule, configChanges, finding);
+    const { configKeys, escalations, escFields, applyEligible, isAdvisory } = state;
 
     // 1. Suggestion or primary recommendation banner
     let suggestionHtml = '';
@@ -264,6 +298,28 @@ function renderProposedRule(rule, configChanges, finding) {
                 <div class="suggestion-body">
                     <strong>Recommended Strategy Action:</strong>
                     <div class="suggestion-text">${escapeHtml(suggestionText)}</div>
+                </div>
+            </div>
+        `;
+    }
+
+    // 1b. Escalation / advisory banner: no learning-owned change to apply.
+    let escalationHtml = '';
+    if (isAdvisory) {
+        const owners = [...new Set(escalations.map(e => e.owner).filter(Boolean))];
+        const fields = escalations.map(e => e.field).filter(Boolean);
+        const noop = escalations.some(e => e.noop);
+        const reasonHtml = owners.length
+            ? `Approving this records the decision and routes it to the <code>${escapeHtml(owners.join(', '))}</code> ownership surface for review; it does <em>not</em> change the live strategy config.`
+            : 'This candidate has no learning-owned, apply-eligible change to apply (it may be a no-op or purely informational).';
+        escalationHtml = `
+            <div class="rule-escalation-banner">
+                <span class="esc-icon">⚠️</span>
+                <div class="esc-body">
+                    <strong>Advisory — not auto-applied.</strong>
+                    ${reasonHtml}
+                    ${fields.length ? `<div class="esc-fields">Field(s): ${fields.map(f => `<code>${escapeHtml(f)}</code>`).join(', ')}</div>` : ''}
+                    ${noop ? '<div class="esc-fields">Note: the proposed value already matches the current system default (no-op).</div>' : ''}
                 </div>
             </div>
         `;
@@ -361,17 +417,19 @@ function renderProposedRule(rule, configChanges, finding) {
         `);
     }
 
-    // Parameter Diff list if configChanges has items
+    // Parameter Diff list (learning-owned changes only; escalated fields are
+    // surfaced by the advisory banner instead of being shown as "to apply").
+    const learningKeys = configKeys.filter(k => !escFields.has(k));
     let configChangesHtml = '';
-    if (configKeys.length) {
-        const changeRows = configKeys.map(k => `
+    if (learningKeys.length) {
+        const changeRows = learningKeys.map(k => `
             <div class="config-diff-item">
                 <code>${escapeHtml(k)}</code> ➔ <strong class="new-val">${escapeHtml(String(configChanges[k]))}</strong>
             </div>
         `).join('');
         configChangesHtml = `
             <div class="config-changes-preview">
-                <span class="diff-title">Configuration Parameter Overlays to Apply:</span>
+                <span class="diff-title">Learning-owned configuration changes to apply on approval:</span>
                 ${changeRows}
             </div>
         `;
@@ -381,6 +439,7 @@ function renderProposedRule(rule, configChanges, finding) {
         <div class="proposed-rule">
             <h4>📝 Proposed Rule &amp; Action Plan</h4>
             ${suggestionHtml}
+            ${escalationHtml}
             <div class="rule-meta-grid">
                 ${cards.join('')}
             </div>
@@ -552,8 +611,19 @@ function renderEvidenceItems(evidence) {
 async function handleDecision(findingId, decision) {
     const notes = document.getElementById(`notes-${findingId}`).value;
 
-    if (decision === 'approved' && !confirm('Are you sure you want to approve this change? It will be applied to the trading strategy.')) {
-        return;
+    if (decision === 'approved') {
+        const finding = (allFindings || []).find(f => f.finding_id === findingId) || {};
+        const state = deriveLearningApplyState(finding.proposed_rule, finding.config_changes, finding);
+        let message = 'Are you sure you want to approve this change? It will be applied to the trading strategy.';
+        if (state.isAdvisory) {
+            const owners = [...new Set(state.escalations.map(e => e.owner).filter(Boolean))];
+            message = owners.length
+                ? `Approve this advisory? It targets the ${owners.join(', ')} ownership surface and will NOT auto-apply to the trading strategy — it is recorded and routed to that owner for review.`
+                : 'Approve this candidate? It has no learning-owned, apply-eligible change — approving only records the decision (nothing is applied to the trading strategy).';
+        }
+        if (!confirm(message)) {
+            return;
+        }
     }
 
     try {
