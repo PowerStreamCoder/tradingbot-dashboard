@@ -385,6 +385,288 @@ function selectCustomBot(bot) {
     }
 }
 
+// =============================================================================
+// SECTION & TABLE SWITCH LOADING INDICATOR SYSTEM
+// =============================================================================
+
+let activeSwitchToken = 0;
+const pendingSwitchSections = new Set();
+
+const BOT_SECTION_CONFIG = {
+    chart: {
+        badgeId: 'switchBadge-chart',
+        tileId: 'tileChart',
+        label: 'chart'
+    },
+    performance: {
+        badgeId: 'switchBadge-performance',
+        tileId: 'tilePerformance',
+        label: 'metrics'
+    },
+    position: {
+        badgeId: 'switchBadge-position',
+        tileId: 'tilePosition',
+        label: 'position'
+    },
+    health: {
+        badgeId: 'switchBadge-health',
+        tileId: 'tileHealth',
+        label: 'telemetry'
+    },
+    strategy: {
+        badgeId: 'switchBadge-strategy',
+        tileId: 'tileStrategy',
+        label: 'signals'
+    },
+    orders: {
+        badgeId: 'switchBadge-orders',
+        tileId: 'tileOrders',
+        label: 'orders'
+    },
+    params: {
+        badgeId: 'switchBadge-params',
+        tileId: 'botParamsSection',
+        label: 'parameters'
+    },
+    tradeHistory: {
+        badgeId: 'switchBadge-tradeHistory',
+        tileId: 'tileTradeHistory',
+        label: 'trades'
+    },
+    logs: {
+        badgeId: 'switchBadge-logs',
+        tileId: 'tileLogs',
+        label: 'logs'
+    }
+};
+
+/**
+ * Begin bot switch loading state across dashboard sections
+ * Mentions that underlying data is loading due to change in bot/symbol
+ * @param {string} symbol - Target symbol being switched to
+ */
+function beginBotSwitchLoading(symbol) {
+    const sym = (symbol || CONFIG?.symbol || 'bot').toUpperCase();
+    activeSwitchToken++;
+    const currentToken = activeSwitchToken;
+    pendingSwitchSections.clear();
+
+    // 1. Header status pill
+    const globalStatus = document.getElementById('botSwitchStatusPill');
+    const globalText = document.getElementById('botSwitchStatusText');
+    if (globalStatus) {
+        globalStatus.style.display = 'inline-flex';
+        globalStatus.style.opacity = '1';
+        globalStatus.className = 'bot-switch-status-pill loading';
+        if (globalText) {
+            globalText.textContent = `Switching to ${sym}...`;
+        }
+    }
+
+    // 2. Mark each section as loading with explicit badge mentioning bot change
+    Object.keys(BOT_SECTION_CONFIG).forEach(secKey => {
+        pendingSwitchSections.add(secKey);
+        setSectionLoadingIndicator(secKey, true, sym);
+    });
+
+    // 3. Set table and content placeholders
+    setTableLoadingPlaceholders(sym);
+
+    // 4. Safety timeout to prevent any indicator from staying stuck indefinitely
+    setTimeout(() => {
+        if (activeSwitchToken === currentToken && pendingSwitchSections.size > 0) {
+            pendingSwitchSections.forEach(secKey => {
+                completeSectionSwitchLoading(secKey, true);
+            });
+        }
+    }, 15000);
+
+    return currentToken;
+}
+
+/**
+ * Set section-level loading indicator badge and tile styling
+ */
+function setSectionLoadingIndicator(secKey, isLoading, symbol, isError = false) {
+    const cfg = BOT_SECTION_CONFIG[secKey];
+    if (!cfg) return;
+
+    const badge = document.getElementById(cfg.badgeId);
+    const tile = cfg.tileId ? document.getElementById(cfg.tileId) : null;
+    const sym = (symbol || CONFIG?.symbol || 'bot').toUpperCase();
+
+    if (isLoading) {
+        if (tile) tile.classList.add('tile-bot-switching');
+        if (badge) {
+            badge.style.display = 'inline-flex';
+            badge.style.opacity = '1';
+            badge.className = 'section-switch-badge loading';
+            badge.innerHTML = `<span class="badge-spinner"></span> <span class="badge-text">Switching bot: loading ${sym} ${cfg.label}...</span>`;
+        }
+    } else {
+        if (tile) tile.classList.remove('tile-bot-switching');
+        if (badge) {
+            if (isError) {
+                badge.className = 'section-switch-badge error';
+                badge.innerHTML = `<span class="badge-icon">⚠️</span> <span class="badge-text">Failed loading ${sym} ${cfg.label}</span>`;
+                setTimeout(() => {
+                    if (badge.classList.contains('error')) {
+                        badge.style.display = 'none';
+                    }
+                }, 4000);
+            } else {
+                badge.className = 'section-switch-badge updated';
+                badge.innerHTML = `<span class="badge-icon">✓</span> <span class="badge-text">${sym} ${cfg.label} updated</span>`;
+                setTimeout(() => {
+                    if (badge.classList.contains('updated')) {
+                        badge.style.opacity = '0';
+                        setTimeout(() => {
+                            badge.style.display = 'none';
+                            badge.style.opacity = '1';
+                        }, 300);
+                    }
+                }, 1800);
+            }
+        }
+    }
+}
+
+/**
+ * Mark a section as completed after its network fetch/render completes
+ */
+function completeSectionSwitchLoading(secKey, isError = false) {
+    if (!pendingSwitchSections.has(secKey)) return;
+    pendingSwitchSections.delete(secKey);
+    setSectionLoadingIndicator(secKey, false, CONFIG?.symbol, isError);
+
+    // Hide chart overlay if chart section finished
+    if (secKey === 'chart') {
+        const chartOverlay = document.getElementById('chartSwitchOverlay');
+        if (chartOverlay) {
+            chartOverlay.style.opacity = '0';
+            setTimeout(() => {
+                chartOverlay.style.display = 'none';
+                chartOverlay.style.opacity = '1';
+            }, 250);
+        }
+    }
+
+    // When all sections finish, update the global header status pill
+    if (pendingSwitchSections.size === 0) {
+        const globalStatus = document.getElementById('botSwitchStatusPill');
+        const globalText = document.getElementById('botSwitchStatusText');
+        if (globalStatus) {
+            globalStatus.className = 'bot-switch-status-pill updated';
+            if (globalText) {
+                globalText.textContent = `✓ Switched to ${CONFIG.symbol}`;
+            }
+            setTimeout(() => {
+                if (globalStatus.classList.contains('updated')) {
+                    globalStatus.style.opacity = '0';
+                    setTimeout(() => {
+                        globalStatus.style.display = 'none';
+                        globalStatus.style.opacity = '1';
+                    }, 400);
+                }
+            }, 2200);
+        }
+    }
+}
+
+/**
+ * Set loading placeholders inside tables, containers, and overlays during bot switch
+ */
+function setTableLoadingPlaceholders(symbol) {
+    const sym = (symbol || CONFIG?.symbol || 'bot').toUpperCase();
+
+    // 1. Orders table
+    const ordersTbody = document.getElementById('positionOrdersTableBody');
+    const ordersStatus = document.getElementById('positionOrdersStatus');
+    if (ordersTbody) {
+        ordersTbody.dataset.lastContent = '';
+        ordersTbody.innerHTML = `
+            <tr>
+                <td colspan="8" class="table-switch-loading">
+                    <div class="table-switch-spinner-wrap">
+                        <span class="section-switch-spinner"></span>
+                        <div class="table-switch-text">Switching bot to <strong class="switch-symbol-hl">${sym}</strong> &mdash; loading active positions &amp; orders...</div>
+                        <div class="table-switch-subtext">Fetching broker positions and order book for ${sym} due to bot change</div>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }
+    if (ordersStatus) {
+        ordersStatus.textContent = `Loading ${sym} orders...`;
+    }
+
+    // 2. Trade History table
+    const tradeTbody = document.getElementById('tradeHistoryBody');
+    const tradeCount = document.getElementById('tradeCount');
+    if (tradeTbody) {
+        tradeTbody.innerHTML = `
+            <tr>
+                <td colspan="15" class="table-switch-loading">
+                    <div class="table-switch-spinner-wrap">
+                        <span class="section-switch-spinner"></span>
+                        <div class="table-switch-text">Switching bot to <strong class="switch-symbol-hl">${sym}</strong> &mdash; loading trade history...</div>
+                        <div class="table-switch-subtext">Fetching executed trades and P&amp;L records for ${sym} due to bot change</div>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }
+    if (tradeCount) {
+        tradeCount.textContent = `Loading ${sym} trades...`;
+    }
+
+    // 3. Alerts & Logs container
+    const logsContainer = document.getElementById('logsContainer');
+    if (logsContainer) {
+        logsContainer.dataset.lastContent = '';
+        logsContainer.innerHTML = `
+            <div class="logs-switch-placeholder">
+                <div class="table-switch-spinner-wrap">
+                    <span class="section-switch-spinner"></span>
+                    <div class="table-switch-text">Switching bot to <strong class="switch-symbol-hl">${sym}</strong> &mdash; loading logs...</div>
+                    <div class="table-switch-subtext">Filtering activity events and engine logs for ${sym} due to bot change</div>
+                </div>
+            </div>
+        `;
+    }
+
+    // 4. Strategy Parameters
+    const paramsGrid = document.getElementById('paramsCardsGrid');
+    const paramDesc = document.getElementById('paramBotDesc');
+    if (paramsGrid) {
+        paramsGrid.innerHTML = `
+            <div class="params-loading-placeholder">
+                <span class="params-spinner"></span> Switching bot to <strong class="switch-symbol-hl">${sym}</strong> &mdash; loading active parameters...
+            </div>
+        `;
+    }
+    if (paramDesc) {
+        paramDesc.textContent = `Switching bot to ${sym} — loading configuration parameters...`;
+    }
+
+    // 5. Price chart overlay
+    const chartOverlay = document.getElementById('chartSwitchOverlay');
+    if (chartOverlay) {
+        const overlayText = chartOverlay.querySelector('.chart-switch-overlay-text');
+        if (overlayText) {
+            overlayText.innerHTML = `Switching bot to <strong class="switch-symbol-hl">${sym}</strong> &mdash; loading price chart...`;
+        }
+        chartOverlay.style.display = 'flex';
+        chartOverlay.style.opacity = '1';
+    }
+
+    // 6. Current position status
+    const posStatus = document.getElementById('positionStatus');
+    if (posStatus) {
+        posStatus.textContent = `Loading ${sym}...`;
+    }
+}
+
 /**
  * Handle bot selector change event
  * Reloads dashboard with selected bot's data
@@ -399,10 +681,27 @@ async function handleBotSelectorChange(event) {
         return;
     }
 
-    Logger.info('BotFocus', `Bot selector changed to client_id: ${selectedBotId}`);
+    // Resolve target symbol early from selector options if possible
+    let targetSymbol = '';
+    const selector = event.target;
+    if (selector && selector.options) {
+        for (let i = 0; i < selector.options.length; i++) {
+            if (parseInt(selector.options[i].value) === selectedBotId) {
+                const text = selector.options[i].textContent || '';
+                const match = text.match(/^([A-Za-z0-9]+)/);
+                if (match) targetSymbol = match[1].toUpperCase();
+                break;
+            }
+        }
+    }
+
+    Logger.info('BotFocus', `Bot selector changed to client_id: ${selectedBotId} (${targetSymbol})`);
 
     // Stop all update timers to prevent race conditions
     stopAllTimers();
+
+    // Trigger loading indicators across all tables and sections immediately!
+    beginBotSwitchLoading(targetSymbol);
 
     try {
         // Save preference
@@ -429,9 +728,11 @@ async function handleBotSelectorChange(event) {
             startPeriodicTimers();
             showNotification(`Switched to ${CONFIG.symbol} bot`, 'success');
         } else {
+            Object.keys(BOT_SECTION_CONFIG).forEach(secKey => completeSectionSwitchLoading(secKey, true));
             showError('Failed to switch bot', 'Could not load bot configuration');
         }
     } catch (error) {
+        Object.keys(BOT_SECTION_CONFIG).forEach(secKey => completeSectionSwitchLoading(secKey, true));
         Logger.error('BotFocus', 'Error switching bots', error);
         showError('Error', 'Failed to switch bots');
     }
@@ -549,6 +850,15 @@ function updateSymbolReferences() {
     // Load bot configuration parameters for active symbol
     loadBotParameters(CONFIG.symbol);
 
+    // Refresh pending switch badge texts with confirmed symbol
+    if (pendingSwitchSections.size > 0) {
+        pendingSwitchSections.forEach(secKey => {
+            setSectionLoadingIndicator(secKey, true, CONFIG.symbol);
+        });
+        const globalText = document.getElementById('botSwitchStatusText');
+        if (globalText) globalText.textContent = `Switching to ${CONFIG.symbol}...`;
+    }
+
     Logger.debug('Updated symbol references to:', CONFIG.symbol);
 }
 
@@ -593,7 +903,9 @@ async function loadBotParameters(symbol) {
         }
 
         renderBotParameters(params);
+        completeSectionSwitchLoading('params');
     } catch (err) {
+        completeSectionSwitchLoading('params', true);
         Logger.error('BotFocus', `Failed to load bot parameters for ${symbol}`, err);
         if (gridEl) {
             gridEl.innerHTML = `
@@ -2135,6 +2447,8 @@ async function updateBotOverview() {
             Logger.warn('BotFocus', `No bot data found for bot ${CONFIG.botId}`);
             // Clear stale data when Firestore returns empty
             clearStalePositionData();
+            completeSectionSwitchLoading('orders');
+            completeSectionSwitchLoading('position');
             return;
         }
 
@@ -2203,7 +2517,12 @@ async function updateBotOverview() {
         // Update merged position/orders table (replaces separate position and orders tables)
         updatePositionOrdersTable(botData);
 
+        completeSectionSwitchLoading('orders');
+        completeSectionSwitchLoading('position');
+
     } catch (error) {
+        completeSectionSwitchLoading('orders', true);
+        completeSectionSwitchLoading('position', true);
         console.error('Error updating bot overview:', error);
     }
 }
@@ -2547,7 +2866,12 @@ async function updateBotStatus() {
 
         // Orders table updated separately to reduce calls
 
+        completeSectionSwitchLoading('health');
+        completeSectionSwitchLoading('strategy');
+
     } catch (error) {
+        completeSectionSwitchLoading('health', true);
+        completeSectionSwitchLoading('strategy', true);
         console.error('Error updating bot status:', error);
     }
 }
@@ -2716,9 +3040,12 @@ async function updateTradesData() {
         updateElement('sharpeRatio', metrics.sharpe_ratio !== null ? metrics.sharpe_ratio.toFixed(2) : '--');
         updateElement('maxDrawdown', formatCurrency(metrics.max_drawdown), metrics.max_drawdown < 0 ? 'negative' : '');
 
+        completeSectionSwitchLoading('performance');
+
         // Note: Positions table is updated by updateBotOverview() which has real-time position data
 
     } catch (error) {
+        completeSectionSwitchLoading('performance', true);
         console.error('Error updating metrics:', error);
     }
 }
@@ -2845,7 +3172,10 @@ async function updateChartData(barCount) {
             console.log(`Chart updated: ${prices.length} bars, Y-range: $${minPrice.toFixed(2)}-$${maxPrice.toFixed(2)}, Latest Price: $${prices[prices.length - 1]}`);
         }
 
+        completeSectionSwitchLoading('chart');
+
     } catch (error) {
+        completeSectionSwitchLoading('chart', true);
         Logger.error('BotFocus', 'Failed to update chart data', error);
         console.error('Error updating chart data:', error);
     }
@@ -3173,7 +3503,9 @@ async function updateTradeHistory() {
 
         updateTradeHistoryBadges(allTrades);
         applyTradeHistoryFilters();
+        completeSectionSwitchLoading('tradeHistory');
     } catch (error) {
+        completeSectionSwitchLoading('tradeHistory', true);
         console.error('Error updating trade history:', error);
         const tbody = document.getElementById('tradeHistoryBody');
         if (tbody) {
@@ -3410,7 +3742,10 @@ async function updateLogsData() {
             logsContainer.appendChild(logEntry);
         });
 
+        completeSectionSwitchLoading('logs');
+
     } catch (error) {
+        completeSectionSwitchLoading('logs', true);
         console.error('Error updating logs:', error);
     }
 }

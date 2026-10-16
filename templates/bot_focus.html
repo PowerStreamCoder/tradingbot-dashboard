@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/css/bot_focus.css?v=2.9.1">
+    <link rel="stylesheet" href="/static/css/bot_focus.css?v=2.9.2">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -39,6 +39,10 @@
                         <select id="botSelector" class="bot-selector-native-hidden" title="Select bot to monitor" aria-hidden="true" tabindex="-1">
                             <option value="">Loading...</option>
                         </select>
+                    </div>
+                    <div class="bot-switch-status-pill" id="botSwitchStatusPill" style="display: none;">
+                        <span class="badge-spinner"></span>
+                        <span id="botSwitchStatusText">Switching...</span>
                     </div>
 
                     <span class="metadata-separator">|</span>
@@ -167,9 +171,12 @@
             <!-- LEFT COLUMN: Price Chart & Performance -->
             <div class="left-column">
                 <!-- Price Chart -->
-                <section class="tile chart-tile">
+                <section class="tile chart-tile" id="tileChart">
                     <div class="tile-header">
-                        <h2>Price Chart: <span id="chartSymbol">--</span> 1h</h2>
+                        <div class="tile-title-group">
+                            <h2>Price Chart: <span id="chartSymbol">--</span> 1h</h2>
+                            <span class="section-switch-badge" id="switchBadge-chart" style="display: none;"></span>
+                        </div>
                         <div class="chart-controls">
                             <button class="chart-btn active" id="btnToggleIndicators" title="Toggle all SMA indicator lines">⚡ Indicators</button>
                             <div class="chart-bar-range-group" role="group" aria-label="Bar Range">
@@ -203,7 +210,12 @@
                         </button>
                         <div class="chart-crosshair-time font-mono" id="chartHoverTime"></div>
                     </div>
-                    <div class="chart-container">
+                    <div class="chart-container" style="position: relative;">
+                        <div class="chart-switch-overlay" id="chartSwitchOverlay" style="display: none;">
+                            <span class="section-switch-spinner"></span>
+                            <div class="table-switch-text chart-switch-overlay-text">Switching bot &mdash; loading price chart...</div>
+                            <div class="table-switch-subtext">Fetching candle bars from market feed</div>
+                        </div>
                         <canvas id="priceChart"></canvas>
                     </div>
                     <div class="chart-info">
@@ -227,8 +239,11 @@
                 </section>
 
                 <!-- Performance Summary -->
-                <section class="tile performance-tile">
-                    <h2>Performance Summary</h2>
+                <section class="tile performance-tile" id="tilePerformance">
+                    <div class="tile-header">
+                        <h2>Performance Summary</h2>
+                        <span class="section-switch-badge" id="switchBadge-performance" style="display: none;"></span>
+                    </div>
                     <div class="performance-grid">
                         <div class="perf-card">
                             <div class="perf-label">Today P&L</div>
@@ -261,9 +276,12 @@
             <!-- RIGHT COLUMN: Position & Health -->
             <div class="right-column">
                 <!-- Current Position -->
-                <section class="tile position-tile">
+                <section class="tile position-tile" id="tilePosition">
                     <div class="tile-header">
-                        <h2>Current Position</h2>
+                        <div class="tile-title-group">
+                            <h2>Current Position</h2>
+                            <span class="section-switch-badge" id="switchBadge-position" style="display: none;"></span>
+                        </div>
                         <span class="position-status" id="positionStatus">No Position</span>
                     </div>
                     <div class="position-details">
@@ -311,8 +329,11 @@
                 </section>
 
                 <!-- Bot Health -->
-                <section class="tile health-tile">
-                    <h2>Bot Health</h2>
+                <section class="tile health-tile" id="tileHealth">
+                    <div class="tile-header">
+                        <h2>Bot Health</h2>
+                        <span class="section-switch-badge" id="switchBadge-health" style="display: none;"></span>
+                    </div>
                     <div class="health-grid">
                         <div class="health-item">
                             <span class="health-label">API Latency</span>
@@ -342,8 +363,11 @@
         </div>
 
         <!-- SMA Strategy Panel -->
-        <section class="tile strategy-tile">
-            <h2>SMA Crossover Status</h2>
+        <section class="tile strategy-tile" id="tileStrategy">
+            <div class="tile-header">
+                <h2>SMA Crossover Status</h2>
+                <span class="section-switch-badge" id="switchBadge-strategy" style="display: none;"></span>
+            </div>
             <div class="strategy-grid">
                 <div class="strategy-item">
                     <span class="strategy-label">SMA 5</span>
@@ -384,9 +408,12 @@
         </section>
 
         <!-- Orders Table -->
-        <section class="tile orders-tile">
+        <section class="tile orders-tile" id="tileOrders">
             <div class="tile-header">
-                <h2>Active Position & Orders</h2>
+                <div class="tile-title-group">
+                    <h2>Active Position & Orders</h2>
+                    <span class="section-switch-badge" id="switchBadge-orders" style="display: none;"></span>
+                </div>
                 <div style="display: flex; align-items: center; gap: 12px;">
                     <button id="createPositionBtn" class="btn btn-success">
                         <span>+</span> Create Position
@@ -431,6 +458,7 @@
                         <h2>⚙️ Strategy Parameters & Bot Configuration</h2>
                         <span class="param-symbol-badge" id="paramSymbolBadge">--</span>
                         <span class="param-status-badge active" id="paramStatusBadge">ACTIVE PARAMS</span>
+                        <span class="section-switch-badge" id="switchBadge-params" style="display: none;"></span>
                     </div>
                     <p class="params-desc" id="paramBotDesc">Loading active trading bot parameters...</p>
                 </div>
@@ -462,9 +490,12 @@
         </section>
 
         <!-- Trade History Table -->
-        <section class="tile trade-history-tile">
+        <section class="tile trade-history-tile" id="tileTradeHistory">
             <div class="tile-header">
-                <h2>Trade History</h2>
+                <div class="tile-title-group">
+                    <h2>Trade History</h2>
+                    <span class="section-switch-badge" id="switchBadge-tradeHistory" style="display: none;"></span>
+                </div>
                 <span class="trade-count" id="tradeCount">Last 25 trades</span>
             </div>
 
@@ -797,9 +828,12 @@
         </section>
 
         <!-- Alerts & Logs -->
-        <section class="tile logs-tile">
+        <section class="tile logs-tile" id="tileLogs">
             <div class="tile-header">
-                <h2>Alerts & Logs</h2>
+                <div class="tile-title-group">
+                    <h2>Alerts & Logs</h2>
+                    <span class="section-switch-badge" id="switchBadge-logs" style="display: none;"></span>
+                </div>
                 <div class="log-filter">
                     <button class="filter-btn active" data-filter="all">All</button>
                     <button class="filter-btn" data-filter="info">Info</button>
@@ -819,7 +853,7 @@
     <!-- Configuration (must load before other scripts) -->
     <script src="/static/js/config.js?v=2.7.0"></script>
 
-    <script src="/static/js/bot_focus.js?v=2.9.1"></script>
+    <script src="/static/js/bot_focus.js?v=2.9.2"></script>
     <script src="/static/js/stock_picker.js?v=3.0.2"></script>
 
     <script>

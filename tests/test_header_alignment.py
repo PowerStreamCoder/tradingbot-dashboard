@@ -123,3 +123,50 @@ def test_custom_bot_dropdown_visibility_and_stacking():
     assert "z-index: 1000;" in menu_match.group(1)
     assert "max-height:" in menu_match.group(1)
 
+
+def test_bot_switch_loading_indicators():
+    """Verify that section-level and table-level indicators exist for bot/symbol switching."""
+    html_path = TEMPLATES_DIR / "bot_focus.html"
+    assert html_path.exists()
+    html_content = html_path.read_text(encoding="utf-8")
+
+    # Global status pill in bot-header metadata
+    assert 'id="botSwitchStatusPill"' in html_content
+    assert 'id="botSwitchStatusText"' in html_content
+
+    # All section-level switch badges in headers
+    expected_badges = [
+        "switchBadge-chart",
+        "switchBadge-performance",
+        "switchBadge-position",
+        "switchBadge-health",
+        "switchBadge-strategy",
+        "switchBadge-orders",
+        "switchBadge-params",
+        "switchBadge-tradeHistory",
+        "switchBadge-logs",
+    ]
+    for badge_id in expected_badges:
+        assert f'id="{badge_id}"' in html_content, f"Missing badge {badge_id} in bot_focus.html"
+
+    # Chart switch overlay
+    assert 'id="chartSwitchOverlay"' in html_content
+
+    # CSS styles exist
+    css_path = STATIC_DIR / "css" / "bot_focus.css"
+    assert css_path.exists()
+    css_content = css_path.read_text(encoding="utf-8")
+    assert ".section-switch-badge" in css_content
+    assert ".bot-switch-status-pill" in css_content
+    assert ".table-switch-loading" in css_content
+    assert ".chart-switch-overlay" in css_content
+
+    # JS logic exists
+    js_path = STATIC_DIR / "js" / "bot_focus.js"
+    assert js_path.exists()
+    js_content = js_path.read_text(encoding="utf-8")
+    assert "BOT_SECTION_CONFIG" in js_content
+    assert "function beginBotSwitchLoading(" in js_content
+    assert "function setSectionLoadingIndicator(" in js_content
+    assert "function completeSectionSwitchLoading(" in js_content
+    assert "function setTableLoadingPlaceholders(" in js_content
