@@ -209,7 +209,7 @@ def test_api_accept_and_provision_endpoints():
     from main import app, authenticated_sessions, dashboard_data
 
     client = TestClient(app)
-    authenticated_sessions["test-session-123"] = datetime.now()
+    authenticated_sessions["test-session-123"] = datetime.now() + timedelta(hours=1)
     client.cookies.set("dashboard_session", "test-session-123")
 
     # Mock Firestore stock_picks document

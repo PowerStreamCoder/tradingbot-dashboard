@@ -81,6 +81,90 @@ BOT_CONTROL_API_URL = os.environ.get("BOT_CONTROL_API_URL", "http://136.115.134.
 authenticated_sessions = {}  # Local cache
 sessions_ref = None  # Firestore collection reference (initialized after DashboardData)
 
+
+def _now_naive() -> datetime:
+    """Naive 'now' on the same basis as the naive datetimes this app stores."""
+    return datetime.now()
+
+
+def _as_naive_local(value) -> Optional[datetime]:
+    """
+    Coerce a stored session expiry to a naive datetime comparable to
+    ``_now_naive()``.
+
+    Sessions are written as naive datetimes, but Firestore hands them back
+    tz-aware (DatetimeWithNanoseconds, UTC). Comparing the two raises
+    TypeError, which silently disabled session persistence on restart and could
+    500 POST endpoints, so every expiry comparison goes through this normalizer.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        except Exception:
+            return None
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is not None:
+        value = value.astimezone().replace(tzinfo=None)
+    return value
+
+
+def is_valid_session(session_id: Optional[str]) -> bool:
+    """
+    Validate a session for API endpoints: it must exist AND still be unexpired.
+
+    Endpoint auth checks only tested membership in `authenticated_sessions`,
+    but expired entries linger in that local cache until some page GET happens
+    to purge them - so POST endpoints (accept/reject/provision/run/...) happily
+    kept serving requests from expired sessions.
+
+    Mirrors the middleware's cache -> expiry -> Firestore fallback logic and
+    purges expired sessions as it finds them.
+    """
+    if not session_id:
+        return False
+
+    expiry = _as_naive_local(authenticated_sessions.get(session_id))
+
+    if expiry is None:
+        # Not in local cache - another instance may have created it.
+        if sessions_ref is None:
+            return False
+        try:
+            session_doc = sessions_ref.document(session_id).get()
+            if not session_doc.exists:
+                return False
+            expiry = _as_naive_local((session_doc.to_dict() or {}).get('expiry'))
+        except Exception as e:
+            print(f"Error checking session in Firestore: {e}")
+            return False
+        if expiry is None:
+            return False
+        if expiry <= _now_naive():
+            # Expired in Firestore - clean up so it is not reloaded
+            try:
+                sessions_ref.document(session_id).delete()
+            except Exception:
+                pass
+            return False
+        authenticated_sessions[session_id] = expiry
+        return True
+
+    if expiry > _now_naive():
+        return True
+
+    # Expired: purge from local cache and Firestore
+    print(f"Session expired: {session_id[:10]}...")
+    authenticated_sessions.pop(session_id, None)
+    if sessions_ref is not None:
+        try:
+            sessions_ref.document(session_id).delete()
+        except Exception as e:
+            print(f"Error deleting expired session from Firestore: {e}")
+    return False
+
 # Cache for trade history to reduce Firestore reads.
 # Keyed by the lookback window (`days`) so callers requesting different windows
 # never receive each other's results. The performance engine asks for 3650 days
@@ -118,8 +202,25 @@ _stock_picks_cache = {
 STOCK_PICKS_CACHE_TTL_SECONDS = 30  # Cache for 30 seconds
 
 # Concurrency control for StockPicker execution
+# The run flag is bound to the submitted future (see _bind_stockpicker_run) so
+# it can only be released once the runner thread has ACTUALLY finished - a
+# timeout on the await must not allow a second, concurrent pipeline run.
 _stockpicker_running = False
 _stockpicker_lock = Lock()
+_stockpicker_future = None  # asyncio.Future of the in-flight run (event loop thread only)
+
+# Shared executor: one long-lived worker instead of a new (leaked) thread pool
+# per manual run.
+from concurrent.futures import ThreadPoolExecutor
+_stockpicker_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="stockpicker-run")
+
+
+def _release_stockpicker_run_flag() -> None:
+    """Clear the in-flight run flag. Registered as a done-callback on the future."""
+    global _stockpicker_running, _stockpicker_future
+    with _stockpicker_lock:
+        _stockpicker_running = False
+        _stockpicker_future = None
 
 # Rate limiting for StockPicker runs (per user session)
 from collections import defaultdict
@@ -443,15 +544,15 @@ async def check_access_code(request: Request, call_next):
     if session_id:
         # Check local cache first
         if session_id in authenticated_sessions:
-            session_expiry = authenticated_sessions[session_id]
-            if session_expiry > datetime.now():
+            session_expiry = _as_naive_local(authenticated_sessions[session_id])
+            if session_expiry and session_expiry > _now_naive():
                 # Session still valid - allow access
                 print(f"Valid session (cache): {session_id[:10]}... for path: {request.url.path}")
                 return await call_next(request)
             else:
                 # Session expired, remove it
                 print(f"Session expired: {session_id[:10]}...")
-                del authenticated_sessions[session_id]
+                authenticated_sessions.pop(session_id, None)
                 # Also delete from Firestore
                 try:
                     sessions_ref.document(session_id).delete()
@@ -463,8 +564,8 @@ async def check_access_code(request: Request, call_next):
                 session_doc = sessions_ref.document(session_id).get()
                 if session_doc.exists:
                     session_data = session_doc.to_dict()
-                    session_expiry = session_data.get('expiry')
-                    if session_expiry and session_expiry > datetime.now():
+                    session_expiry = _as_naive_local(session_data.get('expiry'))
+                    if session_expiry and session_expiry > _now_naive():
                         # Valid session from Firestore, add to local cache
                         authenticated_sessions[session_id] = session_expiry
                         print(f"Valid session (Firestore): {session_id[:10]}... for path: {request.url.path}")
@@ -788,10 +889,10 @@ def load_sessions_from_firestore():
     """Load valid sessions from Firestore on startup"""
     # Note: authenticated_sessions is a module-level dict, no 'global' needed for dict modification
     try:
-        now = datetime.now()
+        now = _now_naive()
         for doc in sessions_ref.stream():
             session_data = doc.to_dict()
-            expiry = session_data.get('expiry')
+            expiry = _as_naive_local(session_data.get('expiry'))
             if expiry and expiry > now:
                 authenticated_sessions[doc.id] = expiry
         print(f"Loaded {len(authenticated_sessions)} active sessions from Firestore")
@@ -813,7 +914,9 @@ async def authenticate(request: Request):
         if access_code == get_valid_access_code():
             # Generate session ID
             session_id = secrets.token_urlsafe(32)
-            expiry_time = datetime.now() + timedelta(hours=24)
+            # Kept on the same naive-time basis as every other session datetime
+            # so comparisons via _as_naive_local() stay consistent.
+            expiry_time = _now_naive() + timedelta(hours=24)
 
             # Store session in memory (expires in 24 hours)
             authenticated_sessions[session_id] = expiry_time
@@ -3200,7 +3303,7 @@ async def get_stock_picks(request: Request, response: Response):
     """
     # Check authentication (using existing pattern - same as other endpoints)
     session_id = request.cookies.get("dashboard_session")
-    if not session_id or session_id not in authenticated_sessions:
+    if not is_valid_session(session_id):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     # Set strict anti-caching headers so browsers never display stale runs
@@ -3306,7 +3409,7 @@ async def run_stock_picker(request: Request):
     # AUTHENTICATION CHECK (using existing pattern - same as other endpoints)
     # =========================================================================
     session_id = request.cookies.get("dashboard_session")
-    if not session_id or session_id not in authenticated_sessions:
+    if not is_valid_session(session_id):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     # =========================================================================
@@ -3334,7 +3437,12 @@ async def run_stock_picker(request: Request):
     # CONCURRENCY CONTROL (only one run at a time globally)
     # =========================================================================
     with _stockpicker_lock:
-        global _stockpicker_running
+        global _stockpicker_running, _stockpicker_future
+        # Opportunistic recovery: if the previous run's done-callback has not
+        # been dispatched yet, but the future is already finished, free the slot.
+        if _stockpicker_running and _stockpicker_future is not None and _stockpicker_future.done():
+            _stockpicker_running = False
+            _stockpicker_future = None
         if _stockpicker_running:
             raise HTTPException(
                 status_code=409,
@@ -3347,22 +3455,36 @@ async def run_stock_picker(request: Request):
     # =========================================================================
     import time
     import asyncio
-    from concurrent.futures import ThreadPoolExecutor
-
-    # Thread pool executor for running blocking code
-    executor = ThreadPoolExecutor(max_workers=1)
     start_time = time.time()
+
+    try:
+        # Import here to avoid circular dependencies
+        from stockpicker.runner import run_stockpicker
+
+        loop = asyncio.get_running_loop()
+        future = loop.run_in_executor(_stockpicker_executor, run_stockpicker)
+    except Exception:
+        # Could not even start the run - release the slot we just claimed,
+        # otherwise every subsequent run would be rejected with 409 forever.
+        _release_stockpicker_run_flag()
+        logger.exception("Could not submit StockPicker run to executor")
+        raise HTTPException(status_code=503, detail="Could not start StockPicker run")
+
+    # The concurrency flag is released ONLY when the runner thread actually
+    # finishes. A timeout below cancels our *wait*, not the thread - so the
+    # flag must not be reset in a finally block (that allowed a second
+    # pipeline run to execute concurrently with the first).
+    _stockpicker_future = future
+    future.add_done_callback(lambda _f: _release_stockpicker_run_flag())
 
     try:
         logger.info(f"Manual StockPicker run triggered by session: {session_id[:10]}...")
 
-        # Import here to avoid circular dependencies
-        from stockpicker.runner import run_stockpicker
-
-        # Run in thread pool with 120-second timeout
-        loop = asyncio.get_event_loop()
+        # Run in thread pool with 120-second timeout.
+        # asyncio.shield() prevents wait_for() from cancelling the underlying
+        # future, keeping the done-callback tied to real thread completion.
         picks = await asyncio.wait_for(
-            loop.run_in_executor(executor, run_stockpicker),
+            asyncio.shield(future),
             timeout=120.0
         )
 
@@ -3432,10 +3554,10 @@ async def run_stock_picker(request: Request):
             'duration_seconds': duration
         }
 
-    finally:
-        # Always release the lock (even on timeout/error)
-        with _stockpicker_lock:
-            _stockpicker_running = False
+    # NOTE: no `finally` clause here. _stockpicker_running is released by the
+    # done-callback registered above, i.e. only once the runner thread has
+    # genuinely finished (including after a 120s timeout, where the thread
+    # keeps running in the background and must keep holding the slot).
 
 
 # =============================================================================
@@ -3449,7 +3571,7 @@ async def accept_stock_pick(request: Request):
     Advances status: PENDING_REVIEW -> ACCEPTED.
     """
     session_id = request.cookies.get("dashboard_session")
-    if not session_id or session_id not in authenticated_sessions:
+    if not is_valid_session(session_id):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     try:
@@ -3464,50 +3586,72 @@ async def accept_stock_pick(request: Request):
     notes = body.get("notes", "")
 
     try:
-        doc_ref = dashboard_data.stock_picks_ref.document("current")
-        doc = doc_ref.get()
-        if not doc.exists:
-            raise HTTPException(status_code=404, detail="No stock picks found")
+        from stockpicker.firestore_utils import run_stock_pick_rmw
 
-        data = doc.to_dict() or {}
+        doc_ref = dashboard_data.stock_picks_ref.document("current")
         now_str = datetime.now(timezone.utc).isoformat()
 
-        found = False
-        target_candidate = None
-        for key in ["actionable_leads", "growth_picks", "income_picks", "picks"]:
-            if key in data and isinstance(data[key], list):
-                for item in data[key]:
-                    if (item.get("ticker") or item.get("symbol") or "").upper() == symbol:
-                        item["status"] = "ACCEPTED"
-                        item["accepted_at"] = now_str
-                        item["notes"] = notes
-                        found = True
-                        if not target_candidate:
-                            target_candidate = dict(item)
+        def _mutate_accept(data):
+            found = False
+            target_candidate = None
+            for key in ["actionable_leads", "growth_picks", "income_picks", "picks"]:
+                if key in data and isinstance(data[key], list):
+                    for item in data[key]:
+                        if (item.get("ticker") or item.get("symbol") or "").upper() == symbol:
+                            item["status"] = "ACCEPTED"
+                            item["accepted_at"] = now_str
+                            item["notes"] = notes
+                            found = True
+                            if not target_candidate:
+                                target_candidate = dict(item)
 
-        if not found:
-            target_candidate = {
-                "symbol": symbol,
-                "ticker": symbol,
-                "status": "ACCEPTED",
-                "accepted_at": now_str,
-                "notes": notes,
-                "strategy_track": body.get("strategy_track", "GROWTH")
-            }
+            if not found:
+                target_candidate = {
+                    "symbol": symbol,
+                    "ticker": symbol,
+                    "status": "ACCEPTED",
+                    "accepted_at": now_str,
+                    "notes": notes,
+                }
 
-        already_accepted = data.get("already_accepted", [])
-        exists_idx = next((i for i, x in enumerate(already_accepted) if (x.get("ticker") or x.get("symbol") or "").upper() == symbol), None)
-        if exists_idx is not None:
-            already_accepted[exists_idx].update(target_candidate)
-        else:
-            already_accepted.append(target_candidate)
-        data["already_accepted"] = already_accepted
+            # Stamp the fields the In-Flight Sentinel needs as its ΔS baseline
+            # and Track-2 switch. UI-accepted leads store `composite_score`, not
+            # `score`, so without this the sentinel saw no score and defaulted to
+            # a fabricated 75.0 baseline + always-GROWTH track.
+            if not target_candidate.get("strategy_track"):
+                target_candidate["strategy_track"] = (
+                    target_candidate.get("track")
+                    or (body.get("strategy_track") or "").upper()
+                    or "GROWTH"
+                )
+            if target_candidate.get("initial_score") is None:
+                target_candidate["initial_score"] = (
+                    target_candidate.get("composite_score")
+                    or target_candidate.get("fundamental_score")
+                    or target_candidate.get("score")
+                )
 
-        for key in ["actionable_leads", "growth_picks", "income_picks"]:
-            if key in data and isinstance(data[key], list):
-                data[key] = [x for x in data[key] if (x.get("ticker") or x.get("symbol") or "").upper() != symbol]
+            already_accepted = data.get("already_accepted", [])
+            exists_idx = next((i for i, x in enumerate(already_accepted) if (x.get("ticker") or x.get("symbol") or "").upper() == symbol), None)
+            if exists_idx is not None:
+                already_accepted[exists_idx].update(target_candidate)
+            else:
+                already_accepted.append(target_candidate)
+            data["already_accepted"] = already_accepted
 
-        doc_ref.set(data)
+            for key in ["actionable_leads", "growth_picks", "income_picks"]:
+                if key in data and isinstance(data[key], list):
+                    data[key] = [x for x in data[key] if (x.get("ticker") or x.get("symbol") or "").upper() != symbol]
+            return True
+
+        # Read-modify-write `stock_picks/current` atomically. The document's HITL
+        # arrays make every transition a full read-modify-write; a bare
+        # get()->set() is last-write-wins across Cloud Run instances. The helper
+        # uses a Firestore transaction in production and a plain RMW in tests /
+        # local dev (see stockpicker/firestore_utils.py). `False` here means the
+        # document was missing, so it maps to the same 404 as before.
+        if not run_stock_pick_rmw(_mutate_accept, doc_ref=doc_ref, db=getattr(dashboard_data, "db", None)):
+            raise HTTPException(status_code=404, detail="No stock picks found")
 
         with _stock_picks_cache["lock"]:
             _stock_picks_cache["data"] = None
@@ -3528,7 +3672,7 @@ async def reject_stock_pick(request: Request):
     Advances status: PENDING_REVIEW -> REJECTED and enforces 7-day cooldown.
     """
     session_id = request.cookies.get("dashboard_session")
-    if not session_id or session_id not in authenticated_sessions:
+    if not is_valid_session(session_id):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     try:
@@ -3544,38 +3688,40 @@ async def reject_stock_pick(request: Request):
     notes = body.get("notes", "")
 
     try:
-        doc_ref = dashboard_data.stock_picks_ref.document("current")
-        doc = doc_ref.get()
-        if not doc.exists:
-            raise HTTPException(status_code=404, detail="No stock picks found")
+        from stockpicker.firestore_utils import run_stock_pick_rmw
 
-        data = doc.to_dict() or {}
+        doc_ref = dashboard_data.stock_picks_ref.document("current")
         now_dt = datetime.now(timezone.utc)
         now_str = now_dt.isoformat()
         cooldown_expires = (now_dt + timedelta(days=7)).isoformat()
 
-        for key in ["actionable_leads", "growth_picks", "income_picks", "picks"]:
-            if key in data and isinstance(data[key], list):
-                data[key] = [x for x in data[key] if (x.get("ticker") or x.get("symbol") or "").upper() != symbol]
+        def _mutate_reject(data):
+            for key in ["actionable_leads", "growth_picks", "income_picks", "picks"]:
+                if key in data and isinstance(data[key], list):
+                    data[key] = [x for x in data[key] if (x.get("ticker") or x.get("symbol") or "").upper() != symbol]
 
-        rejected_cooldown = data.get("rejected_cooldown", [])
-        rej_entry = {
-            "symbol": symbol,
-            "ticker": symbol,
-            "status": "REJECTED",
-            "rejection_reason": reason,
-            "notes": notes,
-            "rejected_at": now_str,
-            "cooldown_expires": cooldown_expires
-        }
-        idx = next((i for i, x in enumerate(rejected_cooldown) if (x.get("ticker") or x.get("symbol") or "").upper() == symbol), None)
-        if idx is not None:
-            rejected_cooldown[idx] = rej_entry
-        else:
-            rejected_cooldown.append(rej_entry)
-        data["rejected_cooldown"] = rejected_cooldown
+            rejected_cooldown = data.get("rejected_cooldown", [])
+            rej_entry = {
+                "symbol": symbol,
+                "ticker": symbol,
+                "status": "REJECTED",
+                "rejection_reason": reason,
+                "notes": notes,
+                "rejected_at": now_str,
+                "cooldown_expires": cooldown_expires
+            }
+            idx = next((i for i, x in enumerate(rejected_cooldown) if (x.get("ticker") or x.get("symbol") or "").upper() == symbol), None)
+            if idx is not None:
+                rejected_cooldown[idx] = rej_entry
+            else:
+                rejected_cooldown.append(rej_entry)
+            data["rejected_cooldown"] = rejected_cooldown
+            return True
 
-        doc_ref.set(data)
+        # Same atomic RMW as accept (see stockpicker/firestore_utils.py); the
+        # `rejected_cooldown` array is the shared resource being raced on.
+        if not run_stock_pick_rmw(_mutate_reject, doc_ref=doc_ref, db=getattr(dashboard_data, "db", None)):
+            raise HTTPException(status_code=404, detail="No stock picks found")
 
         with _stock_picks_cache["lock"]:
             _stock_picks_cache["data"] = None
@@ -3600,7 +3746,7 @@ async def get_parameter_advice(
     Get dynamic Quant/AI expert parameter advice for a candidate symbol.
     """
     session_id = request.cookies.get("dashboard_session")
-    if not session_id or session_id not in authenticated_sessions:
+    if not is_valid_session(session_id):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     sym = symbol.upper().strip()
@@ -3670,7 +3816,7 @@ async def provision_bot_from_pick(request: Request):
     5. On error: rollback registry changes and record PROVISIONING_FAILED status with root-cause reason
     """
     session_id = request.cookies.get("dashboard_session")
-    if not session_id or session_id not in authenticated_sessions:
+    if not is_valid_session(session_id):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     try:
@@ -3699,11 +3845,31 @@ async def provision_bot_from_pick(request: Request):
 
     stage = "LOCATING_CONFIG"
     bots_json_modified = False
+    written_bot_files = []
     bot_id = f"{symbol.lower()}_sma"
 
     try:
         if not bots_config_path:
             raise RuntimeError("bots.json configuration file not found in known config paths")
+
+        # Load the real candidate record so (a) the expert advisor is fed actual
+        # price / ATR / solvency instead of its $100 & 2% defaults, and (b) the
+        # registry + accepted record carry the score/track the Sentinel needs
+        # for ΔS and the INCOME (Track-2) switch.
+        pick_ctx = {}
+        try:
+            _pdoc = dashboard_data.stock_picks_ref.document("current").get()
+            if getattr(_pdoc, "exists", False):
+                _pdata = _pdoc.to_dict() or {}
+                _pool = (_pdata.get("actionable_leads", []) + _pdata.get("growth_picks", []) +
+                         _pdata.get("income_picks", []) + _pdata.get("already_accepted", []))
+                pick_ctx = next((p for p in _pool
+                                 if (p.get("ticker") or p.get("symbol") or "").upper() == symbol), {}) or {}
+        except Exception as _pick_err:
+            logger.info(f"[PROVISION] Candidate context lookup skipped for {symbol}: {_pick_err}")
+
+        initial_score = (pick_ctx.get("initial_score") or pick_ctx.get("composite_score")
+                         or pick_ctx.get("fundamental_score") or pick_ctx.get("score"))
 
         stage = "UPDATING_BOTS_REGISTRY"
         with _bot_config_cache['lock']:
@@ -3731,6 +3897,8 @@ async def provision_bot_from_pick(request: Request):
                 "script": "bots/UniversalSMABot.py",
                 "strategy": strategy,
                 "enabled": True,
+                "strategy_track": strategy_track,
+                "initial_score": initial_score,
                 "description": f"{symbol} SMA 5/20 trader ({strategy_track.lower()})"
             }
             bots.append(new_bot_entry)
@@ -3752,10 +3920,23 @@ async def provision_bot_from_pick(request: Request):
             target_dirs.append(alt_bot_dir)
 
         from stockpicker.parameter_advisor import generate_expert_parameter_advice
+
+        # F6: feed the advisor the real candidate metrics (None when unknown ->
+        # parameter_advisor's explicit defaults), rather than calling it with no
+        # inputs at all and silently sizing against a fabricated $100 / 2% ATR.
+        _atr_val = pick_ctx.get("est_atr_pct")
+        _dossier = pick_ctx.get("evidence_dossier") or {}
         advice = generate_expert_parameter_advice(
             symbol=symbol,
             strategy_track=strategy_track,
-            capital_allocation=capital_allocation
+            capital_allocation=capital_allocation,
+            current_price=pick_ctx.get("current_price") or pick_ctx.get("price"),
+            est_atr_pct=(_atr_val / 100.0) if (_atr_val and _atr_val > 0) else None,
+            implied_volatility=pick_ctx.get("implied_volatility"),
+            solvency_rating=_dossier.get("solvency_rating"),
+            is_degraded=bool(pick_ctx.get("is_degraded") or _dossier.get("is_degraded", False)),
+            missing_sources=pick_ctx.get("missing_sources") or _dossier.get("missing_sources", []),
+            degradation_warnings=pick_ctx.get("degradation_warnings") or _dossier.get("degradation_warnings", []),
         )
         recommended = advice["recommended_params"]
 
@@ -3796,14 +3977,18 @@ async def provision_bot_from_pick(request: Request):
             target_json = os.path.join(b_dir, f"{symbol.lower()}.json")
             with open(target_json, "w") as f:
                 json.dump(bot_params, f, indent=2)
+            # Track for rollback so a later failure cannot leave an orphan
+            # bot config that is absent from bots.json.
+            written_bot_files.append(target_json)
 
         stage = "UPDATING_FIRESTORE"
         now_str = datetime.now(timezone.utc).isoformat()
         try:
+            from stockpicker.firestore_utils import run_stock_pick_rmw
+
             doc_ref = dashboard_data.stock_picks_ref.document("current")
-            doc = doc_ref.get()
-            if doc.exists:
-                data = doc.to_dict() or {}
+
+            def _mutate_provision(data):
                 for k in ["actionable_leads", "growth_picks", "income_picks"]:
                     if k in data and isinstance(data[k], list):
                         data[k] = [x for x in data[k] if (x.get("ticker") or x.get("symbol") or "").upper() != symbol]
@@ -3819,11 +4004,17 @@ async def provision_bot_from_pick(request: Request):
                     match["status_label"] = f"Bot Active (client_id: {next_id})"
                     match.pop("provisioning_error", None)
                     match.pop("failure_stage", None)
+                    # Persist the Sentinel's ΔS baseline & Track-2 switch.
+                    if not match.get("strategy_track"):
+                        match["strategy_track"] = strategy_track
+                    if match.get("initial_score") is None and initial_score is not None:
+                        match["initial_score"] = initial_score
                 else:
                     already_accepted.append({
                         "symbol": symbol,
                         "ticker": symbol,
                         "strategy_track": strategy_track,
+                        "initial_score": initial_score,
                         "status": "PROVISIONED",
                         "bot_id": bot_id,
                         "client_id": next_id,
@@ -3832,7 +4023,12 @@ async def provision_bot_from_pick(request: Request):
                         "status_label": f"Bot Active (client_id: {next_id})"
                     })
                 data["already_accepted"] = already_accepted
-                doc_ref.set(data)
+                return True
+
+            # Atomic RMW (see stockpicker/firestore_utils.py). A missing document
+            # is a no-op, matching the previous `if doc.exists` guard, and any
+            # write error stays non-fatal for the already-provisioned bot.
+            run_stock_pick_rmw(_mutate_provision, doc_ref=doc_ref, db=getattr(dashboard_data, "db", None))
         except Exception as fs_err:
             logger.warning(f"Could not update Firestore stock picks status: {fs_err}")
 
@@ -3885,6 +4081,16 @@ async def provision_bot_from_pick(request: Request):
                 logger.info(f"Successfully rolled back bots.json entry for {bot_id}")
             except Exception as rb_err:
                 logger.error(f"Rollback failed for {bot_id}: {rb_err}")
+
+        # Remove orphan bot parameter files written before the failure, so a
+        # rolled-back bots.json entry does not leave a dangling bots/{symbol}.json.
+        for _bf in written_bot_files:
+            try:
+                if os.path.exists(_bf):
+                    os.remove(_bf)
+                    logger.info(f"Rollback removed bot params file {_bf}")
+            except Exception as rb_file_err:
+                logger.error(f"Rollback failed to remove {_bf}: {rb_file_err}")
 
         # Update Firestore with PROVISIONING_FAILED status and failure reason
         try:
@@ -3944,7 +4150,7 @@ async def get_feedback_status(request: Request):
     - Rejection pattern analysis & suggested filter adjustments
     """
     session_id = request.cookies.get("dashboard_session")
-    if not session_id or session_id not in authenticated_sessions:
+    if not is_valid_session(session_id):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     try:
@@ -3995,7 +4201,7 @@ async def trigger_feedback_audit(request: Request):
     5. 90-day archive TTL cleanup
     """
     session_id = request.cookies.get("dashboard_session")
-    if not session_id or session_id not in authenticated_sessions:
+    if not is_valid_session(session_id):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     try:
@@ -4020,7 +4226,7 @@ async def submit_execution_feedback(request: Request):
     Links realized P&L and holding duration back to the immutable stock pick snapshot.
     """
     session_id = request.cookies.get("dashboard_session")
-    if not session_id or session_id not in authenticated_sessions:
+    if not is_valid_session(session_id):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     try:
@@ -4072,7 +4278,7 @@ async def get_sentinel_status(request: Request):
     Returns status: 'disabled' if the feature is switched off.
     """
     session_id = request.cookies.get("dashboard_session")
-    if not session_id or session_id not in authenticated_sessions:
+    if not is_valid_session(session_id):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     try:
@@ -4099,7 +4305,7 @@ async def trigger_sentinel_audit(request: Request):
     If switched off, returns disabled status unless ?force=true is provided.
     """
     session_id = request.cookies.get("dashboard_session")
-    if not session_id or session_id not in authenticated_sessions:
+    if not is_valid_session(session_id):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     try:
@@ -4126,7 +4332,7 @@ async def toggle_sentinel(request: Request):
     Body: {"enabled": true} or {"enabled": false}
     """
     session_id = request.cookies.get("dashboard_session")
-    if not session_id or session_id not in authenticated_sessions:
+    if not is_valid_session(session_id):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     try:

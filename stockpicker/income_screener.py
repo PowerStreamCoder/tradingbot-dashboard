@@ -3,7 +3,8 @@ Covered Call Income Screener for StockPicker (Track 2: INCOME).
 
 Evaluates equities and ETFs for Covered Call income suitability based on:
 1. Low realized volatility (ATR/Price between 0.4% and 3.5% per cc_suitability.py)
-2. Attractive option premium yield (aiming for 1.8% - 3.5% monthly premium yield on 25-delta calls)
+2. Attractive option premium yield (aiming for 1.8% - 3.5% monthly premium yield on
+   OTM calls struck roughly 1%-6% above spot as a Delta ~0.25-0.35 proxy)
 3. Healthy options liquidity (open interest and tight bid-ask spreads)
 4. Earnings collision safety (distance to next earnings date > 30 days to avoid assignment shocks)
 """
@@ -287,9 +288,32 @@ def evaluate_covered_call_candidate(ticker: str) -> Optional[Dict[str, Any]]:
         # In pre-market or outside US trading hours, Yahoo options report bid/ask as 0.0,
         # but lastPrice is preserved. Use lastPrice as premium proxy when bid is 0.
         premium_proxy = bid if bid > 0 else (last_price if last_price > 0 else 0.0)
-        monthly_yield = (premium_proxy / current_price) if current_price > 0 else 0.0
-        annualized_yield = monthly_yield * 12.0
-        spread = (ask - bid) if (bid > 0 and ask > 0) else round(premium_proxy * 0.05, 2)
+
+        # Days-to-expiry of the selected contract (the fetched chain targets 20-50 DTE).
+        # The premium only covers the contract's own term, so normalize it to a true
+        # monthly rate and annualize by actual DTE instead of assuming every premium
+        # spans exactly one month (a 45-DTE premium x12 overstated yield by ~50%).
+        dte_days = None
+        exp_ts = selected_call.get("expiration") or (options[0] or {}).get("expirationDate")
+        if exp_ts:
+            try:
+                dte_days = (float(exp_ts) - time.time()) / 86400.0
+                if dte_days <= 0:
+                    dte_days = None
+            except (TypeError, ValueError):
+                dte_days = None
+        term_days = dte_days if dte_days else 30.4375  # ~1 month when DTE is unknown
+
+        raw_term_yield = (premium_proxy / current_price) if current_price > 0 else 0.0
+        monthly_yield = raw_term_yield * (30.4375 / term_days)
+        annualized_yield = raw_term_yield * (365.0 / term_days)
+
+        # Only report a genuine bid/ask spread. Inventing "5% of premium" when the
+        # quote was unavailable used to hand out the full 8 liquidity points.
+        if bid > 0 and ask > 0 and ask >= bid:
+            spread = ask - bid
+        else:
+            spread = None
 
         fifty_two_high = quote.get("fiftyTwoWeekHigh") or (current_price * 1.15)
         fifty_two_low = quote.get("fiftyTwoWeekLow") or (current_price * 0.85)
@@ -381,13 +405,18 @@ def evaluate_covered_call_candidate(ticker: str) -> Optional[Dict[str, Any]]:
         score += 0.0
 
     # Bid-Ask spread tightness (supports percentage and absolute spread)
-    spread_pct = spread / current_price if current_price > 0 else 0
-    if spread <= 0.15 or spread_pct <= 0.002:
-        score += 8.0
-    elif spread <= 0.35 and spread_pct <= 0.005:
-        score += 4.0
-    else:
+    if spread is None:
+        # No live bid/ask (e.g. outside regular trading hours): an unknown
+        # spread earns no liquidity credit rather than a fabricated one.
         score += 0.0
+    else:
+        spread_pct = spread / current_price if current_price > 0 else 0
+        if spread <= 0.15 or spread_pct <= 0.002:
+            score += 8.0
+        elif spread <= 0.35 and spread_pct <= 0.005:
+            score += 4.0
+        else:
+            score += 0.0
 
     # 4. Earnings Collision Safety (Up to 15 pts / Penalty -20 pts & score cap)
     if is_etf or (35 < days_to_earnings < 900):
@@ -400,6 +429,12 @@ def evaluate_covered_call_candidate(ticker: str) -> Optional[Dict[str, Any]]:
 
     missing_sources = []
     degradation_warnings = []
+
+    if spread is None and not used_synthetic_options:
+        missing_sources.append("Options Bid/Ask")
+        degradation_warnings.append(
+            "Live bid/ask unavailable for the selected contract (spread unknown; no liquidity credit applied)"
+        )
 
     # 5. Downside Safety & Alternative Data Confirmation (Up to +10 pts bonus / -15 pts penalty)
     # For covered calls, insider/congress buying provides downside floor protection against capital loss.
@@ -455,7 +490,7 @@ def evaluate_covered_call_candidate(ticker: str) -> Optional[Dict[str, Any]]:
         "strike": strike,
         "call_bid": round(bid, 2),
         "call_ask": round(ask, 2),
-        "bid_ask_spread": round(spread, 2),
+        "bid_ask_spread": round(spread, 2) if spread is not None else None,
         "open_interest": open_interest,
         "monthly_yield_est": round(monthly_yield * 100, 2),  # In %
         "annualized_yield_est": round(annualized_yield * 100, 2),  # In %

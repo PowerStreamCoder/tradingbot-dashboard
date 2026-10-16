@@ -26,6 +26,46 @@ let spSearchQuery = '';
 
 
 // =============================================================================
+// OUTPUT SAFETY (XSS)
+// =============================================================================
+// Every value rendered below originates from external feeds (news catalysts,
+// LLM-generated dossiers, SEC registrant names, congressional disclosures,
+// provisioning error text). They MUST be escaped before being interpolated
+// into an innerHTML template.
+
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, ch => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[ch]));
+}
+
+/** Normalize any feed value (string, number, list) to display text. */
+function toText(value) {
+    if (Array.isArray(value)) return value.map(v => String(v ?? '')).join(' · ');
+    return value === null || value === undefined ? '' : String(value);
+}
+
+/**
+ * Ticker/strategy identifiers get embedded inside inline on* handler
+ * attributes, where HTML entities are decoded BEFORE the JS parser runs -
+ * so escaping is not enough. Strip everything but ticker characters.
+ */
+function safeSymbol(value) {
+    return String(value ?? '').toUpperCase().replace(/[^A-Z0-9.\-]/g, '');
+}
+
+function safeTrack(value) {
+    return String(value ?? '').toUpperCase() === 'INCOME' ? 'INCOME' : 'GROWTH';
+}
+
+/** Only allow http(s) links - blocks javascript:/data: URL injection. */
+function safeHttpUrl(value, fallback) {
+    const url = String(value ?? '').trim();
+    return /^https?:\/\//i.test(url) ? url : (fallback || '#');
+}
+
+
+// =============================================================================
 // TOAST NOTIFICATIONS
 // =============================================================================
 
@@ -139,6 +179,7 @@ async function runStockPickerNow() {
     isRunningStockPicker = true;
     showToast('🔄 Scanning dual-track markets with Gemini Flash & alternative data...', 'info');
 
+    let succeeded = false;
     try {
         const response = await fetch('/api/stock-picks/run', {
             method: 'POST'
@@ -185,6 +226,7 @@ async function runStockPickerNow() {
                 renderStockPicksTable();
             }
             await loadStockPicks(true);
+            succeeded = true;
         } else {
             showToast(`❌ ${result.message || 'StockPicker run failed'}`, 'error');
         }
@@ -197,6 +239,30 @@ async function runStockPickerNow() {
         if (runButton) {
             runButton.disabled = false;
             runButton.innerHTML = '▶️ Run Now';
+        }
+
+        // Restore the UI when the run did NOT succeed. Previously both failure
+        // paths (server-side failure / thrown 429/409/HTTP/network error) left
+        // the badge stuck on the amber "Running Live Scan..." state and the
+        // table showing the full-screen spinner forever, because only the
+        // button was reset here.
+        if (!succeeded) {
+            if (statusBadge) {
+                statusBadge.textContent = '⚠️ Last Scan Failed';
+                statusBadge.style.background = 'rgba(248, 113, 113, 0.15)';
+                statusBadge.style.color = '#f87171';
+                statusBadge.style.borderColor = 'rgba(248, 113, 113, 0.3)';
+            }
+            try {
+                if (rawStockPickerData) {
+                    // Repaint the last known-good results instead of the spinner.
+                    renderStockPicksTable();
+                } else {
+                    renderReadyState();
+                }
+            } catch (repaintErr) {
+                console.error('Failed to restore StockPicker table after error:', repaintErr);
+            }
         }
     }
 }
@@ -256,7 +322,7 @@ async function loadStockPicks(forceRefresh = false) {
                 <tr>
                     <td colspan="8" style="text-align:center; color: #ef4444; padding: 30px;">
                         <strong>Failed to load stock picks</strong><br>
-                        <span style="font-size: 0.9em; color: #94a3b8; margin-top: 4px; display: inline-block;">${error.message}</span>
+                        <span style="font-size: 0.9em; color: #94a3b8; margin-top: 4px; display: inline-block;">${escapeHtml(error.message)}</span>
                     </td>
                 </tr>
             `;
@@ -357,8 +423,8 @@ function updateStockPickerMetrics(data) {
         if (degradedCount > 0 || dq !== 'FULL') {
             alertBanner.style.display = 'flex';
             if (alertText) {
-                const missingTxt = missingSources.length > 0 ? ` (Missing feeds: ${missingSources.join(', ')})` : '';
-                alertText.innerHTML = `<strong>Data Degradation Alert:</strong> ${degradedCount} candidate(s) scored with incomplete market or filing feeds${missingTxt}. Scoring factors were adjusted to neutral baseline.`;
+                const missingTxt = missingSources.length > 0 ? ` (Missing feeds: ${escapeHtml(missingSources.join(', '))})` : '';
+                alertText.innerHTML = `<strong>Data Degradation Alert:</strong> ${escapeHtml(degradedCount)} candidate(s) scored with incomplete market or filing feeds${missingTxt}. Scoring factors were adjusted to neutral baseline.`;
             }
         } else {
             alertBanner.style.display = 'none';
@@ -375,13 +441,13 @@ function updateStockPickerMetrics(data) {
         if (fallbackReasons.length > 0) {
             fallbackBanner.style.display = 'flex';
             if (fallbackText) {
-                const listItems = fallbackReasons.map(r => `<div style="margin-bottom: 3px;">• ${r}</div>`).join('');
+                const listItems = fallbackReasons.map(r => `<div style="margin-bottom: 3px;">• ${escapeHtml(r)}</div>`).join('');
                 fallbackText.innerHTML = `<strong>Pipeline Notice:</strong><div style="margin-top: 4px;">${listItems}</div>`;
             }
         } else if (informationalMsg && (informationalMsg.includes('fallback') || informationalMsg.includes('Auto-fallback'))) {
             fallbackBanner.style.display = 'flex';
             if (fallbackText) {
-                fallbackText.innerHTML = `<strong>Pipeline Notice:</strong> <span>${informationalMsg}</span>`;
+                fallbackText.innerHTML = `<strong>Pipeline Notice:</strong> <span>${escapeHtml(informationalMsg)}</span>`;
             }
         } else {
             fallbackBanner.style.display = 'none';
@@ -429,10 +495,10 @@ function renderStockPicksTable() {
     // Filter by search query if active
     if (spSearchQuery) {
         listToRender = listToRender.filter(pick => {
-            const sym = (pick.ticker || pick.symbol || '').toLowerCase();
-            const ind = (pick.industry || pick.evidence_dossier?.industry || '').toLowerCase();
-            const cat = (pick.catalyst || pick.fundamental_reasons || '').toLowerCase();
-            const track = (pick.strategy_track || '').toLowerCase();
+            const sym = safeSymbol(pick.ticker || pick.symbol || '').toLowerCase();
+            const ind = toText(pick.industry || pick.evidence_dossier?.industry).toLowerCase();
+            const cat = toText(pick.catalyst || pick.fundamental_reasons).toLowerCase();
+            const track = toText(pick.strategy_track).toLowerCase();
             return sym.includes(spSearchQuery) || ind.includes(spSearchQuery) || cat.includes(spSearchQuery) || track.includes(spSearchQuery);
         });
     }
@@ -443,7 +509,7 @@ function renderStockPicksTable() {
                 <tr>
                     <td colspan="8" class="sp-empty-state">
                         <div class="sp-empty-icon">🔍</div>
-                        <div class="sp-empty-title">No Candidates Matching "${spSearchQuery}"</div>
+                        <div class="sp-empty-title">No Candidates Matching "${escapeHtml(spSearchQuery)}"</div>
                         <div class="sp-empty-desc">No stocks found matching your keyword. Try clearing the filter or searching for another symbol.</div>
                         <button class="sp-empty-cta" onclick="clearStockPickerSearch()">✕ Clear Search Filter</button>
                     </td>
@@ -466,13 +532,18 @@ function renderStockPicksTable() {
 
     tbody.innerHTML = listToRender.map((pick, index) => {
         const rank = index + 1;
-        const sym = (pick.ticker || pick.symbol || '-').toUpperCase();
-        const track = pick.strategy_track || 'GROWTH';
+        // Sanitized symbol: safe in HTML text, element ids AND inline onclick
+        // handlers (HTML entities are decoded before the JS parser there).
+        const sym = safeSymbol(pick.ticker || pick.symbol || '-') || '-';
+        const track = safeTrack(pick.strategy_track);
         const score = pick.composite_score != null ? pick.composite_score.toFixed(1) : (pick.score != null ? pick.score.toFixed(1) : '-');
         const status = pick.status || 'PENDING_REVIEW';
-        const catalyst = pick.catalyst || pick.fundamental_reasons || 'Algorithmically identified opportunity';
+        const catalyst = toText(pick.catalyst || pick.fundamental_reasons) || 'Algorithmically identified opportunity';
         const dossier = pick.evidence_dossier || {};
-        const industry = pick.industry || dossier.industry || '';
+        const industry = toText(pick.industry || dossier.industry) || '';
+        const symSafe = escapeHtml(sym);
+        const industrySafe = escapeHtml(industry);
+        const catalystSafe = escapeHtml(catalyst);
 
         const trackBadge = track === 'INCOME'
             ? `<span class="sp-track-badge income"><span class="track-icon">🛡️</span> Income</span>`
@@ -482,11 +553,12 @@ function renderStockPicksTable() {
         let actionButtons = '';
 
         if (status === 'PROVISIONED') {
-            const clientId = pick.client_id || (pick.bot_id && pick.bot_id.replace(/\D/g, '')) || '';
+            const clientId = pick.client_id || (pick.bot_id && String(pick.bot_id).replace(/\D/g, '')) || '';
             const botTarget = clientId || sym;
-            statusBadge = `<span class="sp-status-pill provisioned"><span class="status-pulse green"></span> 🤖 ${pick.status_label || 'Bot Active'}</span>`;
+            const botHref = safeHttpUrl(pick.dashboard_link, `/bot-focus?bot=${encodeURIComponent(botTarget)}`);
+            statusBadge = `<span class="sp-status-pill provisioned"><span class="status-pulse green"></span> 🤖 ${escapeHtml(pick.status_label || 'Bot Active')}</span>`;
             actionButtons = `
-                <a href="${pick.dashboard_link || `/bot-focus?bot=${botTarget}`}" onclick="event.preventDefault(); navigateToBot('${clientId}', '${sym}');" class="sp-btn sp-btn-view" title="Focus on ${sym} Bot">
+                <a href="${escapeHtml(botHref)}" onclick="event.preventDefault(); navigateToBot('${safeSymbol(clientId)}', '${sym}');" class="sp-btn sp-btn-view" title="Focus on ${symSafe} Bot">
                     <span>📊</span> View Bot
                 </a>
             `;
@@ -556,7 +628,7 @@ function renderStockPicksTable() {
                 <td style="text-align: center;">
                     <div class="sp-ticker-cell">
                         <span class="sp-ticker-symbol">${sym}</span>
-                        ${industry ? `<span class="sp-ticker-industry" title="${industry}">${industry}</span>` : ''}
+                        ${industry ? `<span class="sp-ticker-industry" title="${industrySafe}">${industrySafe}</span>` : ''}
                     </div>
                 </td>
                 <td style="text-align: center;">
@@ -566,7 +638,7 @@ function renderStockPicksTable() {
                         </div>
                         <span class="sp-conviction-badge ${scoreClass}">${convictionLabel}</span>
                         ${pick.is_degraded ? `
-                            <span class="sp-degraded-tag" title="${(pick.degradation_warnings || []).join('; ') || 'Data feeds partial'}">
+                            <span class="sp-degraded-tag" title="${escapeHtml((pick.degradation_warnings || []).join('; ') || 'Data feeds partial')}">
                                 ⚠️ Degraded
                             </span>
                         ` : ''}
@@ -577,11 +649,11 @@ function renderStockPicksTable() {
                 </td>
                 <td>
                     <div class="sp-thesis-cell">
-                        <div class="sp-thesis-text" title="${catalyst}">${catalyst}</div>
+                        <div class="sp-thesis-text" title="${catalystSafe}">${catalystSafe}</div>
                         ${status === 'PROVISIONING_FAILED' ? `
                             <div class="sp-failure-box">
-                                <div><strong>Stage:</strong> ${pick.failure_stage || 'CONFIG'} | <strong>Reason:</strong> ${pick.failure_reason || 'Provisioning script error'}</div>
-                                <div class="sp-failure-action">💡 ${pick.suggested_action || 'Review permissions and retry.'}</div>
+                                <div><strong>Stage:</strong> ${escapeHtml(pick.failure_stage || 'CONFIG')} | <strong>Reason:</strong> ${escapeHtml(pick.failure_reason || 'Provisioning script error')}</div>
+                                <div class="sp-failure-action">💡 ${escapeHtml(pick.suggested_action || 'Review permissions and retry.')}</div>
                             </div>
                         ` : ''}
                     </div>
@@ -604,11 +676,11 @@ function renderStockPicksTable() {
                     <div class="dossier-drawer">
                         <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 10px; margin-bottom: 12px;">
                             <div>
-                                <strong style="color: #38bdf8; font-size: 1.05em; letter-spacing: 0.03em;">Multi-Dimensional Evidence Dossier: ${sym}</strong>
-                                <span style="margin-left: 10px; font-size: 0.85em; color: #94a3b8;">${industry}</span>
+                                <strong style="color: #38bdf8; font-size: 1.05em; letter-spacing: 0.03em;">Multi-Dimensional Evidence Dossier: ${symSafe}</strong>
+                                <span style="margin-left: 10px; font-size: 0.85em; color: #94a3b8;">${industrySafe}</span>
                             </div>
                             <div>
-                                <a href="${dossier.sec_filing_url || 'https://www.sec.gov/edgar/searchedgar/companysearch'}" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 6px; background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.35); color: #38bdf8; text-decoration: none; font-weight: 600; font-size: 0.82em; transition: all 0.2s;">
+                                <a href="${escapeHtml(safeHttpUrl(dossier.sec_filing_url, 'https://www.sec.gov/edgar/searchedgar/companysearch'))}" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 6px; background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.35); color: #38bdf8; text-decoration: none; font-weight: 600; font-size: 0.82em; transition: all 0.2s;">
                                     <span>🔗 Clickable SEC EDGAR Filing ↗</span>
                                 </a>
                             </div>
@@ -619,7 +691,7 @@ function renderStockPicksTable() {
                             <div class="dossier-card">
                                 <h4 style="color: #34d399;">🐂 Key Bull Drivers</h4>
                                 <ul style="margin: 0; padding-left: 18px; font-size: 0.85em; color: #f1f5f9; line-height: 1.5;">
-                                    ${(dossier.bull_drivers || ['Strong revenue growth momentum', 'Institutional order flow alignment']).map(d => `<li style="margin-bottom: 4px;">${d}</li>`).join('')}
+                                    ${(dossier.bull_drivers || ['Strong revenue growth momentum', 'Institutional order flow alignment']).map(d => `<li style="margin-bottom: 4px;">${escapeHtml(d)}</li>`).join('')}
                                 </ul>
                             </div>
 
@@ -627,7 +699,7 @@ function renderStockPicksTable() {
                             <div class="dossier-card">
                                 <h4 style="color: #f87171;">⚠️ Key Risk Warnings</h4>
                                 <ul style="margin: 0; padding-left: 18px; font-size: 0.85em; color: #f1f5f9; line-height: 1.5;">
-                                    ${(dossier.risk_warnings || ['Market regime volatility sensitivity', 'Macro cyclical exposure']).map(r => `<li style="margin-bottom: 4px;">${r}</li>`).join('')}
+                                    ${(dossier.risk_warnings || ['Market regime volatility sensitivity', 'Macro cyclical exposure']).map(r => `<li style="margin-bottom: 4px;">${escapeHtml(r)}</li>`).join('')}
                                 </ul>
                             </div>
 
@@ -639,8 +711,8 @@ function renderStockPicksTable() {
                                     <div><strong>Form 4 Insider Conviction:</strong> ${dossier.insider_score ? `<span style="color: ${dossier.insider_score > 0 ? '#34d399' : '#f87171'}; font-weight: 600;">${dossier.insider_score > 0 ? '+' : ''}${dossier.insider_score.toFixed(1)} pts</span>` : (pick.insider_bonus ? `<span style="color: #34d399; font-weight: 600;">+${pick.insider_bonus.toFixed(1)} pts safety floor</span>` : (pick.insider_penalty ? `<span style="color: #f87171; font-weight: 600;">-${pick.insider_penalty.toFixed(1)} pts tail-risk penalty</span>` : 'Neutral / No Form 4 cluster'))}</div>
                                     <div><strong>Congressional Disclosures:</strong> ${(dossier.congressional_trades && dossier.congressional_trades.length) ? `<span style="color: #38bdf8; font-weight: 600;">${dossier.congressional_trades.length} purchases (+${(dossier.congress_score || pick.congress_bonus || 0).toFixed(1)} pts)</span>` : (pick.congress_bonus ? `<span style="color: #38bdf8; font-weight: 600;">+${pick.congress_bonus.toFixed(1)} pts policy hedge</span>` : 'Neutral congressional flow')}</div>
                                     <div><strong>USAspending Awards:</strong> ${(dossier.usaspending_contracts && dossier.usaspending_contracts.length) ? `${dossier.usaspending_contracts.length} active awards` : 'No recent public federal awards'}</div>
-                                    <div><strong>Solvency Rating:</strong> ${dossier.solvency_rating || 'Adequate'}</div>
-                                    <div><strong>Data Quality:</strong> <span style="font-weight: 600; color: ${dossier.data_quality === 'FULL' ? '#34d399' : (dossier.data_quality === 'PARTIAL' ? '#fbbf24' : '#f87171')};">${dossier.data_quality || (pick.is_degraded ? 'PARTIAL' : 'FULL')}</span></div>
+                                    <div><strong>Solvency Rating:</strong> ${escapeHtml(dossier.solvency_rating || 'Adequate')}</div>
+                                    <div><strong>Data Quality:</strong> <span style="font-weight: 600; color: ${dossier.data_quality === 'FULL' ? '#34d399' : (dossier.data_quality === 'PARTIAL' ? '#fbbf24' : '#f87171')};">${escapeHtml(dossier.data_quality || (pick.is_degraded ? 'PARTIAL' : 'FULL'))}</span></div>
                                 </div>
                             </div>
 
@@ -651,9 +723,9 @@ function renderStockPicksTable() {
                                         <span>⚠️</span> Data Quality & Scoring Degradation Notice
                                     </h4>
                                     <div style="font-size: 0.85em; color: #fde68a;">
-                                        <div><strong>Missing / Incomplete Feeds:</strong> ${(dossier.missing_sources && dossier.missing_sources.length) ? dossier.missing_sources.join(', ') : (pick.missing_sources ? pick.missing_sources.join(', ') : 'Partial inputs')}</div>
+                                        <div><strong>Missing / Incomplete Feeds:</strong> ${escapeHtml((dossier.missing_sources && dossier.missing_sources.length) ? dossier.missing_sources.join(', ') : (pick.missing_sources ? pick.missing_sources.join(', ') : 'Partial inputs'))}</div>
                                         <ul style="margin: 6px 0 0 0; padding-left: 18px; color: #fef3c7;">
-                                            ${(dossier.degradation_warnings || pick.degradation_warnings || ['Scoring factors with missing data defaulted to neutral baseline']).map(w => `<li style="margin-bottom: 3px;">${w}</li>`).join('')}
+                                            ${(dossier.degradation_warnings || pick.degradation_warnings || ['Scoring factors with missing data defaulted to neutral baseline']).map(w => `<li style="margin-bottom: 3px;">${escapeHtml(w)}</li>`).join('')}
                                         </ul>
                                         <div style="margin-top: 6px; font-size: 0.8em; color: #fde047;">ℹ️ Note: Scoring confidence is degraded because one or more fundamental, options, or catalyst feeds were unavailable. The algorithm adjusted missing inputs to baseline neutrality.</div>
                                     </div>
@@ -687,13 +759,13 @@ function formatPickMetrics(pick) {
     const metrics = [];
     if (pick.strategy_track === 'INCOME') {
         if (pick.monthly_yield_est != null) {
-            metrics.push(`<span class="sp-metric-chip" style="color: #10b981; font-weight: 600;">Yield: ${pick.monthly_yield_est}%/mo</span>`);
+            metrics.push(`<span class="sp-metric-chip" style="color: #10b981; font-weight: 600;">Yield: ${escapeHtml(pick.monthly_yield_est)}%/mo</span>`);
         }
         if (pick.annualized_yield_est != null) {
-            metrics.push(`<span class="sp-metric-chip">Ann: ${pick.annualized_yield_est}%</span>`);
+            metrics.push(`<span class="sp-metric-chip">Ann: ${escapeHtml(pick.annualized_yield_est)}%</span>`);
         }
         if (pick.implied_volatility != null) {
-            metrics.push(`<span class="sp-metric-chip">IV: ${pick.implied_volatility}%</span>`);
+            metrics.push(`<span class="sp-metric-chip">IV: ${escapeHtml(pick.implied_volatility)}%</span>`);
         }
     } else {
         if (pick.revenue_yoy != null) {
@@ -743,7 +815,7 @@ function openAcceptModal(sym, track) {
         if (cand && (cand.is_degraded || cand.data_quality !== 'FULL' || (cand.missing_sources && cand.missing_sources.length > 0))) {
             const missing = (cand.missing_sources && cand.missing_sources.length) ? cand.missing_sources.join(', ') : 'Partial feeds';
             const warnList = cand.degradation_warnings && cand.degradation_warnings.length ? cand.degradation_warnings.join(' • ') : 'Scoring adjusted to baseline neutrality.';
-            degDetailsModal.innerHTML = `Missing inputs: <strong>${missing}</strong>. ${warnList} Please review parameters carefully before provisioning.`;
+            degDetailsModal.innerHTML = `Missing inputs: <strong>${escapeHtml(missing)}</strong>. ${escapeHtml(warnList)} Please review parameters carefully before provisioning.`;
             degWarnModal.style.display = 'block';
         } else {
             degWarnModal.style.display = 'none';
@@ -777,7 +849,7 @@ async function refreshParameterAdvice() {
             }
             if (summaryEl) summaryEl.textContent = advice.advisory_summary || '';
             if (bulletsEl) {
-                bulletsEl.innerHTML = (advice.expert_rationale || []).map(b => `<div style="margin-bottom: 2px;">• ${b}</div>`).join('');
+                bulletsEl.innerHTML = (advice.expert_rationale || []).map(b => `<div style="margin-bottom: 2px;">• ${escapeHtml(b)}</div>`).join('');
             }
 
             const p = advice.recommended_params || {};

@@ -169,6 +169,26 @@ def archive_pick_snapshot(
     }
 
     try:
+        # A snapshot is created once and only ever *augmented* afterwards. A
+        # same-day re-run of the same ticker produces the same pick_id, so a
+        # blind set() would wipe forward-alpha and execution-feedback fields
+        # populated by other loops since the first archive.
+        protected_fields = (
+            "alpha_t1", "alpha_t5", "alpha_t20",
+            "benchmark_returns", "forward_prices", "alpha_last_updated",
+            "execution_linked", "realized_pnl", "trade_duration_days",
+            "exit_reason",
+        )
+        try:
+            existing_doc = db.collection("stock_picks_archive").document(pick_id).get()
+            existing = existing_doc.to_dict() if getattr(existing_doc, "exists", False) else None
+        except Exception:
+            existing = None
+        if isinstance(existing, dict):
+            for field in protected_fields:
+                if existing.get(field) is not None:
+                    snapshot[field] = existing[field]
+
         db.collection("stock_picks_archive").document(pick_id).set(snapshot)
         logger.info(f"Archived immutable snapshot: {pick_id} "
                      f"(score={snapshot['composite_score']:.1f}, "
@@ -273,34 +293,44 @@ def compute_forward_alpha(
                 summary["errors"].append(f"{pick_id}: invalid run_date '{run_date_str}'")
                 continue
 
-            # Fetch current price and benchmark price
-            try:
-                ticker_price = _fetch_current_price(ticker)
-                spy_price_at_entry = _fetch_historical_price("SPY", run_date_str)
-                spy_price_now = _fetch_current_price("SPY")
-            except Exception as price_err:
-                summary["errors"].append(f"{pick_id}: price fetch failed: {price_err}")
+            # Measure each horizon at its OWN target date. Previously the same
+            # "days elapsed" return was stamped into every open horizon, so a
+            # pick first audited after a gap got alpha_t1 == alpha_t5 == alpha_t20
+            # (all mislabeled with the later return).
+            spy_price_at_entry = _fetch_historical_price("SPY", run_date_str)
+            if not spy_price_at_entry:
                 continue
 
-            if not ticker_price or not spy_price_at_entry or not spy_price_now:
-                continue
-
-            # Calculate returns
-            ticker_return = (ticker_price - entry_price) / entry_price
-            spy_return = (spy_price_now - spy_price_at_entry) / spy_price_at_entry
-            excess_return = ticker_return - spy_return
-
-            # Determine which horizon(s) to update
+            forward_prices = dict(data.get("forward_prices") or {})
             updates = {}
-            forward_prices = data.get("forward_prices", {})
-            forward_prices[f"t{days_elapsed}d"] = ticker_price
+            horizon_alphas = {}
 
             for horizon in ALPHA_HORIZONS:
                 field = f"alpha_t{horizon}"
-                if days_elapsed >= horizon and data.get(field) is None:
-                    updates[field] = round(excess_return, 6)
+                if data.get(field) is not None or days_elapsed < horizon:
+                    continue
 
-            if updates or forward_prices:
+                target_date = (run_date + timedelta(days=horizon)).date().isoformat()
+                try:
+                    t_price = _fetch_historical_price(ticker, target_date)
+                    s_price = _fetch_historical_price("SPY", target_date)
+                except Exception as price_err:
+                    summary["errors"].append(
+                        f"{pick_id}: t+{horizon} price fetch failed: {price_err}")
+                    continue
+                if not t_price or not s_price:
+                    continue
+
+                t_return = (t_price - entry_price) / entry_price
+                s_return = (s_price - spy_price_at_entry) / spy_price_at_entry
+                updates[field] = round(t_return - s_return, 6)
+                horizon_alphas[field] = round(t_return - s_return, 4)
+                # Bounded, deterministic keys - no unbounded growth per run.
+                forward_prices[f"t{horizon}d"] = t_price
+
+            # Only write (and only count) when a real alpha field was produced;
+            # a price refresh alone is not an alpha update.
+            if updates:
                 updates["forward_prices"] = forward_prices
                 updates["alpha_last_updated"] = datetime.now(timezone.utc).isoformat()
 
@@ -312,10 +342,8 @@ def compute_forward_alpha(
                     "pick_id": pick_id,
                     "ticker": ticker,
                     "days_elapsed": days_elapsed,
-                    "ticker_return": round(ticker_return, 4),
-                    "spy_return": round(spy_return, 4),
-                    "excess_return": round(excess_return, 4),
-                    "horizons_updated": list(updates.keys()),
+                    "horizons_updated": sorted(horizon_alphas.keys()),
+                    "alphas": horizon_alphas,
                 })
 
     except Exception as e:
@@ -624,6 +652,15 @@ def compute_execution_summary(db, lookback_days: int = 90) -> Dict[str, Any]:
         wins = [p for p in pnls if p > 0]
         losses = [p for p in pnls if p <= 0]
 
+        # Per-trade Sharpe approximation = mean(P&L) / stdev(P&L): a scale-free
+        # consistency measure (higher = more consistent winners). None when
+        # there are too few trades or zero dispersion.
+        sharpe_approx = None
+        if len(pnls) >= 2:
+            _std = statistics.pstdev(pnls)
+            if _std > 0:
+                sharpe_approx = round(statistics.mean(pnls) / _std, 4)
+
         overall = {
             "total_trades": len(all_records),
             "win_count": len(wins),
@@ -633,6 +670,7 @@ def compute_execution_summary(db, lookback_days: int = 90) -> Dict[str, Any]:
             "avg_pnl": round(statistics.mean(pnls), 2) if pnls else 0,
             "avg_winner": round(statistics.mean(wins), 2) if wins else 0,
             "avg_loser": round(statistics.mean(losses), 2) if losses else 0,
+            "sharpe_approx": sharpe_approx,
             "avg_duration_days": round(
                 statistics.mean([r["trade_duration_days"] for r in all_records
                                  if r.get("trade_duration_days") is not None]),
@@ -658,9 +696,62 @@ def compute_execution_summary(db, lookback_days: int = 90) -> Dict[str, Any]:
                 "pct_of_total": round(data["count"] / len(all_records), 4),
             }
 
-        # Stop-out rate analysis (for self-healing)
-        stop_out_count = sum(1 for r in all_records
-                            if r.get("exit_reason") in ("atr_stop_loss", "stop_loss", "trailing_stop"))
+        # --- Track + sector attribution -------------------------------------
+        # tradingbot-bots records the originating track & sector under
+        # `metadata`; fall back to top-level fields for older records.
+        def _meta(rec):
+            return rec.get("metadata") or {}
+
+        def _track_of(rec):
+            m = _meta(rec)
+            return str(rec.get("strategy_track") or m.get("strategy_track")
+                       or rec.get("track") or m.get("track") or "UNKNOWN").upper()
+
+        def _sector_of(rec):
+            m = _meta(rec)
+            s = rec.get("sector") or m.get("sector") or m.get("industry")
+            return str(s).strip() if s else "UNKNOWN"
+
+        STOP_OUT_REASONS = ("atr_stop_loss", "stop_loss", "trailing_stop")
+
+        # Per-track (GROWTH vs INCOME) statistics
+        track_buckets = {}
+        for r in all_records:
+            bucket = track_buckets.setdefault(_track_of(r), {"count": 0, "pnls": [], "wins": 0})
+            bucket["count"] += 1
+            pnl = r.get("realized_pnl")
+            if pnl is not None:
+                bucket["pnls"].append(pnl)
+                if pnl > 0:
+                    bucket["wins"] += 1
+
+        by_track = {}
+        for track, b in track_buckets.items():
+            by_track[track] = {
+                "count": b["count"],
+                "win_rate": round(b["wins"] / len(b["pnls"]), 4) if b["pnls"] else 0,
+                "total_pnl": round(sum(b["pnls"]), 2) if b["pnls"] else 0,
+                "avg_pnl": round(statistics.mean(b["pnls"]), 2) if b["pnls"] else 0,
+            }
+
+        # Sector-level stop-out attribution (design doc 7.2): only SECTORS with
+        # enough samples may drive a self-healing adjustment; an UNKNOWN sector
+        # is never auto-tightened.
+        sector_counts = {}
+        sector_stops = {}
+        for r in all_records:
+            sec = _sector_of(r)
+            sector_counts[sec] = sector_counts.get(sec, 0) + 1
+            if r.get("exit_reason") in STOP_OUT_REASONS:
+                sector_stops[sec] = sector_stops.get(sec, 0) + 1
+
+        sector_stop_out_rates = {
+            sec: round(sector_stops.get(sec, 0) / cnt, 4)
+            for sec, cnt in sector_counts.items()
+            if sec != "UNKNOWN" and cnt
+        }
+
+        stop_out_count = sum(sector_stops.values())
         stop_out_rate = stop_out_count / len(all_records) if all_records else 0
 
         summary = {
@@ -668,18 +759,33 @@ def compute_execution_summary(db, lookback_days: int = 90) -> Dict[str, Any]:
             "computed_at": datetime.now(timezone.utc).isoformat(),
             "lookback_days": lookback_days,
             "overall": overall,
+            "by_track": by_track,
             "exit_breakdown": exit_breakdown,
             "stop_out_rate": round(stop_out_rate, 4),
+            "sector_stop_out_rates": sector_stop_out_rates,
             "self_healing_flags": [],
         }
 
-        # Self-healing: flag if stop-out rate exceeds 60%
+        # Self-healing: flag sectors with a premature stop-out problem (>60%).
+        MIN_SECTOR_SAMPLES = 3
+        for sec, rate in sector_stop_out_rates.items():
+            if rate > 0.60 and sector_counts.get(sec, 0) >= MIN_SECTOR_SAMPLES:
+                summary["self_healing_flags"].append({
+                    "flag": "EXCESSIVE_STOP_OUTS",
+                    "sector": sec,
+                    "rate": rate,
+                    "sample_size": sector_counts[sec],
+                    "recommendation": f"Increase required minimum gross margin and current ratio "
+                                      f"thresholds for {sec} ({rate:.0%} premature stop-outs)",
+                })
+
+        # Portfolio-wide flag when stop-outs dominate across all sectors.
         if stop_out_rate > 0.60:
             summary["self_healing_flags"].append({
                 "flag": "EXCESSIVE_STOP_OUTS",
+                "scope": "PORTFOLIO",
                 "rate": round(stop_out_rate, 4),
-                "recommendation": "Increase required minimum gross margin and current ratio "
-                                  "thresholds for affected sectors",
+                "recommendation": "Increase required minimum gross margin and current ratio thresholds",
             })
 
         return summary
@@ -729,8 +835,39 @@ def analyze_rejection_patterns(db, lookback_days: int = 90) -> Dict[str, Any]:
             reason = r.get("rejection_reason", "OPERATOR_DISCRETION")
             reason_counts[reason] = reason_counts.get(reason, 0) + 1
 
-        # Map rejection reasons to filter adjustment recommendations
+        # Map rejection reasons to filter adjustment recommendations.
+        #
+        # Two vocabularies are in circulation and BOTH must be mapped, otherwise
+        # Loop A can never fire in production:
+        #   * the current reject modal (templates/bot_focus.html) emits
+        #     VALUATION_EXCESSIVE / SECTOR_EXPOSURE_LIMIT /
+        #     VOLATILITY_MISALIGNMENT / REGULATORY_CONCERN / OPERATOR_DISCRETION
+        #   * older records (and STOCKPICKER_TECHNICAL.md) use the legacy tags
+        # OPERATOR_DISCRETION is intentionally absent: operator discretion is not
+        # a screener boundary, so it must never trigger an auto-tightening.
         REASON_TO_FILTER = {
+            # --- Current UI vocabulary (authoritative producer) ---
+            "VALUATION_EXCESSIVE": {
+                "filter": "max_valuation_multiple",
+                "action": "tighten",
+                "recommendation": "Lower max forward P/E vs sector median from 1.5x to 1.2x",
+            },
+            "SECTOR_EXPOSURE_LIMIT": {
+                "filter": "max_per_sector",
+                "action": "enforce",
+                "recommendation": "Enforce stricter sector diversification (max 1 per sector)",
+            },
+            "VOLATILITY_MISALIGNMENT": {
+                "filter": "atr_pct_ceiling",
+                "action": "tighten",
+                "recommendation": "Lower ATR/Price ceiling from 3.5% to 2.5%",
+            },
+            "REGULATORY_CONCERN": {
+                "filter": "headline_risk_gate",
+                "action": "tighten",
+                "recommendation": "Raise the regulatory/headline risk gate - require a clean news screen before advancing",
+            },
+            # --- Legacy vocabulary (still present in older records) ---
             "SPREAD_TOO_WIDE": {
                 "filter": "bid_ask_spread_pct",
                 "action": "tighten",
@@ -981,8 +1118,12 @@ def _extract_factor_scores(candidate: Dict) -> Dict[str, float]:
             "analyst_views": r"analyst=[\d.]+\s*\(([+-]?[\d.]+)\)",
             "growth_quality": r"growth_quality=[+-]?[\d.]+\s*\(([+-]?[\d.]+)\)",
             "persistence": r"persistence=\w+\s*\(([+-]?[\d.]+)\)",
-            "insider_buys": r"insider.*\(([+-]?[\d.]+)\)",
-            "congress_buys": r"congress.*\(([+-]?[\d.]+)\)",
+            # Insider reasons are emitted as insider_* OR cluster_*; the segment
+            # (bounded by the '; ' separator) must not swallow the following
+            # congress/data_quality factor, so it is anchored on the factor name
+            # and stops at the separator instead of using a greedy .*
+            "insider_buys": r"(?:insider|cluster)[a-z_]*[^;]*\(([+-]?[\d.]+)\)",
+            "congress_buys": r"congress[a-z_]*[^;]*\(([+-]?[\d.]+)\)",
         }
         for factor_name, pattern in patterns.items():
             match = re.search(pattern, reasons_str)
@@ -1083,9 +1224,18 @@ def _fetch_historical_price(ticker: str, date_str: str) -> Optional[float]:
         hist = stock.history(start=start.strftime("%Y-%m-%d"),
                              end=end.strftime("%Y-%m-%d"))
         if not hist.empty:
-            # Find closest date
-            idx = hist.index.get_indexer([target], method="nearest")[0]
-            return float(hist["Close"].iloc[idx])
+            # yfinance returns a tz-aware (exchange-local) DatetimeIndex while
+            # `target` is tz-naive. Comparing the two raises
+            # "TypeError: Cannot compare datetimes with different timezones",
+            # which silently killed every growth-pick price lookup.
+            # Normalize the index to naive dates (drop tz, keep exchange date)
+            # before doing the nearest-date lookup.
+            idx_date = hist.index
+            if getattr(idx_date, "tz", None) is not None:
+                idx_date = idx_date.tz_localize(None)
+            idx = idx_date.get_indexer([target], method="nearest")[0]
+            if idx >= 0:
+                return float(hist["Close"].iloc[idx])
     except Exception as e:
         logger.debug(f"Could not fetch historical price for {ticker} on {date_str}: {e}")
     return None

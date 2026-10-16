@@ -28,6 +28,7 @@ from google.cloud import firestore
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from stockpicker.core import fetch_all_news, rank_news, score_candidates
+from stockpicker.firestore_utils import run_stock_pick_rmw
 from stockpicker.feedback_engine import (
     archive_run_snapshots,
     run_feedback_loop,
@@ -109,6 +110,52 @@ def detect_active_sources() -> List[str]:
     return sources
 
 
+# Pick statuses that represent an operator decision (never to be discarded).
+REVIEWED_PICK_STATUSES = ('ACCEPTED', 'PROVISIONED', 'REJECTED')
+
+# Document fields holding operator review state that must survive partial writes.
+REVIEW_STATE_KEYS = ('already_accepted', 'rejected_cooldown')
+
+
+def load_review_state(db: firestore.Client) -> Dict[str, Any]:
+    """
+    Load operator review state from 'stock_picks/current' before a partial write.
+
+    Partial writes (error / empty results) only describe the outcome of *this*
+    run. They must not wipe decisions the operator already made, otherwise a
+    single failed run permanently loses every accept and reject decision.
+
+    Returns:
+        Dict containing only the fields that exist and should be carried over.
+    """
+    state: Dict[str, Any] = {}
+    try:
+        doc = db.collection('stock_picks').document('current').get()
+        if not doc.exists:
+            return state
+        data = doc.to_dict()
+        if not isinstance(data, dict):
+            return state
+
+        for key in REVIEW_STATE_KEYS:
+            value = data.get(key)
+            if isinstance(value, list) and value:
+                state[key] = value
+
+        # Decisions embedded in the picks array (hydrate_history_state reads them)
+        picks = data.get('picks')
+        if isinstance(picks, list):
+            reviewed = [
+                p for p in picks
+                if isinstance(p, dict) and p.get('status') in REVIEWED_PICK_STATUSES
+            ]
+            if reviewed:
+                state['picks'] = reviewed
+    except Exception as e:
+        logger.warning(f"Could not load existing review state (continuing without): {e}")
+    return state
+
+
 def write_empty_result(db: firestore.Client, message: str, status: str = 'no_news'):
     """
     Write empty result to Firestore (no picks generated).
@@ -120,10 +167,14 @@ def write_empty_result(db: firestore.Client, message: str, status: str = 'no_new
 
     Note:
         This is not an error - it's a valid result when no explosive news found.
+        Previously recorded review decisions are carried over.
     """
     try:
+        review_state = load_review_state(db)
         db.collection('stock_picks').document('current').set({
-            'picks': [],
+            'picks': review_state.get('picks', []),
+            'already_accepted': review_state.get('already_accepted', []),
+            'rejected_cooldown': review_state.get('rejected_cooldown', []),
             'run_timestamp': firestore.SERVER_TIMESTAMP,
             'pick_count': 0,
             'avg_explosiveness': 0.0,
@@ -146,10 +197,15 @@ def write_error_result(db: firestore.Client, error: Exception):
 
     Note:
         This ensures the dashboard shows error state rather than stale data.
+        Operator review decisions (already_accepted / rejected_cooldown /
+        reviewed picks) are carried over so a failed run cannot erase them.
     """
     try:
+        review_state = load_review_state(db)
         db.collection('stock_picks').document('current').set({
-            'picks': [],
+            'picks': review_state.get('picks', []),
+            'already_accepted': review_state.get('already_accepted', []),
+            'rejected_cooldown': review_state.get('rejected_cooldown', []),
             'run_timestamp': firestore.SERVER_TIMESTAMP,
             'pick_count': 0,
             'avg_explosiveness': 0.0,
@@ -221,6 +277,111 @@ def hydrate_history_state(db: Optional[firestore.Client]) -> Dict[str, Any]:
     except Exception as e:
         logger.warning(f"Could not hydrate history state from Firestore: {e}")
     return state
+
+
+def _parse_iso_dt(value: Any) -> Optional[datetime]:
+    """Parse an ISO-8601 timestamp (tolerating a trailing 'Z'); None on failure."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return None
+
+
+def _rejection_still_in_cooldown(entry: Dict[str, Any], cutoff: datetime) -> bool:
+    """True when a stored rejection should keep suppressing its symbol."""
+    expires = _parse_iso_dt(entry.get('cooldown_expires'))
+    if expires:
+        return expires >= cutoff
+    rejected_at = _parse_iso_dt(entry.get('rejected_at'))
+    if rejected_at is None:
+        # Unknown age - assume still cooling. Re-proposing a symbol the operator
+        # rejected is worse than suppressing it one run too long.
+        return True
+    return rejected_at >= cutoff
+
+
+def merge_review_state(
+    db: Optional[firestore.Client],
+    payload: Dict[str, Any],
+    scan_started_at: Optional[datetime] = None,
+    current: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    Merge a fresh scan payload with the HITL review state currently persisted in
+    stock_picks/current.
+
+    A scan takes minutes and the runner replaces the whole document. An operator
+    can accept or reject a lead while it runs; without this merge the scan write
+    would resurrect that lead as a fresh lead (and lose the decision). Only
+    decisions timestamped at/after the scan start are honoured - older stored
+    history was already folded into this scan by hydrate_history_state().
+
+    ``current`` lets the caller supply the review state it already read (e.g. the
+    snapshot read inside a Firestore transaction), so the caller can perform the
+    read+merge+write atomically instead of reading here and racing the write.
+    When ``current`` is None the state is read from Firestore as before.
+    """
+    if current is None:
+        if db is None:
+            return payload
+        try:
+            doc = db.collection('stock_picks').document('current').get()
+            current = (doc.to_dict() or {}) if doc.exists else {}
+        except Exception as e:
+            logger.warning(f"Could not re-read review state before write: {e}")
+            return payload
+
+    def _sym(item: Any) -> str:
+        if not isinstance(item, dict):
+            return ""
+        return (item.get('ticker') or item.get('symbol') or '').upper()
+
+    tolerance = (scan_started_at or datetime.now(timezone.utc)) - timedelta(minutes=2)
+
+    accepted = list(payload.get('already_accepted') or [])
+    acc_syms = {_sym(x) for x in accepted if _sym(x)}
+    for item in current.get('already_accepted') or []:
+        sym = _sym(item)
+        if not sym or sym in acc_syms:
+            continue
+        decided = _parse_iso_dt(item.get('accepted_at') or item.get('provisioned_at'))
+        if decided and decided >= tolerance:
+            accepted.append(item)
+            acc_syms.add(sym)
+
+    rejected = list(payload.get('rejected_cooldown') or [])
+    rej_syms = {_sym(x) for x in rejected if _sym(x)}
+    for item in current.get('rejected_cooldown') or []:
+        sym = _sym(item)
+        if not sym or sym in rej_syms:
+            continue
+        decided = _parse_iso_dt(item.get('rejected_at'))
+        if decided and decided >= tolerance:
+            rejected.append(item)
+            rej_syms.add(sym)
+
+    # A lead the operator accepted mid-scan must not be re-offered as fresh.
+    if acc_syms:
+        for key in ('actionable_leads', 'growth_picks', 'income_picks', 'picks'):
+            if isinstance(payload.get(key), list):
+                payload[key] = [x for x in payload[key] if _sym(x) not in acc_syms]
+
+    payload['already_accepted'] = accepted
+    payload['rejected_cooldown'] = rejected
+
+    summary = payload.get('summary')
+    if isinstance(summary, dict):
+        summary['already_accepted_count'] = len(accepted)
+        summary['rejected_cooldown_count'] = len(rejected)
+        summary['growth_actionable_count'] = len(payload.get('growth_picks') or [])
+        summary['income_actionable_count'] = len(payload.get('income_picks') or [])
+    payload['pick_count'] = len(payload.get('picks') or [])
+    return payload
 
 
 # =============================================================================
@@ -431,6 +592,31 @@ def run_stockpicker() -> Optional[Dict[str, Any]]:
         for inc in income_candidates:
             process_candidate(inc, "INCOME")
 
+        # Carry over operator decisions for symbols that are NOT in this run's
+        # candidate universe. Without this, an accepted/provisioned bot that the
+        # screener no longer surfaces vanishes from the document (losing its bot
+        # link) and - worse - a rejection still inside its cooldown would be
+        # forgotten, letting the symbol be re-proposed as a fresh lead.
+        for sym, prev in history_state["accepted"].items():
+            if sym in seen_symbols:
+                continue
+            entry = dict(prev) if isinstance(prev, dict) else {}
+            entry.setdefault("ticker", sym)
+            entry.setdefault("symbol", sym)
+            entry.setdefault("status", "PROVISIONED")
+            already_accepted.append(entry)
+
+        for sym, prev in history_state["rejected"].items():
+            if sym in seen_symbols:
+                continue
+            entry = dict(prev) if isinstance(prev, dict) else {}
+            if not _rejection_still_in_cooldown(entry, seven_days_ago):
+                continue
+            entry.setdefault("ticker", sym)
+            entry.setdefault("symbol", sym)
+            entry.setdefault("status", "REJECTED")
+            rejected_cooldown.append(entry)
+
         # Top 5 actionable per track
         growth_picks = actionable_growth[:5]
         income_picks = actionable_income[:5]
@@ -490,8 +676,31 @@ def run_stockpicker() -> Optional[Dict[str, Any]]:
             'status': 'success'
         }
 
-        # Write to 'current' document
-        stock_picks_ref.document('current').set(result_payload)
+        # Write to 'current' document atomically. The merge runs against the
+        # snapshot read *inside* the transaction, so an operator decision taken
+        # while this multi-minute scan was running can neither be dropped by the
+        # replacement write nor clobber a concurrent HITL write during the tiny
+        # read->write window (see stockpicker/firestore_utils.py).
+        def _mutate_picks(data):
+            merge_review_state(None, result_payload, scan_started_at=now_utc, current=data)
+            data.clear()
+            data.update(result_payload)
+            return True
+
+        try:
+            run_stock_pick_rmw(
+                _mutate_picks,
+                doc_ref=stock_picks_ref.document('current'),
+                db=db,
+                create_if_missing=True,
+            )
+        except Exception as write_err:
+            # A completed scan is expensive; never lose it to a transient
+            # Firestore error. Fall back to the previous non-atomic
+            # merge-then-set (which itself tolerates a review-state read error).
+            logger.warning(f"Atomic stock_picks/current write failed ({write_err}); retrying non-atomically")
+            result_payload = merge_review_state(db, result_payload, scan_started_at=now_utc)
+            stock_picks_ref.document('current').set(result_payload)
 
         # Step 7: Archive immutable per-pick snapshots (Phase 7 Feedback Loop)
         logger.info("Step 7: Archiving immutable per-pick snapshots...")
