@@ -29,6 +29,16 @@ UTC = timezone.utc
 # or at runtime via set_sentinel_enabled(True) / POST /api/stock-picks/sentinel/toggle.
 _SENTINEL_ENABLED = os.environ.get("SENTINEL_ENABLED", "false").lower() in ("true", "1", "yes")
 
+# Thesis-decay thresholds (design doc Section 8). Single source of truth so the
+# code, the module docstring, and the emitted flag text cannot drift apart again.
+# (Previously the flag text said 50.0 while the comparison used 45.0.)
+SENTINEL_INVALIDATION_SCORE = 50.0    # S_today < 50   -> THESIS_INVALIDATION_EXIT
+SENTINEL_MILD_DECAY_SCORE = 60.0      # S_today < 60   -> TIGHTEN_STOPS
+SENTINEL_INVALIDATION_DELTA = -30.0   # ΔS <= -30      -> THESIS_INVALIDATION_EXIT
+SENTINEL_MILD_DECAY_DELTA_LOW = -25.0  # ΔS within [-25, -10] -> TIGHTEN_STOPS
+SENTINEL_MILD_DECAY_DELTA_HIGH = -10.0
+SENTINEL_STOP_TIGHTENING_FACTOR = 0.5  # 50% tighter ATR floor on mild decay
+
 
 def is_sentinel_enabled() -> bool:
     """Check if the In-Flight Thesis Sentinel feature is currently enabled."""
@@ -76,6 +86,7 @@ def audit_in_flight_positions(db=None, force: bool = False) -> Dict[str, Any]:
                 "EMERGENCY_EXIT": 0,
             },
             "results": [],
+            "degraded": [],
         }
 
     summary = {
@@ -92,6 +103,7 @@ def audit_in_flight_positions(db=None, force: bool = False) -> Dict[str, Any]:
             "EMERGENCY_EXIT": 0,
         },
         "results": [],
+        "degraded": [],
     }
 
     # 1. Hydrate active bot positions
@@ -107,11 +119,25 @@ def audit_in_flight_positions(db=None, force: bool = False) -> Dict[str, Any]:
         symbol = pos.get("symbol", "").upper().strip()
         client_id = pos.get("client_id")
         bot_id = pos.get("bot_id") or f"{symbol.lower()}_sma"
-        strategy_track = pos.get("strategy_track", "GROWTH")
-        entry_score = float(pos.get("entry_score") or pos.get("initial_score") or 75.0)
+        strategy_track = (pos.get("strategy_track") or "GROWTH").upper()
+        entry_score = pos.get("entry_score")
+        if entry_score is None:
+            entry_score = pos.get("initial_score")
 
         if not symbol:
             continue
+
+        # ΔS requires a genuine entry score. There is no legitimate default, so
+        # instead of scoring against a fabricated baseline (the old 75.0) we
+        # skip the position and surface it for the operator.
+        if entry_score is None:
+            summary["degraded"].append({
+                "symbol": symbol,
+                "reason": "no initial_score on record - ΔS baseline unknown",
+            })
+            logger.warning(f"[SENTINEL] Skipping {symbol}: entry score unknown; cannot compute ΔS")
+            continue
+        entry_score = float(entry_score)
 
         summary["positions_checked"] += 1
         flags: List[str] = []
@@ -130,14 +156,17 @@ def audit_in_flight_positions(db=None, force: bool = False) -> Dict[str, Any]:
         delta_s = round(today_score - entry_score, 2)
 
         # 3. Track 1 & General Equity Evaluation: Thesis Decay Tiers
-        if today_score < 45.0 or delta_s <= -30.0:
+        if today_score < SENTINEL_INVALIDATION_SCORE or delta_s <= SENTINEL_INVALIDATION_DELTA:
             thesis_state = "INVALIDATED"
             action = "THESIS_INVALIDATION_EXIT"
-            flags.append(f"Score collapsed by {delta_s} pts to {today_score:.1f} (below invalidation threshold 50.0)")
-        elif -25.0 <= delta_s <= -10.0 or today_score < 60.0:
+            flags.append(
+                f"Score collapsed by {delta_s} pts to {today_score:.1f} "
+                f"(below invalidation threshold {SENTINEL_INVALIDATION_SCORE:.0f})")
+        elif (SENTINEL_MILD_DECAY_DELTA_LOW <= delta_s <= SENTINEL_MILD_DECAY_DELTA_HIGH
+              or today_score < SENTINEL_MILD_DECAY_SCORE):
             thesis_state = "MILD_DECAY"
             action = "TIGHTEN_STOPS"
-            recommended_stop_tightening = 0.5  # tighten ATR multiplier by 50%
+            recommended_stop_tightening = SENTINEL_STOP_TIGHTENING_FACTOR
             flags.append(f"Mild fundamental momentum decay: ΔS={delta_s:+.1f} pts")
         else:
             thesis_state = "HEALTHY"
@@ -154,7 +183,11 @@ def audit_in_flight_positions(db=None, force: bool = False) -> Dict[str, Any]:
                         action = "EARLY_CALL_HARVEST"
                         flags.append(f"Impending earnings release in {days_to_earnings} days (<=10d collision window)")
 
-                    atr_pct = inc_data.get("atr_pct", 0.0)
+                    # The income screener reports ATR under "est_atr_pct" in
+                    # percent units (e.g. 4.2 == 4.2%). The previous read of
+                    # "atr_pct" (a key that is never populated) always yielded
+                    # 0.0, silently disabling the volatility lockout.
+                    atr_pct = inc_data.get("est_atr_pct", 0.0)
                     if atr_pct > 3.5:
                         thesis_state = "VOLATILITY_EXPANSION"
                         if action == "HOLD":
@@ -186,9 +219,13 @@ def audit_in_flight_positions(db=None, force: bool = False) -> Dict[str, Any]:
         }
         summary["results"].append(pos_result)
 
-        # 5. Persist telemetry to Firestore if available
+        # 5a. Persist per-bot telemetry (independent documents - no race).
         if db:
-            _persist_telemetry(db, pos_result)
+            _persist_bot_telemetry(db, pos_result)
+
+    # 5b. Mirror all telemetry into stock_picks/current with a single write.
+    if db and summary["results"]:
+        _persist_current_telemetry(db, summary["results"])
 
     logger.info(f"[SENTINEL] Audit complete: checked {summary['positions_checked']} positions, "
                 f"actions: {summary['actions_summary']}")
@@ -214,8 +251,8 @@ def _hydrate_active_positions(db) -> List[Dict[str, Any]]:
                         "symbol": sym,
                         "client_id": b.get("client_id"),
                         "bot_id": b.get("name"),
-                        "strategy_track": b.get("strategy_track", "GROWTH"),
-                        "entry_score": b.get("initial_score", 75.0),
+                        "strategy_track": b.get("strategy_track"),
+                        "entry_score": b.get("initial_score"),
                     })
         except Exception as e:
             logger.warning(f"[SENTINEL] Could not read bots config at {bots_config_path}: {e}")
@@ -234,8 +271,11 @@ def _hydrate_active_positions(db) -> List[Dict[str, Any]]:
                             "symbol": sym,
                             "client_id": acc.get("client_id"),
                             "bot_id": acc.get("bot_id"),
-                            "strategy_track": acc.get("strategy_track", "GROWTH"),
-                            "entry_score": acc.get("initial_score") or acc.get("score") or 75.0,
+                            "strategy_track": acc.get("strategy_track") or acc.get("track"),
+                            "entry_score": (acc.get("initial_score")
+                                            or acc.get("composite_score")
+                                            or acc.get("fundamental_score")
+                                            or acc.get("score")),
                         })
         except Exception as e:
             logger.warning(f"[SENTINEL] Could not read already_accepted from Firestore: {e}")
@@ -244,40 +284,93 @@ def _hydrate_active_positions(db) -> List[Dict[str, Any]]:
 
 
 def _persist_telemetry(db, pos_result: Dict[str, Any]):
-    """Persist thesis telemetry to Firestore for bot execution and dashboard display."""
+    """Persist telemetry for a single position (back-compat wrapper).
+
+    Real callers use the split helpers so the `stock_picks/current` write is
+    batched once per audit instead of once per position.
+    """
+    _persist_bot_telemetry(db, pos_result)
+    _persist_current_telemetry(db, [pos_result])
+
+
+def _persist_bot_telemetry(db, pos_result: Dict[str, Any]):
+    """Write thesis telemetry to `bots/bot_{client_id}` for bot consumption."""
     symbol = pos_result["symbol"]
     client_id = pos_result.get("client_id")
     telemetry = pos_result["thesis_telemetry"]
 
-    # Write to bots collection for UniversalSMABot consumption
-    if client_id is not None:
-        try:
-            bot_doc_id = f"bot_{client_id}"
-            db.collection("bots").document(bot_doc_id).set({
-                "client_id": client_id,
-                "symbol": symbol,
-                "thesis_telemetry": telemetry,
-            }, merge=True)
-        except Exception as e:
-            logger.warning(f"[SENTINEL] Failed to write telemetry to bots/{bot_doc_id}: {e}")
+    if client_id is None:
+        return
 
-    # Update current stock picks record in Firestore
+    bot_doc_id = f"bot_{client_id}"
     try:
-        current_ref = db.collection("stock_picks").document("current")
-        doc = current_ref.get()
-        if doc.exists:
-            data = doc.to_dict() or {}
-            already_accepted = data.get("already_accepted", [])
-            for item in already_accepted:
-                if (item.get("symbol") or item.get("ticker") or "").upper() == symbol:
-                    item["current_score"] = telemetry["current_score"]
-                    item["score_delta"] = f"{telemetry['score_delta']:+.1f}"
-                    item["thesis_state"] = telemetry["thesis_state"]
-                    item["action_instruction"] = telemetry["action_instruction"]
-                    item["last_sentinel_audit"] = telemetry["last_evaluated"]
-            current_ref.update({"already_accepted": already_accepted})
+        db.collection("bots").document(bot_doc_id).set({
+            "client_id": client_id,
+            "symbol": symbol,
+            "thesis_telemetry": telemetry,
+        }, merge=True)
     except Exception as e:
-        logger.warning(f"[SENTINEL] Failed to update stock_picks/current telemetry for {symbol}: {e}")
+        logger.warning(f"[SENTINEL] Failed to write telemetry to bots/{bot_doc_id}: {e}")
+
+
+def _persist_current_telemetry(db, pos_results: List[Dict[str, Any]]):
+    """Mirror sentinel telemetry into `stock_picks/current` in ONE write.
+
+    Batching matters: the previous per-position implementation re-read and
+    rewrote the entire `already_accepted` array N times per audit, so
+    concurrent writers (accept/reject/provision) could clobber each other and
+    a single audit amplified writes linearly with the bot count. The write
+    additionally goes through `run_stock_pick_rmw`, so in production it runs
+    inside a Firestore transaction and cannot clobber a concurrent HITL
+    transition.
+    """
+    if not pos_results:
+        return
+
+    try:
+        from stockpicker.firestore_utils import run_stock_pick_rmw
+
+        updates_by_symbol = {}
+        for pr in pos_results:
+            sym = (pr.get("symbol") or "").upper().strip()
+            telemetry = pr.get("thesis_telemetry") or {}
+            if not sym:
+                continue
+            score_delta = telemetry.get("score_delta")
+            updates_by_symbol[sym] = {
+                "current_score": telemetry.get("current_score"),
+                "score_delta": (f"{score_delta:+.1f}" if score_delta is not None else None),
+                "thesis_state": telemetry.get("thesis_state"),
+                "action_instruction": telemetry.get("action_instruction"),
+                "last_sentinel_audit": telemetry.get("last_evaluated"),
+            }
+
+        if not updates_by_symbol:
+            return
+
+        current_ref = db.collection("stock_picks").document("current")
+
+        def _mutate(data):
+            already_accepted = data.get("already_accepted", [])
+            if not isinstance(already_accepted, list):
+                return False
+            changed = False
+            for item in already_accepted:
+                if not isinstance(item, dict):
+                    continue
+                sym = (item.get("symbol") or item.get("ticker") or "").upper()
+                patch = updates_by_symbol.get(sym)
+                if not patch:
+                    continue
+                for key, value in patch.items():
+                    if value is not None:
+                        item[key] = value
+                changed = True
+            return changed
+
+        run_stock_pick_rmw(_mutate, doc_ref=current_ref, db=db)
+    except Exception as e:
+        logger.warning(f"[SENTINEL] Failed to update stock_picks/current telemetry: {e}")
 
 
 def _find_bots_config() -> Optional[str]:

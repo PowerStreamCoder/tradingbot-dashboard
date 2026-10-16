@@ -327,7 +327,7 @@ def test_runner_deduping_across_dual_tracks():
 def test_api_security_symbol_sanitization():
     """Verify API rejects path traversal and malicious symbols."""
     client = TestClient(app)
-    authenticated_sessions["edge-session-456"] = datetime.now()
+    authenticated_sessions["edge-session-456"] = datetime.now() + timedelta(hours=1)
     client.cookies.set("dashboard_session", "edge-session-456")
 
     malicious_symbols = [
@@ -351,7 +351,7 @@ def test_api_security_symbol_sanitization():
 def test_api_provision_idempotency_when_already_exists(tmp_path):
     """Verify provision endpoint returns 200 with already_exists status if bot is configured."""
     client = TestClient(app)
-    authenticated_sessions["edge-session-456"] = datetime.now()
+    authenticated_sessions["edge-session-456"] = datetime.now() + timedelta(hours=1)
     client.cookies.set("dashboard_session", "edge-session-456")
 
     # Mock bots.json containing NVDA

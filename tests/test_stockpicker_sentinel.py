@@ -3,16 +3,18 @@ Unit tests for In-Flight Thesis Sentinel & Downstream Adaptive Gateway (Phase 6)
 
 Verifies:
 1. Mid-trade thesis evaluation and score delta calculation (ΔS = S_today - S_entry)
-2. Tier 1 Mild Decay (ΔS in [-10, -25]) triggering TIGHTEN_STOPS (recommended_stop_tightening = 0.5)
-3. Tier 2 Severe Drop (S < 45 or ΔS <= -30) triggering THESIS_INVALIDATION_EXIT
+2. Tier 1 Mild Decay (ΔS in [-25, -10] or S_today < 60) triggering TIGHTEN_STOPS (recommended_stop_tightening = 0.5)
+3. Tier 2 Severe Drop (S_today < 50 or ΔS <= -30) triggering THESIS_INVALIDATION_EXIT
 4. Track 2 Covered Call Volatility Expansion (ATR > 3.5%) triggering VOLATILITY_LOCKOUT
 5. Track 2 Covered Call Impending Earnings (<= 10 days) triggering EARLY_CALL_HARVEST
 6. Telemetry persistence to Firestore (bots/bot_{client_id} and stock_picks/current)
 7. Feature flag disabled-by-default behavior and dynamic runtime toggling
 """
 
+import json
+
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, mock_open
 
 from stockpicker.sentinel import audit_in_flight_positions, is_sentinel_enabled, set_sentinel_enabled
 
@@ -47,6 +49,77 @@ def enable_sentinel_for_functional_tests(request):
         set_sentinel_enabled(False)
     else:
         yield
+
+
+@patch("stockpicker.sentinel._hydrate_active_positions")
+@patch("stockpicker.core.compute_fundamental_score")
+def test_sentinel_score_50_threshold_invalidates(mock_score, mock_hydrate):
+    """F5: S_today < 50 invalidates regardless of delta (documented threshold)."""
+    mock_hydrate.return_value = [{
+        "symbol": "KTOS",
+        "client_id": 5,
+        "bot_id": "ktos_sma",
+        "strategy_track": "GROWTH",
+        "entry_score": 55.0
+    }]
+    # Only -6 ΔS, but 49 is below the 50 invalidation line.
+    mock_score.return_value = {"score": 49.0}
+
+    summary = audit_in_flight_positions(db=None)
+
+    assert summary["actions_summary"]["THESIS_INVALIDATION_EXIT"] == 1
+    assert summary["results"][0]["thesis_telemetry"]["thesis_state"] == "INVALIDATED"
+
+
+@patch("stockpicker.sentinel._hydrate_active_positions")
+def test_sentinel_skips_position_without_entry_score(mock_hydrate):
+    """F4: no entry score -> skipped & flagged, never scored against a fake 75.0."""
+    mock_hydrate.return_value = [{
+        "symbol": "KTOS",
+        "client_id": 5,
+        "bot_id": "ktos_sma",
+        "strategy_track": "GROWTH",
+        "entry_score": None
+    }]
+
+    summary = audit_in_flight_positions(db=None)
+
+    assert summary["positions_checked"] == 0
+    assert len(summary["degraded"]) == 1
+    assert summary["degraded"][0]["symbol"] == "KTOS"
+    assert summary["results"] == []
+
+
+def test_sentinel_hydrate_uses_real_track_and_score(tmp_path):
+    """F3/F4 regression: strategy_track & initial_score come from the registry.
+
+    Exercises the REAL hydration path (bots.json) rather than patching
+    _hydrate_active_positions, so the INCOME track actually engages Track 2.
+    """
+    cfg = {
+        "bots": [{
+            "name": "jnj_sma",
+            "symbol": "JNJ",
+            "client_id": 8,
+            "strategy_track": "INCOME",
+            "initial_score": 78.0,
+        }]
+    }
+
+    with patch("stockpicker.sentinel._find_bots_config", return_value=str(tmp_path / "bots.json")), \
+         patch("os.path.exists", return_value=True), \
+         patch("builtins.open", mock_open(read_data=json.dumps(cfg))), \
+         patch("stockpicker.core.compute_fundamental_score", return_value={"score": 78.0}), \
+         patch("stockpicker.income_screener.evaluate_covered_call_candidate",
+               return_value={"days_to_earnings": 45, "est_atr_pct": 4.2}):
+        summary = audit_in_flight_positions(db=None)
+
+    assert summary["positions_checked"] == 1
+    assert summary["degraded"] == []
+    assert summary["actions_summary"]["VOLATILITY_LOCKOUT"] == 1
+    res = summary["results"][0]
+    assert res["strategy_track"] == "INCOME"
+    assert res["thesis_telemetry"]["entry_score"] == 78.0
 
 
 @patch("stockpicker.sentinel._hydrate_active_positions")
@@ -143,7 +216,7 @@ def test_sentinel_track2_earnings_collision(mock_score, mock_cc, mock_hydrate):
     # Earnings report in 5 days!
     mock_cc.return_value = {
         "days_to_earnings": 5,
-        "atr_pct": 1.2
+        "est_atr_pct": 1.2
     }
 
     summary = audit_in_flight_positions(db=None)
@@ -173,7 +246,7 @@ def test_sentinel_track2_volatility_lockout(mock_score, mock_cc, mock_hydrate):
     # ATR spiked to 4.2% (> 3.5% ceiling)
     mock_cc.return_value = {
         "days_to_earnings": 45,
-        "atr_pct": 4.2
+        "est_atr_pct": 4.2
     }
 
     summary = audit_in_flight_positions(db=None)

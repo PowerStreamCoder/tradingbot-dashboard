@@ -601,7 +601,11 @@ def get_finnhub_insider_trades(ticker: str) -> Dict[str, Any]:
             val_str = f"${buy_value/1e6:.1f}M" if buy_value >= 1e6 else f"${buy_value/1e3:.0f}k"
             reason = f'cluster_buying: {buy_shares:,} shares ({val_str}, {distinct_buyers} buyers) (+{insider_score:.1f})'
         elif buy_shares > 10000 or buy_value >= 50000:
-            insider_score = round(INSIDER_BUYS_WEIGHT * 0.5 * cluster_multiplier, 1)
+            # Cap at the factor weight: cluster_multiplier grows with the
+            # number of distinct buyers, so an uncapped value here could add
+            # far more points than the factor's weight (and exceed the
+            # normalization denominator).
+            insider_score = min(INSIDER_BUYS_WEIGHT, round(INSIDER_BUYS_WEIGHT * 0.5 * cluster_multiplier, 1))
             reason = f'insider_buying: {buy_shares:,} shares (+{insider_score:.1f})'
         elif buy_shares > 0:
             insider_score = round(INSIDER_BUYS_WEIGHT * 0.25, 1)
@@ -1098,13 +1102,42 @@ def get_sec_ticker_map() -> Dict[str, str]:
         mp = {str(v['ticker']).upper(): str(v['cik_str']).zfill(10) for v in data.values()}
         _fundamental_cache['sec_ticker_map'] = mp
 
+        # The same payload carries the registrant title - cache it too so name
+        # based lookups (e.g. USAspending recipient search) cost no extra download.
+        names: Dict[str, str] = {}
+        for v in data.values():
+            t = str(v.get('ticker', '')).upper().strip()
+            title = str(v.get('title', '')).strip()
+            if t and title:
+                names[t] = title
+        _fundamental_cache['sec_company_names'] = names
+
         logger.info(f"Loaded SEC ticker map: {len(mp)} companies")
         return mp
 
     except Exception as e:
         logger.warning(f"Failed to fetch SEC ticker map: {e}")
         _fundamental_cache['sec_ticker_map'] = {}
+        _fundamental_cache.setdefault('sec_company_names', {})
         return {}
+
+
+def get_sec_company_name(ticker: str) -> str:
+    """
+    Resolve a ticker to its official SEC registrant name (cached).
+
+    Returns:
+        Company name, or "" when the ticker is unknown. Callers should skip
+        any name based search (e.g. USAspending recipient lookups) on "" -
+        searching by a bare ticker symbol fabricates matches.
+    """
+    try:
+        get_sec_ticker_map()  # populates the name cache as a side effect
+    except Exception as e:
+        logger.debug(f"Could not resolve SEC company name for {ticker}: {e}")
+        return ""
+    return (_fundamental_cache.get('sec_company_names') or {}).get(
+        str(ticker).upper().strip(), "")
 
 
 def get_companyfacts_quarterly(ticker: str) -> Dict[str, List]:
@@ -1744,24 +1777,47 @@ def compute_fundamental_score(ticker: str, weight_adjustments: Optional[Dict[str
         congress_data = {"congress_score": 0.0, "trade_count": 0, "reason": "congress feed unverified"}
         congress_score = 0.0
 
-    # Clamp score before normalization
+    # Clamp the raw score to a sane band. Negative values are legitimate - a
+    # distressed company scores BELOW the neutral baseline - so the old
+    # `max(0, ...)` floor collapsed every below-baseline company onto 0.
     raw_score = score
-    score = max(0, min(500, round(score, 2)))  # Allow higher range for normalization
+    score = max(-500, min(500, round(score, 2)))
 
-    # Normalize to 0-100 range (preserves relative weights)
-    MAX_POSSIBLE_SCORE = (
-        w_rel_vol * 10 +
-        w_price_1d +
-        w_analyst +
-        w_insider +
-        w_congress +
-        w_growth +
-        w_persistence +
-        100
-    )  # Total: ~335 points
+    # Normalize to 0-100 around the neutral baseline:
+    #   - neutral / no-data company    -> 50  (equals BASELINE_FUNDAMENTAL_SCORE,
+    #     which the all-APIs-failed fallback and the sentinel thresholds assume)
+    #   - every factor at its best     -> 100
+    #   - every factor at its worst    -> 0
+    # The scale factors are the theoretical maxima of |score - baseline| for
+    # each factor. (The old version divided by a constant ~335 and multiplied
+    # w_rel_vol by 10, so a neutral company normalized to ~15/100 while the
+    # fallback path emitted a raw 50 - inverting their relative ranking.)
+    POSITIVE_DEVIATION_MAX = (
+        70                # base factors: rev 20 + net 8 + op 6 + gross 8 + opm 10 + D/E 4 + CR 4 + EPS 10
+        + w_rel_vol       # relative volume            (max +w)
+        + w_price_1d      # 1-day price confirmation   (max +/-w)
+        + w_analyst * 0.5 # analyst views              (max +/-0.5w)
+        + w_growth * 0.5  # growth quality             (max +/-0.5w)
+        + w_persistence   # MA persistence             (max +/-w)
+        + w_insider       # insider cluster buying     (capped at +w)
+        + w_congress      # congressional buying       (capped at +w, never negative)
+    )
+    NEGATIVE_DEVIATION_MAX = (
+        56                # base factors: rev 15 + net 8 + op 6 + gross 5 + opm 6 + D/E 4 + CR 4 + EPS 8
+        + w_rel_vol * 0.5
+        + w_price_1d
+        + w_analyst * 0.5
+        + w_growth * 0.5
+        + w_persistence
+        + w_insider * 0.5  # insider selling is capped at -0.5w
+    )
 
-    normalized_score = (score / MAX_POSSIBLE_SCORE) * 100
-    normalized_score = max(0, min(100, round(normalized_score, 2)))
+    deviation = score - BASELINE_FUNDAMENTAL_SCORE
+    if deviation >= 0:
+        normalized_score = BASELINE_FUNDAMENTAL_SCORE + 50.0 * (deviation / POSITIVE_DEVIATION_MAX)
+    else:
+        normalized_score = BASELINE_FUNDAMENTAL_SCORE + 50.0 * (deviation / NEGATIVE_DEVIATION_MAX)
+    normalized_score = max(0.0, min(100.0, round(normalized_score, 2)))
 
     # Data Quality & Missing Source Tracking
     missing_sources = []
@@ -1801,6 +1857,7 @@ def compute_fundamental_score(ticker: str, weight_adjustments: Optional[Dict[str
         'ticker': ticker,
         'score': normalized_score,  # Use normalized score
         'raw_score': raw_score,     # Keep raw for debugging
+        'current_price': current_price,  # Snapshot price (entry price for the feedback loop)
         'data_quality': data_quality,
         'is_degraded': is_degraded,
         'missing_sources': missing_sources,
@@ -1863,7 +1920,9 @@ def build_evidence_dossier(
     alt_data_failed = False
     try:
         from .alternative_data_client import fetch_alternative_catalysts
-        alt_data = fetch_alternative_catalysts(ticker)
+        # USAspending matches on recipient name, not ticker symbol - resolve the
+        # registrant name from the SEC ticker map so the contract search is real.
+        alt_data = fetch_alternative_catalysts(ticker, company_name=get_sec_company_name(ticker))
     except Exception as e:
         logger.debug(f"Alternative data fetch failed for {ticker}: {e}")
         alt_data_failed = True
@@ -1970,6 +2029,7 @@ def build_evidence_dossier(
 
     dossier = {
         "sec_filing_url": sec_url,
+        "current_price": fundamentals.get("current_price"),
         "data_quality": data_quality,
         "is_degraded": is_degraded,
         "missing_sources": dossier_missing,
@@ -2120,6 +2180,10 @@ def score_candidates(
                 'explosiveness': explosiveness,
                 'fundamental_score': best_fundamentals.get('score'),
                 'composite_score': round(best_score, 2),
+                # Snapshot price: archive_pick_snapshot() reads this as
+                # entry_price, which the feedback loop needs to compute
+                # forward returns for growth picks.
+                'current_price': best_fundamentals.get('current_price'),
                 'strategy_track': 'GROWTH',
                 'status': 'PENDING_REVIEW',
                 'evidence_dossier': dossier,

@@ -188,7 +188,7 @@ class TestStockpickerSentinelGaps:
         mock_doc_fail.to_dict.return_value = {"already_accepted": [{"symbol": "NVDA"}]}
         mock_current_ref = MagicMock()
         mock_current_ref.get.return_value = mock_doc_fail
-        mock_current_ref.update.side_effect = Exception("update fail")
+        mock_current_ref.set.side_effect = Exception("set fail")
         mock_db_fail.collection("stock_picks").document.return_value = mock_current_ref
 
         pos_result = {

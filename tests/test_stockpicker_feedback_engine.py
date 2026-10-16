@@ -65,9 +65,14 @@ def test_extract_factor_scores():
         "current_ratio": 1.5,
         "eps_surprise": 0.12,
         "recommendation_mean": 1.8,
+        # Exactly the magnitudes/shapes emitted by core.get_insider_transactions
+        # and alternative_data_client - there is deliberately no fabricated
+        # "insider_score=..." token, because no producer ever emits one.
         "fundamental_reasons": (
             "rel_vol=2.10x (+4.0); 1d_price=+3.5% (+35.0); analyst=1.8 (+20.0); "
-            "growth_quality=25.0 (+12.5); persistence=uptrend (+15.0); insider_score=+10.0 (+10.0)"
+            "growth_quality=25.0 (+12.5); persistence=uptrend (+15.0); "
+            "cluster_buying: 1,250,000 shares ($5.0M, 2 buyers) (+12.0); "
+            "congress_buys=3 trades (2 members) (+5.0)"
         )
     }
     extracted = _extract_factor_scores(candidate)
@@ -79,7 +84,10 @@ def test_extract_factor_scores():
     assert extracted["analyst_views"] == 20.0
     assert extracted["growth_quality"] == 12.5
     assert extracted["persistence"] == 15.0
-    assert extracted["insider_buys"] == 10.0
+    assert extracted["insider_buys"] == 12.0
+    # Regression for the greedy-regex fix: the insider pattern must stop at the
+    # "; " separator instead of swallowing the congress factor that follows it.
+    assert extracted["congress_buys"] == 5.0
 
 
 def test_archive_pick_snapshot():
@@ -138,31 +146,41 @@ def test_archive_run_snapshots():
 
 
 @patch("stockpicker.feedback_engine._fetch_historical_price")
-@patch("stockpicker.feedback_engine._fetch_current_price")
-def test_compute_forward_alpha(mock_curr, mock_hist):
-    """Verify forward alpha calculation against benchmark."""
-    def price_side_effect(ticker):
-        if ticker == "KTOS":
-            return 33.0  # (33 - 30) / 30 = +10.0%
-        if ticker == "SPY":
-            return 510.0  # (510 - 500) / 500 = +2.0%
-        return 100.0
+def test_compute_forward_alpha(mock_hist):
+    """Each horizon is measured at its OWN target date (no mislabeling).
 
-    mock_curr.side_effect = price_side_effect
-    mock_hist.return_value = 500.0  # SPY entry price
+    Regression: the previous implementation stamped the *same* return into
+    every open horizon once enough days had elapsed, so alpha_t1 == alpha_t5.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    run_dt = datetime.now(timezone.utc) - timedelta(days=15)
+    run_date_str = run_dt.date().isoformat()
+    d1 = (run_dt + timedelta(days=1)).date().isoformat()
+    d5 = (run_dt + timedelta(days=5)).date().isoformat()
+
+    # SPY entry = 500; +1d = 505 (+1.0%); +5d = 510 (+2.0%)
+    # KTOS entry = 30; +1d = 31 (+3.333%); +5d = 33 (+10.0%)
+    price_by_key = {
+        ("SPY", run_date_str): 500.0,
+        ("SPY", d1): 505.0,
+        ("SPY", d5): 510.0,
+        ("KTOS", d1): 31.0,
+        ("KTOS", d5): 33.0,
+    }
+    mock_hist.side_effect = lambda ticker, date_str: price_by_key.get((ticker, date_str))
 
     mock_db = MagicMock()
     mock_doc = MagicMock()
-    mock_doc.id = "2026-10-01_KTOS"
+    mock_doc.id = f"{run_date_str}_KTOS"
     mock_doc.to_dict.return_value = {
         "symbol": "KTOS",
         "ticker": "KTOS",
-        "run_date": "2026-10-01",
+        "run_date": run_date_str,
         "entry_price": 30.0,
         "alpha_t1": None,
         "alpha_t5": None,
         "alpha_t20": None,
-        "benchmark_returns": {"SPY_entry": 500.0},
         "forward_prices": {},
     }
 
@@ -182,8 +200,13 @@ def test_compute_forward_alpha(mock_curr, mock_hist):
     mock_doc_ref.update.assert_called_once()
     update_data = mock_doc_ref.update.call_args[0][0]
 
-    assert "alpha_t1" in update_data
-    assert pytest.approx(update_data["alpha_t1"], 0.01) == 0.08
+    # t+1: +3.333% minus +1.0% = +2.333%
+    assert update_data["alpha_t1"] == pytest.approx((31.0 - 30.0) / 30.0 - (505.0 - 500.0) / 500.0, abs=1e-6)
+    # t+5: +10.0% minus +2.0% = +8.0%
+    assert update_data["alpha_t5"] == pytest.approx(0.08, abs=1e-6)
+    # t+20 not reached yet (15 days elapsed) -> must NOT be stamped
+    assert "alpha_t20" not in update_data
+    assert update_data["forward_prices"] == {"t1d": 31.0, "t5d": 33.0}
 
 
 def test_compute_factor_ic_ledger_and_weight_adaptation():
@@ -309,35 +332,83 @@ def test_compute_execution_summary():
     assert summary["overall"]["total_trades"] == 4
     assert summary["overall"]["win_rate"] == 0.75
     assert summary["overall"]["total_pnl"] == 900.0
+    assert summary["overall"]["sharpe_approx"] is not None
     assert "profit_target_hit" in summary["exit_breakdown"]
     assert summary["exit_breakdown"]["profit_target_hit"]["count"] == 2
 
+    # Per-track split comes from feedback metadata {strategy_track}
+    assert summary["by_track"]["GROWTH"]["count"] == 3
+    assert summary["by_track"]["INCOME"]["count"] == 1
+
+    # Sector-level attribution comes from feedback metadata {sector}
+    assert summary["sector_stop_out_rates"]["Aerospace"] == 0.5
+    assert summary["sector_stop_out_rates"]["Tech"] == 0.0
+
 
 def test_analyze_rejection_patterns():
-    """Verify rejection reason frequency analysis and filter adjustment recommendations."""
+    """Reject reasons come from the current reject modal (templates/bot_focus.html)
+    and must map to the matching screener boundary (Loop A / design doc 7.2)."""
     mock_db = MagicMock()
     mock_doc = MagicMock()
     mock_doc.exists = True
     mock_doc.to_dict.return_value = {
         "rejected_cooldown": [
-            {"rejection_reason": "HIGH_DEBT"},
-            {"rejection_reason": "HIGH_DEBT"},
-            {"rejection_reason": "HIGH_DEBT"},
-            {"rejection_reason": "POOR_MARGINS"},
-            {"rejection_reason": "POOR_MARGINS"},
+            {"symbol": "AAA", "rejection_reason": "VALUATION_EXCESSIVE"},
+            {"symbol": "BBB", "rejection_reason": "VALUATION_EXCESSIVE"},
+            {"symbol": "CCC", "rejection_reason": "VALUATION_EXCESSIVE"},
+            {"symbol": "DDD", "rejection_reason": "VOLATILITY_MISALIGNMENT"},
+            {"symbol": "EEE", "rejection_reason": "OPERATOR_DISCRETION"},
         ]
     }
     mock_db.collection.return_value.document.return_value.get.return_value = mock_doc
 
     analysis = analyze_rejection_patterns(mock_db)
     assert analysis["total_rejections"] == 5
-    assert analysis["reason_patterns"]["HIGH_DEBT"]["count"] == 3
-    assert len(analysis["recommended_filter_adjustments"]) >= 1
+    assert analysis["reason_patterns"]["VALUATION_EXCESSIVE"]["count"] == 3
+    assert analysis["reason_patterns"]["OPERATOR_DISCRETION"]["count"] == 1
 
-    rec_adjustments = analysis["recommended_filter_adjustments"]
-    assert any(a.get("filter") == "max_debt_to_equity" for a in rec_adjustments)
-    debt_adj = next(a for a in rec_adjustments if a.get("filter") == "max_debt_to_equity")
-    assert debt_adj["action"] == "tighten"
+    recs = analysis["recommended_filter_adjustments"]
+    # Only the 60% VALUATION_EXCESSIVE reason clears the >40% bar.
+    assert len(recs) == 1
+    assert recs[0]["filter"] == "max_valuation_multiple"
+    assert recs[0]["action"] == "tighten"
+    assert recs[0]["rejection_rate"] == 0.6
+
+
+def test_operator_discretion_never_auto_tunes():
+    """OPERATOR_DISCRETION is not a tunable screener boundary: even when it is
+    the dominant reason it must not emit a filter adjustment."""
+    mock_db = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.exists = True
+    mock_doc.to_dict.return_value = {
+        "rejected_cooldown": [
+            {"rejection_reason": "OPERATOR_DISCRETION"},
+            {"rejection_reason": "OPERATOR_DISCRETION"},
+            {"rejection_reason": "OPERATOR_DISCRETION"},
+        ]
+    }
+    mock_db.collection.return_value.document.return_value.get.return_value = mock_doc
+
+    analysis = analyze_rejection_patterns(mock_db)
+    assert analysis["total_rejections"] == 3
+    assert analysis["recommended_filter_adjustments"] == []
+
+
+def test_legacy_rejection_vocab_still_maps():
+    """Historical records predate the current reject modal; the legacy tags must
+    still resolve to a boundary so old feedback remains actionable."""
+    mock_db = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.exists = True
+    mock_doc.to_dict.return_value = {
+        "rejected_cooldown": [{"rejection_reason": "HIGH_DEBT"} for _ in range(3)]
+    }
+    mock_db.collection.return_value.document.return_value.get.return_value = mock_doc
+
+    analysis = analyze_rejection_patterns(mock_db)
+    filters = {a["filter"] for a in analysis["recommended_filter_adjustments"]}
+    assert "max_debt_to_equity" in filters
 
 
 def test_cleanup_stale_archives():

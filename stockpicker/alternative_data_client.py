@@ -30,6 +30,143 @@ _congressional_cache: Dict[str, Any] = {"data": None, "timestamp": None}
 CONGRESSIONAL_CACHE_TTL = 3600  # 1 hour cache
 
 
+def _iso_date(value: Any) -> str:
+    """
+    Normalize a disclosure date to YYYY-MM-DD so lexicographic comparison
+    against the lookback cutoff works. Accepts ISO and US MM/DD/YYYY forms.
+    """
+    s = str(value or "").strip()
+    if not s:
+        return ""
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y"):
+        try:
+            return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return s
+
+
+def _fetch_stockwatcher_feed(url: str, chamber: str, timeout: int = 10) -> Optional[List[Dict[str, Any]]]:
+    """
+    Download one StockWatcher S3 disclosure file and map it onto the House schema.
+
+    Returns:
+        Normalized rows, or None when the feed could not be retrieved at all
+        (so the caller can keep previously cached data instead of overwriting
+        it with an empty list).
+    """
+    try:
+        r = requests.get(url, timeout=timeout)
+        if r.status_code != 200:
+            logger.warning(f"[STOCKWATCHER] {chamber} feed returned HTTP {r.status_code}")
+            return None
+        rows = r.json()
+        if not isinstance(rows, list):
+            logger.warning(f"[STOCKWATCHER] {chamber} feed returned unexpected payload")
+            return None
+    except Exception as e:
+        logger.warning(f"[STOCKWATCHER] Failed to fetch {chamber} disclosures: {e}")
+        return None
+
+    normalized: List[Dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        nrow = dict(row)
+        if chamber == "Senate":
+            # Senate Stock Watcher uses `senator` / `date` where House uses
+            # `representative` / `transaction_date`. Without this mapping the
+            # Senate feed was silently unusable (the constant was never
+            # referenced), so only House trades ever reached the scorer.
+            nrow.setdefault("representative", row.get("senator") or "U.S. Senator")
+            nrow.setdefault("transaction_date", row.get("date") or "")
+        nrow["transaction_date"] = _iso_date(nrow.get("transaction_date"))
+        nrow["chamber"] = chamber
+        normalized.append(nrow)
+    return normalized
+
+
+def fetch_congressional_trades(ticker: str, days: int = 60) -> List[Dict[str, Any]]:
+    """
+    Fetch bipartisan Congressional stock trades from public disclosure feeds (Free Public S3).
+
+    Both chambers are fetched (House Stock Watcher + Senate Stock Watcher) and
+    de-duplicated, so `chamber` reflects the real source of each disclosure.
+
+    Args:
+        ticker: Symbol ticker (e.g. 'KTOS', 'NVDA')
+        days: Lookback window in days
+
+    Returns:
+        List of matching Congressional purchases within the window.
+    """
+    now = datetime.now(UTC)
+
+    # Refresh cached transactions if expired
+    cached_time = _congressional_cache.get("timestamp")
+    if not cached_time or (now - cached_time).total_seconds() > CONGRESSIONAL_CACHE_TTL:
+        logger.info("[STOCKWATCHER] Refreshing congressional disclosures cache (House + Senate)...")
+        house = _fetch_stockwatcher_feed(HOUSE_STOCK_WATCHER_URL, "House") or []
+        senate = _fetch_stockwatcher_feed(SENATE_STOCK_WATCHER_URL, "Senate") or []
+
+        if house or senate:
+            # De-duplicate across feeds (identical rows, and defensive against
+            # a feed mirroring the other's schema).
+            merged: List[Dict[str, Any]] = []
+            seen: set = set()
+            for tx in house + senate:
+                key = (
+                    str(tx.get("ticker", "")).upper(),
+                    str(tx.get("representative", "")),
+                    str(tx.get("transaction_date", "")),
+                    str(tx.get("type", "")).lower(),
+                    str(tx.get("amount", "")),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(tx)
+            _congressional_cache["data"] = merged
+            _congressional_cache["timestamp"] = now
+        elif _congressional_cache.get("timestamp") is None:
+            # Nothing cached yet and both feeds failed: remember the empty
+            # result so a burst of candidates does not hammer S3, but leave the
+            # door open for the next refresh cycle (timestamp stays None ->
+            # retried on the next call once the TTL guard below is bypassed).
+            _congressional_cache.setdefault("data", [])
+        # Both feeds failed while data already exists: keep the stale-but-valid
+        # rows and do NOT stamp the timestamp (a transient outage used to pin an
+        # empty list for a full hour).
+
+    transactions = _congressional_cache.get("data") or []
+    cutoff_date = (now - timedelta(days=days)).strftime("%Y-%m-%d")
+
+    matching = []
+    ticker_clean = ticker.upper().strip()
+
+    for tx in transactions:
+        tx_ticker = str(tx.get("ticker", "")).upper().strip()
+        if tx_ticker != ticker_clean:
+            continue
+
+        tx_date = str(tx.get("transaction_date", ""))
+        if tx_date < cutoff_date:
+            continue
+
+        tx_type = str(tx.get("type", "")).lower()
+        if "purchase" in tx_type or "buy" in tx_type:
+            matching.append({
+                "representative": tx.get("representative", "U.S. Representative"),
+                "transaction_date": tx_date,
+                "disclosure_date": tx.get("disclosure_date", ""),
+                "amount": tx.get("amount", "$15,001 - $50,000"),
+                "type": "purchase",
+                "chamber": tx.get("chamber", "House"),
+            })
+
+    return matching[:5]
+
+
 def fetch_usaspending_contracts(recipient_name: str, days: int = 90) -> List[Dict[str, Any]]:
     """
     Fetch federal procurement contract awards from USAspending.gov (100% Free Public API).
@@ -92,62 +229,6 @@ def fetch_usaspending_contracts(recipient_name: str, days: int = 90) -> List[Dic
     except Exception as e:
         logger.warning(f"[USASPENDING] Failed to query contracts for {recipient_name}: {e}")
         return []
-
-
-def fetch_congressional_trades(ticker: str, days: int = 60) -> List[Dict[str, Any]]:
-    """
-    Fetch bipartisan Congressional stock trades from public disclosure feeds (Free Public S3).
-
-    Args:
-        ticker: Symbol ticker (e.g. 'KTOS', 'NVDA')
-        days: Lookback window in days
-
-    Returns:
-        List of matching Congressional purchases within the window.
-    """
-    now = datetime.now(UTC)
-
-    # Refresh cached transactions if expired
-    cached_time = _congressional_cache.get("timestamp")
-    if not cached_time or (now - cached_time).total_seconds() > CONGRESSIONAL_CACHE_TTL:
-        try:
-            logger.info("[STOCKWATCHER] Refreshing congressional disclosures cache...")
-            r = requests.get(HOUSE_STOCK_WATCHER_URL, timeout=10)
-            if r.status_code == 200:
-                _congressional_cache["data"] = r.json()
-            else:
-                _congressional_cache["data"] = []
-            _congressional_cache["timestamp"] = now
-        except Exception as e:
-            logger.warning(f"[STOCKWATCHER] Failed to fetch House disclosures: {e}")
-
-    transactions = _congressional_cache.get("data") or []
-    cutoff_date = (now - timedelta(days=days)).strftime("%Y-%m-%d")
-
-    matching = []
-    ticker_clean = ticker.upper().strip()
-
-    for tx in transactions:
-        tx_ticker = str(tx.get("ticker", "")).upper().strip()
-        if tx_ticker != ticker_clean:
-            continue
-
-        tx_date = str(tx.get("transaction_date", ""))
-        if tx_date < cutoff_date:
-            continue
-
-        tx_type = str(tx.get("type", "")).lower()
-        if "purchase" in tx_type or "buy" in tx_type:
-            matching.append({
-                "representative": tx.get("representative", "U.S. Representative"),
-                "transaction_date": tx_date,
-                "disclosure_date": tx.get("disclosure_date", ""),
-                "amount": tx.get("amount", "$15,001 - $50,000"),
-                "type": "purchase",
-                "chamber": "House",
-            })
-
-    return matching[:5]
 
 
 def _parse_congress_bracket_weight(amt_str: str) -> float:
@@ -291,7 +372,17 @@ def fetch_alternative_catalysts(ticker: str, company_name: str = "") -> Dict[str
     ticker_clean = ticker.upper().strip()
     search_name = company_name or ticker_clean
 
-    contracts = fetch_usaspending_contracts(search_name)
+    if search_name and search_name != ticker_clean:
+        # USAspending matches on recipient NAME text. Searching by a bare ticker
+        # symbol ("KTOS", "LMT") fuzzy-matches unrelated recipients and reports
+        # fabricated contract catalysts, so the lookup is skipped unless a real
+        # company name is available.
+        contracts = fetch_usaspending_contracts(search_name)
+    else:
+        logger.debug(
+            f"[USASPENDING] Skipping {ticker_clean}: no company name available for recipient search"
+        )
+        contracts = []
     congress = fetch_congressional_trades(ticker_clean)
 
     # If QuiverQuant is available, optionally enrich
