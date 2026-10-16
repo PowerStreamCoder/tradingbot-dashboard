@@ -2882,3 +2882,206 @@ td.loss {
     font-weight: 600;
 }
 
+/* =============================================================================
+   Bot Switch Section & Table Loading Indicators
+   ============================================================================= */
+
+/* Header alignment helper for title + badge */
+.tile-title-group {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+/* Global status pill in bot-header metadata */
+.bot-switch-status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    background: rgba(56, 189, 248, 0.14);
+    border: 1px solid rgba(56, 189, 248, 0.4);
+    border-radius: 20px;
+    color: #38bdf8;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    box-shadow: 0 0 12px rgba(56, 189, 248, 0.2);
+    backdrop-filter: blur(8px);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    animation: fadeInSlide 0.25s ease-out;
+}
+
+.bot-switch-status-pill.updated {
+    background: rgba(34, 197, 94, 0.14);
+    border-color: rgba(34, 197, 94, 0.4);
+    color: #4ade80;
+    box-shadow: 0 0 12px rgba(34, 197, 94, 0.2);
+}
+
+/* Section-level switch badge */
+.section-switch-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    background: rgba(56, 189, 248, 0.12);
+    border: 1px solid rgba(56, 189, 248, 0.35);
+    border-radius: 12px;
+    color: #38bdf8;
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    animation: fadeInSlide 0.25s ease-out;
+    box-shadow: 0 0 10px rgba(56, 189, 248, 0.12);
+    backdrop-filter: blur(6px);
+    transition: opacity 0.3s ease, transform 0.3s ease, background 0.3s ease, border-color 0.3s ease;
+    vertical-align: middle;
+}
+
+.section-switch-badge.updated {
+    background: rgba(34, 197, 94, 0.12);
+    border-color: rgba(34, 197, 94, 0.35);
+    color: #4ade80;
+    box-shadow: 0 0 10px rgba(34, 197, 94, 0.15);
+}
+
+.section-switch-badge.error {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.35);
+    color: #f87171;
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.15);
+}
+
+.section-switch-badge .badge-spinner {
+    width: 10px;
+    height: 10px;
+    border: 2px solid rgba(56, 189, 248, 0.25);
+    border-top-color: #38bdf8;
+    border-radius: 50%;
+    animation: switchSpinnerRotate 0.8s linear infinite;
+    display: inline-block;
+    flex-shrink: 0;
+}
+
+.bot-switch-status-pill .badge-spinner {
+    width: 10px;
+    height: 10px;
+    border: 2px solid rgba(56, 189, 248, 0.25);
+    border-top-color: #38bdf8;
+    border-radius: 50%;
+    animation: switchSpinnerRotate 0.8s linear infinite;
+    display: inline-block;
+    flex-shrink: 0;
+}
+
+.section-switch-badge .badge-icon {
+    font-size: 0.75rem;
+    line-height: 1;
+}
+
+.section-switch-badge .badge-text {
+    white-space: nowrap;
+}
+
+/* Spinner for tables & containers */
+.section-switch-spinner {
+    width: 24px;
+    height: 24px;
+    border: 2.5px solid rgba(56, 189, 248, 0.2);
+    border-top-color: #38bdf8;
+    border-radius: 50%;
+    animation: switchSpinnerRotate 0.8s linear infinite;
+    display: inline-block;
+}
+
+@keyframes switchSpinnerRotate {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes fadeInSlide {
+    from {
+        opacity: 0;
+        transform: translateY(-3px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Table switch loading rows */
+.table-switch-loading {
+    text-align: center;
+    padding: 34px 16px !important;
+    background: rgba(15, 23, 42, 0.55) !important;
+    border: none !important;
+}
+
+.table-switch-spinner-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 6px 0;
+}
+
+.table-switch-text {
+    font-size: 0.92rem;
+    color: #f1f5f9;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+}
+
+.table-switch-subtext {
+    font-size: 0.78rem;
+    color: #64748b;
+    font-weight: 400;
+}
+
+.switch-symbol-hl {
+    color: #38bdf8;
+    font-weight: 700;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* Logs switch placeholder */
+.logs-switch-placeholder {
+    padding: 32px 16px;
+    text-align: center;
+    background: rgba(15, 23, 42, 0.45);
+    border-radius: 8px;
+    margin: 8px 0;
+}
+
+/* Chart loading overlay during switch */
+.chart-switch-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(11, 15, 25, 0.82);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    z-index: 20;
+    border-radius: 8px;
+    transition: opacity 0.25s ease;
+}
+
+/* Tile border accent during active bot switch */
+.tile.tile-bot-switching {
+    border-color: rgba(56, 189, 248, 0.3) !important;
+    box-shadow: 0 4px 20px rgba(56, 189, 248, 0.08) !important;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
