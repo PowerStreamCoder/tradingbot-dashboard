@@ -73,7 +73,16 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Bot Control API endpoint URL (default to VM IP)
-BOT_CONTROL_API_URL = os.environ.get("BOT_CONTROL_API_URL", "http://136.115.134.1:8080")
+BOT_CONTROL_API_URL = os.environ.get("BOT_CONTROL_API_URL", "http://34.46.214.78:8080")
+BOT_CONTROL_API_KEY = os.environ.get("BOT_CONTROL_API_KEY", "")
+
+
+def _bot_control_headers() -> Dict[str, str]:
+    """Return headers for Bot Control API requests including API key if configured."""
+    headers = {}
+    if BOT_CONTROL_API_KEY:
+        headers["X-API-Key"] = BOT_CONTROL_API_KEY
+    return headers
 
 
 # Session storage for authenticated users (Firestore-backed for persistence)
@@ -2309,7 +2318,10 @@ async def stop_bots():
     try:
         # Call VM API to stop bots
         async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.post(f'{BOT_CONTROL_API_URL}/stop-bots')
+            response = await client.post(
+                f'{BOT_CONTROL_API_URL}/stop-bots',
+                headers=_bot_control_headers()
+            )
             if response.is_success:
                 data = response.json()
                 return {"status": data.get("status", "success"), "message": data.get("message", "Bots stopped")}
@@ -2338,7 +2350,10 @@ async def restart_bots():
     try:
         # Call VM API to restart bots
         async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.post(f'{BOT_CONTROL_API_URL}/restart-bots')
+            response = await client.post(
+                f'{BOT_CONTROL_API_URL}/restart-bots',
+                headers=_bot_control_headers()
+            )
             if response.is_success:
                 data = response.json()
                 return {"status": data.get("status", "success"), "message": data.get("message", "Bots restarted")}
@@ -2377,7 +2392,10 @@ async def reset_bot(bot_name: str):
     try:
         # Call VM API to reset bot
         async with httpx.AsyncClient(timeout=120.0) as client:  # 2 minute timeout for reset
-            response = await client.post(f'{BOT_CONTROL_API_URL}/reset-bot/{bot_name}')
+            response = await client.post(
+                f'{BOT_CONTROL_API_URL}/reset-bot/{bot_name}',
+                headers=_bot_control_headers()
+            )
             response.raise_for_status()
             data = response.json()
             return data
@@ -2533,7 +2551,7 @@ async def get_current_profile():
 
     Flow:
     1. Dashboard frontend calls this endpoint
-    2. Cloud Run backend proxies to VM (136.115.134.1:8080)
+    2. Cloud Run backend proxies to VM (BOT_CONTROL_API_URL, default 34.46.214.78:8080)
     3. VM reads /home/i030983/.trading_profile file
     4. Returns profile to dashboard
 
@@ -2547,7 +2565,10 @@ async def get_current_profile():
         logger.info("[PROFILE] Fetching current profile from VM")
 
         async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(f'{BOT_CONTROL_API_URL}/current-profile')
+            response = await client.get(
+                f'{BOT_CONTROL_API_URL}/current-profile',
+                headers=_bot_control_headers()
+            )
             response.raise_for_status()
             data = response.json()
 
@@ -2628,7 +2649,10 @@ async def switch_profile(request: Request):
         # Get current profile first (for audit trail)
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                current_response = await client.get(f'{BOT_CONTROL_API_URL}/current-profile')
+                current_response = await client.get(
+                    f'{BOT_CONTROL_API_URL}/current-profile',
+                    headers=_bot_control_headers()
+                )
                 if current_response.status_code == 200:
                     current_data = current_response.json()
                     switch_attempt['from_profile'] = current_data.get('profile', 'unknown')
@@ -2703,7 +2727,8 @@ async def switch_profile(request: Request):
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f'{BOT_CONTROL_API_URL}/switch-profile',
-                json={'profile': profile}
+                json={'profile': profile},
+                headers=_bot_control_headers()
             )
 
             # Parse response body (even if error status)
@@ -4050,7 +4075,8 @@ async def provision_bot_from_pick(request: Request):
                         "client_id": next_id,
                         "symbol": symbol,
                         "strategy_track": strategy_track
-                    }
+                    },
+                    headers=_bot_control_headers()
                 )
                 logger.info(f"VM /provision-bot response for {symbol}: {vm_resp.status_code}")
         except Exception as vm_err:

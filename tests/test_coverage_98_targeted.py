@@ -522,3 +522,11 @@ class TestMainDashboardGaps:
                 mock_post.return_value = MagicMock(status_code=400, json=lambda: {"status": "error", "message": "VM rejected"})
                 res_vm_err = client.post("/api/bot-control/switch-profile", json={"profile": "live"})
                 assert res_vm_err.status_code == 400
+
+    def test_bot_control_headers(self, monkeypatch):
+        import main
+        monkeypatch.setattr(main, "BOT_CONTROL_API_KEY", "")
+        assert main._bot_control_headers() == {}
+
+        monkeypatch.setattr(main, "BOT_CONTROL_API_KEY", "test-key-xyz")
+        assert main._bot_control_headers() == {"X-API-Key": "test-key-xyz"}
