@@ -75,6 +75,32 @@
     font-family: var(--font-mono);
 }
 
+.header-right .btn-action {
+    height: 32px;
+    padding: 0 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    box-sizing: border-box;
+    white-space: nowrap;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    color: #e2e8f0;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.header-right .btn-action:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(148, 163, 184, 0.45);
+    color: #ffffff;
+    transform: translateY(-1px);
+}
+
+
 /* Statement Controls Card (Period Horizon & Bot Scope) */
 .statement-controls-card {
     background: var(--bg-card);

@@ -24,7 +24,7 @@
 
     <div class="perf-container">
         <!-- Header -->
-        <header class="bot-header">
+        <header class="bot-header perf-header" id="perfHeader">
             <div class="header-left">
                 <h1>
                     <span class="bot-icon">⚡</span>
@@ -32,20 +32,29 @@
                     <span class="statement-account-pill">IBKR Master Engine</span>
                 </h1>
                 <div class="bot-metadata">
-                    <span class="metadata-item">
-                        <span class="label">Purpose:</span>
-                        <span class="value">Multi-pillar execution rating, SEC Rule 605 / Barclay CTA benchmarking &amp; diagnostic roadmap</span>
-                    </span>
+                    <div class="metadata-pill-badge benchmark-badge" title="Multi-pillar execution rating, SEC Rule 605 / Barclay CTA benchmarking &amp; diagnostic roadmap">
+                        <span class="badge-icon">🏛️</span>
+                        <span class="label">Benchmark:</span>
+                        <span class="value">SEC Rule 605 · Barclay CTA</span>
+                        <span class="badge-tooltip-icon" tabindex="0" role="tooltip" aria-label="Institutional benchmark info" title="Institutional execution quality (SEC Rule 605) &amp; Systematic CTA benchmark ratings">ℹ️</span>
+                    </div>
+
                     <span class="metadata-separator">|</span>
-                    <span class="metadata-item">
+
+                    <div class="metadata-pill-badge bots-count-badge" title="Active algorithmic trading bots being evaluated">
+                        <span class="badge-icon">🤖</span>
                         <span class="label">Active Bots:</span>
-                        <span class="value" id="activeBots">--</span>
-                    </span>
+                        <span class="value font-mono" id="activeBots">--</span>
+                    </div>
+
                     <span class="metadata-separator">|</span>
-                    <span class="metadata-item">
+
+                    <div class="metadata-pill-badge freshness-badge" title="Timestamp of most recent evaluated trade fill">
+                        <span class="badge-icon">🕒</span>
                         <span class="label">Data As Of:</span>
-                        <span class="value" id="lastUpdate">--</span>
-                    </span>
+                        <span class="value font-mono" id="lastUpdate">--</span>
+                    </div>
+
                     <div class="bot-switch-status-pill" id="perfStatusPill" style="display: none;">
                         <span class="badge-spinner"></span>
                         <span id="perfStatusText">Loading performance data...</span>
@@ -53,25 +62,78 @@
                 </div>
             </div>
             <div class="header-right">
-                <div class="refresh-control" title="Automatic refresh only runs while this tab is visible">
-                    <label for="refreshInterval">Auto-refresh</label>
-                    <select id="refreshInterval" class="refresh-interval-select">
-                        <option value="0">Off</option>
-                        <option value="30000">30s</option>
-                        <option value="60000" selected>1 min</option>
-                        <option value="300000">5 min</option>
-                    </select>
+                <!-- Sync Status & Auto-refresh Controls Cluster -->
+                <div class="header-sync-cluster">
+                    <!-- Custom Styled Auto-Refresh Dropdown -->
+                    <div class="custom-refresh-wrapper" id="customRefreshWrapper">
+                        <div class="custom-refresh-select" id="customRefreshSelect" tabindex="0" role="combobox" aria-haspopup="listbox" aria-expanded="false" title="Configure automatic refresh interval">
+                            <span class="custom-refresh-icon">⏱️</span>
+                            <span class="custom-refresh-label">Auto:</span>
+                            <span class="custom-refresh-val" id="customRefreshVal">1 min</span>
+                            <span class="custom-refresh-dot active" id="customRefreshDot" title="Auto-refresh active"></span>
+                            <span class="custom-refresh-chevron">
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M6 9l6 6 6-6"/>
+                                </svg>
+                            </span>
+                        </div>
+                        <div class="custom-refresh-menu" id="customRefreshMenu" role="listbox" style="display: none;">
+                            <div class="custom-refresh-option" data-value="0" role="option">
+                                <span class="option-icon">⏸️</span>
+                                <div class="option-meta">
+                                    <span class="option-title">Off</span>
+                                    <span class="option-desc">Manual refresh only</span>
+                                </div>
+                            </div>
+                            <div class="custom-refresh-option" data-value="30000" role="option">
+                                <span class="option-icon">⚡</span>
+                                <div class="option-meta">
+                                    <span class="option-title">30 seconds</span>
+                                    <span class="option-desc">High frequency monitoring</span>
+                                </div>
+                            </div>
+                            <div class="custom-refresh-option selected" data-value="60000" role="option">
+                                <span class="option-icon">⏱️</span>
+                                <div class="option-meta">
+                                    <span class="option-title">1 minute</span>
+                                    <span class="option-desc">Standard cadence (default)</span>
+                                </div>
+                            </div>
+                            <div class="custom-refresh-option" data-value="300000" role="option">
+                                <span class="option-icon">🕒</span>
+                                <div class="option-meta">
+                                    <span class="option-title">5 minutes</span>
+                                    <span class="option-desc">Low bandwidth / background</span>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Native select element kept synchronized for compatibility with automated testing and standard fallbacks -->
+                        <select id="refreshInterval" class="refresh-interval-native-hidden" aria-hidden="true" tabindex="-1">
+                            <option value="0">Off</option>
+                            <option value="30000">30s</option>
+                            <option value="60000" selected>1 min</option>
+                            <option value="300000">5 min</option>
+                        </select>
+                    </div>
+
+                    <!-- Live Feed Connection Status Pill -->
+                    <div class="refresh-status" title="Real-time WebSocket &amp; market data feed">
+                        <span class="pulse-dot"></span>
+                        <span id="syncStatusText">Live Feed Connected</span>
+                    </div>
                 </div>
-                <div class="refresh-status">
-                    <span class="pulse-dot"></span>
-                    <span id="syncStatusText">Live Feed Connected</span>
+
+                <!-- Action Buttons Cluster -->
+                <div class="header-actions-cluster">
+                    <button class="btn btn-action btn-refresh" id="btnRefreshPerformance" onclick="refreshPerformance()" title="Force immediate engine re-calculation &amp; benchmark sync">
+                        <span class="btn-icon">🔄</span>
+                        <span>Refresh</span>
+                    </button>
+                    <button class="btn btn-action btn-export" id="btnExportPerformance" onclick="exportPerformanceCSV()" title="Export scorecard and benchmark attribution to CSV">
+                        <span class="btn-icon">📥</span>
+                        <span>Export CSV</span>
+                    </button>
                 </div>
-                <button class="btn btn-action" id="btnRefreshPerformance" onclick="refreshPerformance()">
-                    <span>🔄</span> Refresh
-                </button>
-                <button class="btn btn-action" id="btnExportPerformance" onclick="exportPerformanceCSV()">
-                    <span>📥</span> Export CSV
-                </button>
             </div>
         </header>
 
