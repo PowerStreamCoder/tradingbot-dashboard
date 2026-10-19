@@ -1804,12 +1804,61 @@ async function loadAll() {
 
 function startPolling() {
     const sel = document.getElementById('refresh-interval');
+    if (!sel) return;
     const schedule = () => {
         if (refreshTimer) clearInterval(refreshTimer);
         refreshTimer = setInterval(loadAll, Number(sel.value));
     };
     sel.addEventListener('change', schedule);
+    initGovCustomRefresh();
     schedule();
+}
+
+function initGovCustomRefresh() {
+    const trigger = document.getElementById('customRefreshSelectGov');
+    const menu = document.getElementById('customRefreshMenuGov');
+    const wrapper = document.getElementById('customRefreshWrapperGov');
+    const sel = document.getElementById('refresh-interval');
+    const valDisplay = document.getElementById('customRefreshValGov');
+    if (!trigger || !menu || !sel) return;
+
+    const labelMap = { 30000: '30s', 60000: '60s', 300000: '5m' };
+
+    function update(val) {
+        const text = labelMap[Number(val)] || `${Math.round(Number(val) / 1000)}s`;
+        if (valDisplay) valDisplay.textContent = text;
+        menu.querySelectorAll('.custom-refresh-option').forEach(opt => {
+            opt.classList.toggle('selected', Number(opt.dataset.value) === Number(val));
+        });
+    }
+
+    trigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isOpen = menu.style.display === 'flex';
+        menu.style.display = isOpen ? 'none' : 'flex';
+        trigger.classList.toggle('open', !isOpen);
+    });
+
+    menu.querySelectorAll('.custom-refresh-option').forEach(opt => {
+        opt.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const val = opt.dataset.value;
+            sel.value = val;
+            sel.dispatchEvent(new Event('change'));
+            update(val);
+            menu.style.display = 'none';
+            trigger.classList.remove('open');
+        });
+    });
+
+    document.addEventListener('click', (e) => {
+        if (wrapper && !wrapper.contains(e.target)) {
+            menu.style.display = 'none';
+            trigger.classList.remove('open');
+        }
+    });
+
+    update(sel.value);
 }
 
 document.addEventListener('DOMContentLoaded', () => {

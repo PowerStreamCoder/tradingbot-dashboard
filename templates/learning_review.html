@@ -15,13 +15,36 @@
             <div class="header-left">
                 <h1>
                     <span class="bot-icon">🧠</span>
-                    Learning & Analysis Dashboard
+                    Learning &amp; Analysis Dashboard
+                    <span class="statement-account-pill">Continuous Optimization</span>
                 </h1>
                 <div class="bot-metadata">
-                    <span class="metadata-item">
-                        <span class="label">Purpose:</span>
-                        <span class="value">Review and approve bot learning insights</span>
-                    </span>
+                    <div class="metadata-pill-badge purpose-badge" title="Review, evaluate, and approve bot learning insights, parameter adaptations, and trade pattern evolutions">
+                        <span class="badge-icon">🎯</span>
+                        <span class="label">Scope:</span>
+                        <span class="value">Insight Validation &amp; Adaptations</span>
+                        <span class="badge-tooltip-icon" tabindex="0" role="tooltip" aria-label="Learning review purpose" title="Review and approve bot learning insights, regime detection, and parameter adaptations">ℹ️</span>
+                    </div>
+                    <span class="metadata-separator">|</span>
+                    <div class="metadata-pill-badge status-badge" title="Automated learning and regime classification pipeline">
+                        <span class="badge-icon">⚡</span>
+                        <span class="label">Engine:</span>
+                        <span class="value">ML Alpha Pipeline</span>
+                    </div>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="header-sync-cluster">
+                    <div class="refresh-status" title="Real-time model learning feed">
+                        <span class="pulse-dot"></span>
+                        <span id="syncStatusText">Learning Engine Online</span>
+                    </div>
+                </div>
+                <div class="header-actions-cluster">
+                    <button class="btn btn-action btn-refresh" id="btnRefreshFindings" onclick="loadFindings()" title="Reload proposed learning findings">
+                        <span class="btn-icon">🔄</span>
+                        <span>Refresh</span>
+                    </button>
                 </div>
             </div>
         </header>
