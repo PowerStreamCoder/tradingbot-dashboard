@@ -404,6 +404,9 @@ function initAutoRefresh() {
         });
     }
 
+    // Initialize custom interactive dropdown component
+    initCustomRefreshSelector();
+
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
             // Catch up immediately, then resume the normal cadence.
@@ -415,6 +418,149 @@ function initAutoRefresh() {
     });
 
     scheduleAutoRefresh();
+}
+
+/**
+ * Initialize custom styled auto-refresh dropdown with interactive options,
+ * animations, keyboard support, and seamless synchronization with the native select.
+ */
+function initCustomRefreshSelector() {
+    const trigger = document.getElementById('customRefreshSelect');
+    const menu = document.getElementById('customRefreshMenu');
+    const wrapper = document.getElementById('customRefreshWrapper');
+    const nativeSelect = document.getElementById('refreshInterval');
+    const valDisplay = document.getElementById('customRefreshVal');
+    const dot = document.getElementById('customRefreshDot');
+
+    if (!trigger || !menu) return;
+
+    const labelMap = {
+        0: 'Off',
+        30000: '30s',
+        60000: '1 min',
+        300000: '5 min'
+    };
+
+    function updateDisplay(val) {
+        const numVal = Number(val) || 0;
+        const text = labelMap[numVal] || `${Math.round(numVal / 1000)}s`;
+        if (valDisplay) valDisplay.textContent = text;
+        if (dot) {
+            if (numVal > 0) {
+                dot.classList.add('active');
+                dot.title = `Auto-refresh active (${text})`;
+            } else {
+                dot.classList.remove('active');
+                dot.title = 'Auto-refresh paused (manual only)';
+            }
+        }
+        const options = menu.querySelectorAll('.custom-refresh-option');
+        options.forEach(opt => {
+            const optVal = Number(opt.dataset.value) || 0;
+            if (optVal === numVal) {
+                opt.classList.add('selected');
+                opt.setAttribute('aria-selected', 'true');
+            } else {
+                opt.classList.remove('selected');
+                opt.setAttribute('aria-selected', 'false');
+            }
+        });
+    }
+
+    function toggleMenu() {
+        const isOpen = menu.style.display === 'flex';
+        if (isOpen) {
+            closeMenu();
+        } else {
+            openMenu();
+        }
+    }
+
+    function openMenu() {
+        menu.style.display = 'flex';
+        trigger.classList.add('open');
+        trigger.setAttribute('aria-expanded', 'true');
+    }
+
+    function closeMenu() {
+        menu.style.display = 'none';
+        trigger.classList.remove('open');
+        trigger.setAttribute('aria-expanded', 'false');
+    }
+
+    if (!trigger.dataset.listenerAttached) {
+        trigger.dataset.listenerAttached = 'true';
+
+        trigger.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleMenu();
+        });
+
+        trigger.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                toggleMenu();
+            } else if (e.key === 'Escape') {
+                closeMenu();
+            } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                openMenu();
+                const firstOpt = menu.querySelector('.custom-refresh-option');
+                if (firstOpt) firstOpt.focus();
+            }
+        });
+
+        menu.querySelectorAll('.custom-refresh-option').forEach(opt => {
+            opt.setAttribute('tabindex', '0');
+            const selectOption = () => {
+                const val = opt.dataset.value;
+                if (nativeSelect) {
+                    nativeSelect.value = val;
+                    nativeSelect.dispatchEvent(new Event('change'));
+                }
+                updateDisplay(val);
+                closeMenu();
+                trigger.focus();
+            };
+
+            opt.addEventListener('click', (e) => {
+                e.stopPropagation();
+                selectOption();
+            });
+
+            opt.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    selectOption();
+                } else if (e.key === 'Escape') {
+                    closeMenu();
+                    trigger.focus();
+                } else if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    const next = opt.nextElementSibling;
+                    if (next && next.classList.contains('custom-refresh-option')) next.focus();
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    const prev = opt.previousElementSibling;
+                    if (prev && prev.classList.contains('custom-refresh-option')) prev.focus();
+                }
+            });
+        });
+
+        document.addEventListener('click', (e) => {
+            if (wrapper && !wrapper.contains(e.target)) {
+                closeMenu();
+            }
+        });
+
+        if (nativeSelect) {
+            nativeSelect.addEventListener('change', () => {
+                updateDisplay(nativeSelect.value);
+            });
+        }
+    }
+
+    updateDisplay(nativeSelect ? nativeSelect.value : autoRefreshMs);
 }
 
 function scheduleAutoRefresh() {
@@ -495,7 +641,10 @@ async function loadPerformanceData(force = false, isSilent = false, reason = '')
     const syncStatus = document.getElementById('syncStatusText');
     const refreshBtn = document.getElementById('btnRefreshPerformance');
     if (syncStatus) syncStatus.innerText = force ? 'Refreshing…' : 'Syncing...';
-    if (refreshBtn) refreshBtn.disabled = true;
+    if (refreshBtn) {
+        refreshBtn.disabled = true;
+        refreshBtn.classList.add('spinning');
+    }
 
     try {
         let url = `/api/engine-performance?period=${currentPeriod}&mode=${currentMode}&bot=${currentBotScope}&benchmark=${currentBenchmark}`;
@@ -554,7 +703,10 @@ async function loadPerformanceData(force = false, isSilent = false, reason = '')
             }, 4000);
         }
     } finally {
-        if (refreshBtn) refreshBtn.disabled = false;
+        if (refreshBtn) {
+            refreshBtn.disabled = false;
+            refreshBtn.classList.remove('spinning');
+        }
         isLoading = false;
     }
 }
