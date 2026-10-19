@@ -26,30 +26,47 @@
                     <span class="statement-account-pill">IBKR Master Account</span>
                 </h1>
                 <div class="bot-metadata">
-                    <span class="metadata-item">
-                        <span class="label">Purpose:</span>
-                        <span class="value">Institutional 4-tier statement, multi-bot attribution, friction waterfall &amp; risk analytics</span>
-                    </span>
+                    <div class="metadata-pill-badge framework-badge" title="Institutional 4-tier statement, multi-bot attribution, friction waterfall &amp; risk analytics">
+                        <span class="badge-icon">🏛️</span>
+                        <span class="label">Statement:</span>
+                        <span class="value">4-Tier Institutional P&amp;L</span>
+                        <span class="badge-tooltip-icon" tabindex="0" role="tooltip" aria-label="Statement architecture info" title="Institutional 4-tier statement, multi-bot attribution, friction waterfall &amp; risk analytics">ℹ️</span>
+                    </div>
+
                     <span class="metadata-separator">|</span>
-                    <span class="metadata-item">
-                        <span class="label">Active Bots:</span>
-                        <span class="value" id="activeBots">--</span>
-                    </span>
+
+                    <div class="metadata-pill-badge bots-count-badge" title="Active trading bots contributing to portfolio statement">
+                        <span class="badge-icon">🤖</span>
+                        <span class="label">Active:</span>
+                        <span class="value font-mono" id="activeBots">--</span>
+                    </div>
+
                     <span class="metadata-separator">|</span>
-                    <span class="metadata-item">
+
+                    <div class="metadata-pill-badge freshness-badge" title="Timestamp of most recent statement valuation">
+                        <span class="badge-icon">🕒</span>
                         <span class="label">Last Updated:</span>
-                        <span class="value" id="lastUpdate">--</span>
-                    </span>
+                        <span class="value font-mono" id="lastUpdate">--</span>
+                    </div>
                 </div>
             </div>
             <div class="header-right">
-                <div class="refresh-status">
-                    <span class="pulse-dot"></span>
-                    <span id="syncStatusText">Live Feed Connected</span>
+                <div class="header-sync-cluster">
+                    <div class="refresh-status" title="Real-time portfolio valuation feed">
+                        <span class="pulse-dot"></span>
+                        <span id="syncStatusText">Live Feed Connected</span>
+                    </div>
                 </div>
-                <button class="btn btn-action" id="btnExportStatement" onclick="exportStatementCSV()">
-                    <span>📥</span> Export CSV
-                </button>
+                <div class="header-actions-cluster">
+                    <button class="btn btn-action btn-refresh" id="btnRefreshStatement" onclick="loadStatement(currentPeriod, currentBotScope, currentMode)" title="Refresh portfolio statement now">
+                        <span class="btn-icon">🔄</span>
+                        <span>Refresh</span>
+                    </button>
+                    <button class="btn btn-action btn-export" id="btnExportStatement" onclick="exportStatementCSV()" title="Export portfolio statement and attribution to CSV">
+                        <span class="btn-icon">📥</span>
+                        <span>Export CSV</span>
+                    </button>
+                </div>
             </div>
         </header>
 

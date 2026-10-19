@@ -78,12 +78,35 @@
                 <h1>
                     <span class="bot-icon">📊</span>
                     Stock Picker
+                    <span class="statement-account-pill">Automated Screener</span>
                 </h1>
                 <div class="bot-metadata">
-                    <span class="metadata-item">
+                    <div class="metadata-pill-badge purpose-badge" title="Dual-track growth equity &amp; covered call income screener, evidence dossier &amp; bot provisioning">
+                        <span class="badge-icon">🎯</span>
                         <span class="label">Purpose:</span>
-                        <span class="value">Dual-track growth equity &amp; covered call income screener, evidence dossier &amp; bot provisioning</span>
-                    </span>
+                        <span class="value">Dual-track growth equity &amp; covered call income screener</span>
+                        <span class="badge-tooltip-icon" tabindex="0" role="tooltip" aria-label="Screener purpose" title="Dual-track growth equity &amp; covered call income screener, evidence dossier &amp; bot provisioning">ℹ️</span>
+                    </div>
+                    <span class="metadata-separator">|</span>
+                    <div class="metadata-pill-badge scope-badge" title="Active screening universes">
+                        <span class="badge-icon">⚡</span>
+                        <span class="label">Scope:</span>
+                        <span class="value">Growth + Covered Calls</span>
+                    </div>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="header-sync-cluster">
+                    <div class="refresh-status" title="Real-time screener status">
+                        <span class="pulse-dot"></span>
+                        <span>Screener Engine Online</span>
+                    </div>
+                </div>
+                <div class="header-actions-cluster">
+                    <button class="btn btn-action btn-refresh" id="btnRunStockPickerHeader" onclick="runStockPickerNow()" title="Scan market for stock opportunities">
+                        <span class="btn-icon">⚡</span>
+                        <span>Scan Stocks</span>
+                    </button>
                 </div>
             </div>
         </header>

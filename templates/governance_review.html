@@ -17,12 +17,69 @@
                 <h1>
                     <span class="bot-icon">⚖️</span>
                     Governance Review
+                    <span class="statement-account-pill">Compliance &amp; Ledger</span>
                 </h1>
                 <div class="bot-metadata">
-                    <span class="metadata-item">
-                        <span class="label">Purpose:</span>
-                        <span class="value">Exit governance, applied-changes ledger, adaptive engine &amp; telemetry archive</span>
-                    </span>
+                    <div class="metadata-pill-badge governance-scope-badge" title="Exit governance, applied-changes ledger, adaptive engine &amp; telemetry archive">
+                        <span class="badge-icon">📜</span>
+                        <span class="label">Ledger:</span>
+                        <span class="value">Exit Rules · Adaptive Ledger</span>
+                        <span class="badge-tooltip-icon" tabindex="0" role="tooltip" aria-label="Governance scope info" title="Exit governance, applied-changes ledger, adaptive engine &amp; telemetry archive">ℹ️</span>
+                    </div>
+                    <span class="metadata-separator">|</span>
+                    <div class="metadata-pill-badge audit-badge" title="Real-time policy enforcement">
+                        <span class="badge-icon">🛡️</span>
+                        <span class="label">Audit:</span>
+                        <span class="value">Active Enforcer</span>
+                    </div>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="header-sync-cluster">
+                    <!-- Custom Styled Auto-Refresh Dropdown -->
+                    <div class="custom-refresh-wrapper" id="customRefreshWrapperGov">
+                        <div class="custom-refresh-select" id="customRefreshSelectGov" tabindex="0" role="combobox" aria-haspopup="listbox" aria-expanded="false" title="Configure governance polling interval">
+                            <span class="custom-refresh-icon">⏱️</span>
+                            <span class="custom-refresh-label">Auto:</span>
+                            <span class="custom-refresh-val" id="customRefreshValGov">60s</span>
+                            <span class="custom-refresh-dot active" id="customRefreshDotGov" title="Polling active"></span>
+                            <span class="custom-refresh-chevron">
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M6 9l6 6 6-6"/>
+                                </svg>
+                            </span>
+                        </div>
+                        <div class="custom-refresh-menu" id="customRefreshMenuGov" role="listbox" style="display: none;">
+                            <div class="custom-refresh-option" data-value="30000" role="option">
+                                <span class="option-icon">⚡</span>
+                                <div class="option-meta"><span class="option-title">30 seconds</span><span class="option-desc">Fast monitoring</span></div>
+                            </div>
+                            <div class="custom-refresh-option selected" data-value="60000" role="option">
+                                <span class="option-icon">⏱️</span>
+                                <div class="option-meta"><span class="option-title">60 seconds</span><span class="option-desc">Standard cadence (default)</span></div>
+                            </div>
+                            <div class="custom-refresh-option" data-value="300000" role="option">
+                                <span class="option-icon">🕒</span>
+                                <div class="option-meta"><span class="option-title">5 minutes</span><span class="option-desc">Low bandwidth</span></div>
+                            </div>
+                        </div>
+                        <select id="refresh-interval" class="refresh-interval-native-hidden" aria-hidden="true" tabindex="-1">
+                            <option value="30000">30s</option>
+                            <option value="60000" selected>60s</option>
+                            <option value="300000">5m</option>
+                        </select>
+                    </div>
+
+                    <div class="refresh-status" title="Governance engine live telemetry">
+                        <span class="pulse-dot"></span>
+                        <span id="syncStatusText">Governance Live</span>
+                    </div>
+                </div>
+                <div class="header-actions-cluster">
+                    <button class="btn btn-action btn-refresh" id="btnRefreshGovernance" onclick="loadAll()" title="Reload governance proposals, ledger and telemetry">
+                        <span class="btn-icon">🔄</span>
+                        <span>Refresh</span>
+                    </button>
                 </div>
             </div>
         </header>
@@ -69,20 +126,7 @@
             </div>
         </div>
 
-        <!-- Filters -->
-        <div class="filters-section" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-            <div style="display: flex; align-items: center; gap: 8px;">
-                <label style="color: var(--text-muted); font-size: 13px;">Refresh Interval:</label>
-                <select id="refresh-interval" style="padding: 6px 12px; border-radius: 6px; background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(255, 255, 255, 0.12); color: #f8fafc; font-size: 0.88em;">
-                    <option value="30000">30s</option>
-                    <option value="60000" selected>60s</option>
-                    <option value="300000">5m</option>
-                </select>
-            </div>
-            <button class="dash-btn dash-btn-primary" onclick="loadAll()">
-                <span>🔄</span> Refresh Now
-            </button>
-        </div>
+
 
         <!-- Exit Governance -->
         <section class="section-title">
