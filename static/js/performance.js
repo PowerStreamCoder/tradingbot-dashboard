@@ -26,6 +26,346 @@ let autoRefreshTimer = null;
 let autoRefreshMs = DEFAULT_AUTO_REFRESH_MS;
 let isLoading = false; // in-flight guard: never stack overlapping requests
 
+// =============================================================================
+// PERFORMANCE SECTION & TILE LOADING INDICATOR SYSTEM
+// =============================================================================
+
+let activeLoadToken = 0;
+let progressBarTimer = null;
+const pendingPerfSections = new Set();
+
+const PERF_SECTION_CONFIG = {
+    scorecard: {
+        badgeId: 'perfBadge-scorecard',
+        tileId: 'tileScorecard',
+        label: 'health scorecard'
+    },
+    kpi: {
+        badgeId: 'perfBadge-kpi',
+        tileId: 'tileKpis',
+        label: 'KPI metrics'
+    },
+    sec605: {
+        badgeId: 'perfBadge-sec605',
+        tileId: 'tileSec605',
+        label: 'SEC 605'
+    },
+    instCta: {
+        badgeId: 'perfBadge-instCta',
+        tileId: 'tileInstCta',
+        label: 'CTA benchmark'
+    },
+    buyHold: {
+        badgeId: 'perfBadge-buyHold',
+        tileId: 'tileBuyHold',
+        label: 'buy & hold defense'
+    },
+    radar: {
+        badgeId: 'perfBadge-radar',
+        tileId: 'tileRadarChart',
+        label: 'radar chart'
+    },
+    bots: {
+        badgeId: 'perfBadge-bots',
+        tileId: 'tileBots',
+        label: 'bot attribution'
+    },
+    diagnostics: {
+        badgeId: 'perfBadge-diagnostics',
+        tileId: 'tileDiagnostics',
+        label: 'diagnostics'
+    }
+};
+
+/**
+ * Start the top slim progress bar with smooth progressive increments
+ */
+function startProgressBar() {
+    const container = document.getElementById('perfProgressContainer');
+    const bar = document.getElementById('perfProgressBar');
+    if (!container || !bar) return;
+
+    if (progressBarTimer) {
+        clearInterval(progressBarTimer);
+        progressBarTimer = null;
+    }
+
+    bar.style.opacity = '1';
+    bar.style.width = '15%';
+    container.style.display = 'block';
+
+    let progress = 15;
+    progressBarTimer = setInterval(() => {
+        if (progress < 85) {
+            const step = Math.max(1, Math.floor((85 - progress) / 5));
+            progress += step;
+            bar.style.width = `${progress}%`;
+        } else {
+            clearInterval(progressBarTimer);
+            progressBarTimer = null;
+        }
+    }, 120);
+}
+
+/**
+ * Finish the top slim progress bar and fade it out
+ */
+function finishProgressBar() {
+    const container = document.getElementById('perfProgressContainer');
+    const bar = document.getElementById('perfProgressBar');
+    if (progressBarTimer) {
+        clearInterval(progressBarTimer);
+        progressBarTimer = null;
+    }
+    if (!container || !bar) return;
+
+    bar.style.width = '100%';
+    setTimeout(() => {
+        bar.style.opacity = '0';
+        setTimeout(() => {
+            container.style.display = 'none';
+            bar.style.width = '0%';
+        }, 350);
+    }, 200);
+}
+
+/**
+ * Begin performance loading state across dashboard tiles and sections
+ * @param {string} reason - Loading trigger reason (e.g. 'initial', 'period', 'refresh')
+ */
+function beginPerformanceLoading(reason = 'initial') {
+    activeLoadToken++;
+    const currentToken = activeLoadToken;
+    pendingPerfSections.clear();
+
+    // 1. Start top slim progress bar
+    startProgressBar();
+
+    // 2. Global status pill in bot-header metadata
+    const globalStatus = document.getElementById('perfStatusPill');
+    const globalText = document.getElementById('perfStatusText');
+    if (globalStatus) {
+        globalStatus.style.display = 'inline-flex';
+        globalStatus.style.opacity = '1';
+        globalStatus.className = 'bot-switch-status-pill loading';
+        if (globalText) {
+            let msg = 'Loading performance analytics...';
+            if (reason === 'refresh') msg = 'Refreshing performance metrics...';
+            else if (reason.startsWith('period')) msg = `Loading ${currentPeriod} metrics...`;
+            else if (reason.startsWith('mode')) msg = `Loading ${currentMode.toUpperCase()} mode...`;
+            else if (reason.startsWith('bot')) msg = `Loading ${currentBotScope} bot metrics...`;
+            else if (reason.startsWith('benchmark')) msg = `Benchmarking against ${currentBenchmark}...`;
+            globalText.textContent = msg;
+        }
+    }
+
+    // 3. Mark each section as loading with explicit badge and tile styling
+    Object.keys(PERF_SECTION_CONFIG).forEach(secKey => {
+        pendingPerfSections.add(secKey);
+        setPerfSectionLoadingIndicator(secKey, true);
+    });
+
+    // 4. Set table and container placeholders
+    setPerformanceLoadingPlaceholders();
+
+    // 5. Safety timeout to prevent any indicator from staying stuck indefinitely
+    setTimeout(() => {
+        if (activeLoadToken === currentToken && pendingPerfSections.size > 0) {
+            pendingPerfSections.forEach(secKey => {
+                completePerfSectionLoading(secKey, true);
+            });
+            finishProgressBar();
+        }
+    }, 15000);
+
+    return currentToken;
+}
+
+/**
+ * Set section-level loading indicator badge and tile styling
+ */
+function setPerfSectionLoadingIndicator(secKey, isLoading, isError = false) {
+    const cfg = PERF_SECTION_CONFIG[secKey];
+    if (!cfg) return;
+
+    const badge = document.getElementById(cfg.badgeId);
+    const tile = cfg.tileId ? document.getElementById(cfg.tileId) : null;
+
+    if (isLoading) {
+        if (tile) tile.classList.add('tile-loading');
+        if (secKey === 'kpi') {
+            document.querySelectorAll('#tileKpis .statement-kpi-card').forEach(card => card.classList.add('tile-loading'));
+        }
+        if (badge) {
+            badge.style.display = 'inline-flex';
+            badge.style.opacity = '1';
+            badge.className = 'section-switch-badge loading';
+            badge.innerHTML = `<span class="badge-spinner"></span> <span class="badge-text">Loading ${cfg.label}...</span>`;
+        }
+    } else {
+        if (tile) tile.classList.remove('tile-loading');
+        if (secKey === 'kpi') {
+            document.querySelectorAll('#tileKpis .statement-kpi-card').forEach(card => card.classList.remove('tile-loading'));
+        }
+        if (badge) {
+            if (isError) {
+                badge.className = 'section-switch-badge error';
+                badge.innerHTML = `<span class="badge-icon">⚠️</span> <span class="badge-text">Failed loading ${cfg.label}</span>`;
+                setTimeout(() => {
+                    if (badge.classList.contains('error')) {
+                        badge.style.display = 'none';
+                    }
+                }, 4000);
+            } else {
+                badge.className = 'section-switch-badge updated';
+                badge.innerHTML = `<span class="badge-icon">✓</span> <span class="badge-text">${cfg.label} updated</span>`;
+                setTimeout(() => {
+                    if (badge.classList.contains('updated')) {
+                        badge.style.opacity = '0';
+                        setTimeout(() => {
+                            badge.style.display = 'none';
+                            badge.style.opacity = '1';
+                        }, 300);
+                    }
+                }, 1800);
+            }
+        }
+    }
+}
+
+/**
+ * Mark a performance section as completed after render
+ */
+function completePerfSectionLoading(secKey, isError = false) {
+    if (!pendingPerfSections.has(secKey)) return;
+    pendingPerfSections.delete(secKey);
+    setPerfSectionLoadingIndicator(secKey, false, isError);
+
+    // Hide radar chart overlay if radar finished
+    if (secKey === 'radar') {
+        const radarOverlay = document.getElementById('radarSwitchOverlay');
+        if (radarOverlay) {
+            radarOverlay.style.opacity = '0';
+            setTimeout(() => {
+                radarOverlay.style.display = 'none';
+                radarOverlay.style.opacity = '1';
+            }, 250);
+        }
+    }
+
+    // When all sections finish, update the global header status pill and finish progress bar
+    if (pendingPerfSections.size === 0) {
+        finishProgressBar();
+        const globalStatus = document.getElementById('perfStatusPill');
+        const globalText = document.getElementById('perfStatusText');
+        if (globalStatus) {
+            globalStatus.className = 'bot-switch-status-pill updated';
+            if (globalText) {
+                globalText.textContent = '✓ Performance data updated';
+            }
+            setTimeout(() => {
+                if (globalStatus.classList.contains('updated')) {
+                    globalStatus.style.opacity = '0';
+                    setTimeout(() => {
+                        globalStatus.style.display = 'none';
+                        globalStatus.style.opacity = '1';
+                    }, 400);
+                }
+            }, 2200);
+        }
+    }
+}
+
+/**
+ * Set loading placeholders inside tables, containers, and overlays
+ */
+function setPerformanceLoadingPlaceholders() {
+    // 1. SEC Rule 605 table
+    const tableSec605 = document.getElementById('tableSec605');
+    if (tableSec605) {
+        tableSec605.innerHTML = `
+            <tr>
+                <td colspan="4" class="table-switch-loading">
+                    <div class="table-switch-spinner-wrap">
+                        <span class="section-switch-spinner"></span>
+                        <div class="table-switch-text">Evaluating SEC Rule 605 Execution Standard...</div>
+                        <div class="table-switch-subtext">Calculating slippage, fill rate, and price improvement against FINRA / IBKR standards</div>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }
+
+    // 2. Institutional CTA table
+    const tableInstCta = document.getElementById('tableInstCta');
+    if (tableInstCta) {
+        tableInstCta.innerHTML = `
+            <tr>
+                <td colspan="4" class="table-switch-loading">
+                    <div class="table-switch-spinner-wrap">
+                        <span class="section-switch-spinner"></span>
+                        <div class="table-switch-text">Evaluating Institutional CTA Benchmarks...</div>
+                        <div class="table-switch-subtext">Benchmarking Sharpe, Sortino, and alpha edge against Barclay CTA index</div>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }
+
+    // 3. Buy and Hold Defense table
+    const tableBuyHold = document.getElementById('tableBuyHold');
+    if (tableBuyHold) {
+        tableBuyHold.innerHTML = `
+            <tr>
+                <td colspan="4" class="table-switch-loading">
+                    <div class="table-switch-spinner-wrap">
+                        <span class="section-switch-spinner"></span>
+                        <div class="table-switch-text">Evaluating Buy-and-Hold Risk Suppression...</div>
+                        <div class="table-switch-subtext">Comparing drawdown suppression and downside protection vs ${currentBenchmark}</div>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }
+
+    // 4. Bots Attribution table
+    const botsTable = document.getElementById('botsTableBody');
+    if (botsTable) {
+        botsTable.innerHTML = `
+            <tr>
+                <td colspan="11" class="table-switch-loading">
+                    <div class="table-switch-spinner-wrap">
+                        <span class="section-switch-spinner"></span>
+                        <div class="table-switch-text">Aggregating Bot Attribution &amp; Performance...</div>
+                        <div class="table-switch-subtext">Loading trade execution, win rates, and rating scores across active bots</div>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }
+
+    // 5. Diagnostics grid placeholder
+    const diagGrid = document.getElementById('diagnosticsGrid');
+    if (diagGrid) {
+        diagGrid.innerHTML = `
+            <div class="diagnostics-loading-placeholder">
+                <div class="table-switch-spinner-wrap">
+                    <span class="section-switch-spinner"></span>
+                    <div class="table-switch-text">Scanning Engine Telemetry &amp; Diagnostics...</div>
+                    <div class="table-switch-subtext">Analyzing execution logs and generating prioritized recommendations</div>
+                </div>
+            </div>
+        `;
+    }
+
+    // 6. Radar Chart overlay
+    const radarOverlay = document.getElementById('radarSwitchOverlay');
+    if (radarOverlay) {
+        radarOverlay.style.display = 'flex';
+        radarOverlay.style.opacity = '1';
+    }
+}
+
 // Initialize when DOM ready
 document.addEventListener('DOMContentLoaded', () => {
     initControls();
@@ -84,7 +424,7 @@ function scheduleAutoRefresh() {
     }
     autoRefreshTimer = setInterval(() => {
         if (document.visibilityState === 'visible') {
-            loadPerformanceData();
+            loadPerformanceData(false, true);
         }
     }, autoRefreshMs);
 }
@@ -103,7 +443,7 @@ function initControls() {
             document.querySelectorAll('#timelineTabs .timeline-tab').forEach(b => b.classList.remove('active'));
             e.currentTarget.classList.add('active');
             currentPeriod = e.currentTarget.dataset.period || 'YTD';
-            loadPerformanceData();
+            loadPerformanceData(false, false, `period (${currentPeriod})`);
         });
     });
 
@@ -113,7 +453,7 @@ function initControls() {
             document.querySelectorAll('#modeTabs .mode-tab').forEach(b => b.classList.remove('active'));
             e.currentTarget.classList.add('active');
             currentMode = e.currentTarget.dataset.mode || 'all';
-            loadPerformanceData();
+            loadPerformanceData(false, false, `mode (${currentMode})`);
         });
     });
 
@@ -133,19 +473,24 @@ function setBotScope(scope) {
             pill.classList.remove('active');
         }
     });
-    loadPerformanceData();
+    loadPerformanceData(false, false, `bot (${scope})`);
 }
 
 function setBenchmark(benchmark) {
     currentBenchmark = benchmark || 'SPY';
-    loadPerformanceData();
+    loadPerformanceData(false, false, `benchmark (${currentBenchmark})`);
 }
 
-async function loadPerformanceData(force = false) {
+async function loadPerformanceData(force = false, isSilent = false, reason = '') {
     // In-flight guard: a slow request must never stack up overlapping calls
     // (which would multiply backend/Firestore load).
     if (isLoading) return;
     isLoading = true;
+
+    if (!isSilent) {
+        const loadReason = reason || (force ? 'refresh' : (currentPeriod ? `period (${currentPeriod})` : 'initial'));
+        beginPerformanceLoading(loadReason);
+    }
 
     const syncStatus = document.getElementById('syncStatusText');
     const refreshBtn = document.getElementById('btnRefreshPerformance');
@@ -167,11 +512,25 @@ async function loadPerformanceData(force = false) {
         lastPerformanceData = data;
 
         renderScorecard(data.scorecard);
+        completePerfSectionLoading('scorecard');
+
         renderKPIs(data.executive_kpis);
+        completePerfSectionLoading('kpi');
+
         renderBenchmarks(data.benchmarks);
+        completePerfSectionLoading('sec605');
+        completePerfSectionLoading('instCta');
+        completePerfSectionLoading('buyHold');
+
         renderBots(data.bots);
+        completePerfSectionLoading('bots');
+
         renderDiagnostics(data.diagnostics);
+        completePerfSectionLoading('diagnostics');
+
         renderBenchmarkChart(data.scorecard);
+        completePerfSectionLoading('radar');
+
         updateBenchmarkBadge(data.executive_kpis);
         renderFreshness(data);
 
@@ -179,6 +538,21 @@ async function loadPerformanceData(force = false) {
     } catch (err) {
         console.error('Failed to load performance data:', err);
         if (syncStatus) syncStatus.innerText = 'Sync Error';
+        Object.keys(PERF_SECTION_CONFIG).forEach(secKey => {
+            completePerfSectionLoading(secKey, true);
+        });
+        finishProgressBar();
+        const globalStatus = document.getElementById('perfStatusPill');
+        const globalText = document.getElementById('perfStatusText');
+        if (globalStatus) {
+            globalStatus.className = 'bot-switch-status-pill error';
+            if (globalText) globalText.textContent = '⚠️ Performance sync failed';
+            setTimeout(() => {
+                if (globalStatus.classList.contains('error')) {
+                    globalStatus.style.display = 'none';
+                }
+            }, 4000);
+        }
     } finally {
         if (refreshBtn) refreshBtn.disabled = false;
         isLoading = false;

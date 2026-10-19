@@ -170,3 +170,55 @@ def test_bot_switch_loading_indicators():
     assert "function setSectionLoadingIndicator(" in js_content
     assert "function completeSectionSwitchLoading(" in js_content
     assert "function setTableLoadingPlaceholders(" in js_content
+
+
+def test_performance_loading_indicators():
+    """Verify that section-level, table-level, and progress indicators exist for performance dashboard."""
+    html_path = TEMPLATES_DIR / "performance.html"
+    assert html_path.exists()
+    html_content = html_path.read_text(encoding="utf-8")
+
+    # Global status pill & progress bar
+    assert 'id="perfStatusPill"' in html_content
+    assert 'id="perfStatusText"' in html_content
+    assert 'id="perfProgressContainer"' in html_content
+    assert 'id="perfProgressBar"' in html_content
+
+    # All section-level switch badges in performance.html
+    expected_badges = [
+        "perfBadge-scorecard",
+        "perfBadge-kpi",
+        "perfBadge-sec605",
+        "perfBadge-instCta",
+        "perfBadge-buyHold",
+        "perfBadge-radar",
+        "perfBadge-bots",
+        "perfBadge-diagnostics",
+    ]
+    for badge_id in expected_badges:
+        assert f'id="{badge_id}"' in html_content, f"Missing badge {badge_id} in performance.html"
+
+    # Radar switch overlay
+    assert 'id="radarSwitchOverlay"' in html_content
+
+    # CSS styles exist
+    css_path = STATIC_DIR / "css" / "performance.css"
+    assert css_path.exists()
+    css_content = css_path.read_text(encoding="utf-8")
+    assert ".perf-progress-container" in css_content
+    assert ".perf-progress-bar" in css_content
+    assert ".tile-loading" in css_content
+    assert ".diagnostics-loading-placeholder" in css_content
+
+    # JS logic exists
+    js_path = STATIC_DIR / "js" / "performance.js"
+    assert js_path.exists()
+    js_content = js_path.read_text(encoding="utf-8")
+    assert "PERF_SECTION_CONFIG" in js_content
+    assert "function beginPerformanceLoading(" in js_content
+    assert "function setPerfSectionLoadingIndicator(" in js_content
+    assert "function completePerfSectionLoading(" in js_content
+    assert "function setPerformanceLoadingPlaceholders(" in js_content
+    assert "function startProgressBar(" in js_content
+    assert "function finishProgressBar(" in js_content
+
