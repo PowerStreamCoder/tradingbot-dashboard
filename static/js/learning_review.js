@@ -263,9 +263,12 @@ function deriveLearningApplyState(rule, configChanges, finding) {
     let escalations = Array.isArray(rule.escalations) ? rule.escalations.slice()
         : (Array.isArray(finding && finding.escalations) ? finding.escalations.slice() : []);
     if (!escalations.length && Array.isArray(finding && finding.escalation)) {
+        // Legacy persisted shape. Older docs stored [owner, field] pairs; since
+        // #295 they are stored as { owner, field } objects (Firestore rejects
+        // the tuple form as a nested array). Accept both.
         escalations = finding.escalation
-            .filter(p => Array.isArray(p) && p.length === 2)
-            .map(([owner, field]) => ({ owner, field }));
+            .filter(e => (Array.isArray(e) && e.length === 2) || (e && typeof e === 'object' && !Array.isArray(e)))
+            .map(e => Array.isArray(e) ? { owner: e[0], field: e[1] } : { owner: e.owner || '', field: e.field || '' });
     }
     const topOwner = finding && finding.owner;
     if (!escalations.length && topOwner && topOwner !== 'learning' && configKeys.length) {
