@@ -10,13 +10,18 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <!-- Base Styles -->
-    <link rel="stylesheet" href="/static/css/bot_focus.css?v=2.9.1">
+    <link rel="stylesheet" href="/static/css/bot_focus.css?v=2.9.2">
     <link rel="stylesheet" href="/static/css/pnl-reporting.css?v=3.0.0">
-    <link rel="stylesheet" href="/static/css/performance.css?v=1.0.0">
+    <link rel="stylesheet" href="/static/css/performance.css?v=2.0.0">
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
+    <!-- Top Progress Bar Indicator -->
+    <div class="perf-progress-container" id="perfProgressContainer" style="display: none;">
+        <div class="perf-progress-bar" id="perfProgressBar"></div>
+    </div>
+
     <div class="perf-container">
         <!-- Header -->
         <header class="bot-header">
@@ -41,6 +46,10 @@
                         <span class="label">Data As Of:</span>
                         <span class="value" id="lastUpdate">--</span>
                     </span>
+                    <div class="bot-switch-status-pill" id="perfStatusPill" style="display: none;">
+                        <span class="badge-spinner"></span>
+                        <span id="perfStatusText">Loading performance data...</span>
+                    </div>
                 </div>
             </div>
             <div class="header-right">
@@ -135,7 +144,7 @@
             </div>
 
             <!-- Engine Health & Rating Hero Scorecard Banner -->
-            <div class="scorecard-banner">
+            <div class="scorecard-banner" id="tileScorecard">
                 <!-- Left: Big Grade Box -->
                 <div class="scorecard-grade-box">
                     <div class="scorecard-grade-label">Engine Health Rating</div>
@@ -186,13 +195,22 @@
 
                 <!-- Right: Executive Narrative -->
                 <div class="scorecard-narrative">
-                    <div class="narrative-title">📋 Executive Assessment</div>
+                    <div class="narrative-header" style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 0.5rem;">
+                        <div class="narrative-title" style="margin-bottom: 0;">📋 Executive Assessment</div>
+                        <span class="section-switch-badge" id="perfBadge-scorecard" style="display: none;"></span>
+                    </div>
                     <p class="narrative-text" id="scorecardNarrative">Evaluating operational parameters...</p>
                 </div>
             </div>
 
             <!-- Executive KPI Summary Grid -->
-            <div class="kpi-grid">
+            <div class="perf-section-header" style="display: flex; align-items: center; justify-content: space-between; margin: 1.5rem 0 0.85rem 0;">
+                <div class="section-title" style="font-size: 1.05rem; font-weight: 700; color: #f1f5f9; display: flex; align-items: center; gap: 8px;">
+                    <span>📊</span> Key Performance Indicators &amp; Risk Metrics
+                </div>
+                <span class="section-switch-badge" id="perfBadge-kpi" style="display: none;"></span>
+            </div>
+            <div class="kpi-grid" id="tileKpis">
                 <div class="statement-kpi-card">
                     <div class="kpi-card-header">
                         <span class="kpi-card-title">Portfolio Net Value</span>
@@ -278,12 +296,15 @@
             <!-- Public Benchmarks Section -->
             <div class="benchmarks-grid">
                 <!-- SEC Rule 605 Execution Quality Benchmark -->
-                <div class="benchmark-card">
+                <div class="benchmark-card" id="tileSec605">
                     <div class="benchmark-card-header">
                         <div class="benchmark-card-title">
                             <span>🏛️</span> SEC Rule 605 Execution Standard
                         </div>
-                        <div class="benchmark-card-badge">FINRA / IBKR Standard</div>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span class="section-switch-badge" id="perfBadge-sec605" style="display: none;"></span>
+                            <div class="benchmark-card-badge">FINRA / IBKR Standard</div>
+                        </div>
                     </div>
                     <table class="benchmark-table">
                         <thead>
@@ -301,12 +322,15 @@
                 </div>
 
                 <!-- Institutional CTA Benchmark -->
-                <div class="benchmark-card">
+                <div class="benchmark-card" id="tileInstCta">
                     <div class="benchmark-card-header">
                         <div class="benchmark-card-title">
                             <span>📊</span> Institutional CTA / Quant Index
                         </div>
-                        <div class="benchmark-card-badge">Barclay / HFRX</div>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span class="section-switch-badge" id="perfBadge-instCta" style="display: none;"></span>
+                            <div class="benchmark-card-badge">Barclay / HFRX</div>
+                        </div>
                     </div>
                     <table class="benchmark-table">
                         <thead>
@@ -327,12 +351,15 @@
             <!-- Benchmark Comparison Visuals & Buy-and-Hold Defense -->
             <div class="benchmarks-grid">
                 <!-- Buy and Hold Defense Table -->
-                <div class="benchmark-card">
+                <div class="benchmark-card" id="tileBuyHold">
                     <div class="benchmark-card-header">
                         <div class="benchmark-card-title">
                             <span>🛡️</span> Buy-and-Hold Risk Suppression
                         </div>
-                        <div class="benchmark-card-badge" id="buyHoldBadge">SPY Benchmark</div>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span class="section-switch-badge" id="perfBadge-buyHold" style="display: none;"></span>
+                            <div class="benchmark-card-badge" id="buyHoldBadge">SPY Benchmark</div>
+                        </div>
                     </div>
                     <table class="benchmark-table">
                         <thead>
@@ -350,25 +377,34 @@
                 </div>
 
                 <!-- Radar Comparison Chart -->
-                <div class="benchmark-card" style="display: flex; flex-direction: column;">
+                <div class="benchmark-card" id="tileRadarChart" style="display: flex; flex-direction: column;">
                     <div class="benchmark-card-header">
                         <div class="benchmark-card-title">
                             <span>🕸️</span> Multi-Pillar Performance Radar
                         </div>
-                        <div class="benchmark-card-badge">Engine vs Institutional Median</div>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span class="section-switch-badge" id="perfBadge-radar" style="display: none;"></span>
+                            <div class="benchmark-card-badge">Engine vs Institutional Median</div>
+                        </div>
                     </div>
                     <div style="flex: 1; min-height: 240px; position: relative;">
+                        <div class="chart-switch-overlay" id="radarSwitchOverlay" style="display: none;">
+                            <span class="section-switch-spinner"></span>
+                            <div class="table-switch-text chart-switch-overlay-text">Loading benchmark radar chart...</div>
+                            <div class="table-switch-subtext">Calculating multi-pillar performance metrics</div>
+                        </div>
                         <canvas id="benchmarkRadarChart"></canvas>
                     </div>
                 </div>
             </div>
 
             <!-- Bot Performance Breakdown Section -->
-            <div class="bots-section">
-                <div class="section-header">
+            <div class="bots-section" id="tileBots">
+                <div class="section-header" style="display: flex; align-items: center; justify-content: space-between;">
                     <div class="section-title">
                         <span>🤖</span> Performance per Bot &amp; Symbol Attribution
                     </div>
+                    <span class="section-switch-badge" id="perfBadge-bots" style="display: none;"></span>
                 </div>
                 <div class="bot-table-wrapper">
                     <table class="bot-table">
@@ -395,11 +431,12 @@
             </div>
 
             <!-- Automated Diagnostic Findings & Actionable Recommendations -->
-            <div class="diagnostics-section">
-                <div class="section-header">
+            <div class="diagnostics-section" id="tileDiagnostics">
+                <div class="section-header" style="display: flex; align-items: center; justify-content: space-between;">
                     <div class="section-title">
                         <span>💡</span> Automated Engine Diagnostics &amp; Prioritized Levers
                     </div>
+                    <span class="section-switch-badge" id="perfBadge-diagnostics" style="display: none;"></span>
                 </div>
                 <div class="diagnostics-grid" id="diagnosticsGrid">
                     <!-- Dynamically populated -->
@@ -409,6 +446,6 @@
     </div>
 
     <!-- Client Script -->
-    <script src="/static/js/performance.js?v=1.0.0"></script>
+    <script src="/static/js/performance.js?v=2.0.0"></script>
 </body>
 </html>
