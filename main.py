@@ -120,6 +120,30 @@ def _as_naive_local(value) -> Optional[datetime]:
     return value
 
 
+# Paths that unauthenticated MACHINE clients (the trading bots themselves) must
+# be able to write, and which therefore bypass the session check.
+#
+# The middleware previously exempted *every* `POST /api/*` request
+# (dashboard #79 / discrepancy D12), which left the order-placing endpoints
+# (`/api/create-position`, `/api/close-position`, `/api/bot-control/*`,
+# `/api/bot-control/switch-profile`) reachable by anyone with the URL - and none
+# of those handlers checked the session themselves. The exemption is now scoped
+# to the endpoints that genuinely have no browser session:
+#
+#   - `/api/logs/update`  - the bot's DashboardClient posts log lines here
+#                           (trading/dashboard.py:826)
+#
+# The deprecated bot->dashboard writers (`/api/bot-overview/update`,
+# `/api/trade-history/add`, `/api/pnl-statement/update`, `/api/pnl-sync`) are
+# NOT exempt: bots write to Firestore directly since v2.0 and those endpoints
+# actively warn when called, so leaving them authenticated surfaces any stale
+# caller instead of silently trusting it. Add a path here only with evidence
+# that an automated client with no session calls it.
+MACHINE_WRITE_PATHS = frozenset({
+    "/api/logs/update",
+})
+
+
 def is_valid_session(session_id: Optional[str]) -> bool:
     """
     Validate a session for API endpoints: it must exist AND still be unexpired.
@@ -621,10 +645,12 @@ async def check_access_code(request: Request, call_next):
         request.url.path.startswith("/api/bot-params") or  # Allow bot parameter inspection
         request.url.path.startswith("/api/historical-bars/") or  # Allow historical bars for charts
         request.url.path == "/api/logs" or  # Allow logs API for frontend
-        request.url.path.startswith("/api/learning-candidates") or  # Allow learning endpoints
+        request.url.path == "/api/learning-candidates" or  # Allow learning candidate LISTING (GET); decisions are POST and require auth
+        request.url.path == "/api/learning-candidates/stats" or  # Allow learning stats (GET)
         request.url.path.startswith("/api/option-events/") or  # Allow option events API for modal
-        request.url.path.startswith("/api/bot-control/") or  # Allow bot control API for profile switching
-        (request.method == "POST" and request.url.path.startswith("/api/"))):
+        request.url.path == "/api/bot-control/current-profile" or  # Allow read-only profile inspection
+        request.url.path in MACHINE_WRITE_PATHS or  # Allow bot-internal writes (see MACHINE_WRITE_PATHS)
+        (request.method in ("OPTIONS",))):  # Allow CORS preflight
         # Allow bot POST requests, health checks, logs, learning endpoints, option events, and bot control without authentication
         return await call_next(request)
 
@@ -673,7 +699,7 @@ async def check_access_code(request: Request, call_next):
     ):
         return HTMLResponse(content=get_login_page(), status_code=200)
 
-    # For API GET/DELETE endpoints without auth, return 401
+    # For API endpoints without auth, return 401 (any method: GET/DELETE/POST/PUT)
     if request.url.path.startswith("/api"):
         return JSONResponse(
             status_code=401,

@@ -630,6 +630,7 @@ async function handleDecision(findingId, decision) {
     try {
         const response = await fetch('/api/learning-candidates/decision', {
             method: 'POST',
+            credentials: 'include',  // Send session cookie for authentication
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 finding_id: findingId,
