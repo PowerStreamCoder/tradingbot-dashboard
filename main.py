@@ -3766,6 +3766,10 @@ async def accept_stock_pick(request: Request):
                     or target_candidate.get("fundamental_score")
                     or target_candidate.get("score")
                 )
+            if target_candidate.get("composite_score") is None and target_candidate.get("initial_score") is not None:
+                target_candidate["composite_score"] = target_candidate["initial_score"]
+            if target_candidate.get("score") is None and target_candidate.get("initial_score") is not None:
+                target_candidate["score"] = target_candidate["initial_score"]
 
             already_accepted = data.get("already_accepted", [])
             exists_idx = next((i for i, x in enumerate(already_accepted) if (x.get("ticker") or x.get("symbol") or "").upper() == symbol), None)
@@ -4125,6 +4129,17 @@ async def provision_bot_from_pick(request: Request):
             doc_ref = dashboard_data.stock_picks_ref.document("current")
 
             def _mutate_provision(data):
+                nonlocal pick_ctx
+                # Locate candidate in data if pick_ctx was empty during pre-fetch
+                if not pick_ctx:
+                    for k in ["actionable_leads", "growth_picks", "income_picks", "already_accepted"]:
+                        for x in data.get(k, []):
+                            if (x.get("ticker") or x.get("symbol") or "").upper() == symbol:
+                                pick_ctx = dict(x)
+                                break
+                        if pick_ctx:
+                            break
+
                 for k in ["actionable_leads", "growth_picks", "income_picks"]:
                     if k in data and isinstance(data[k], list):
                         data[k] = [x for x in data[k] if (x.get("ticker") or x.get("symbol") or "").upper() != symbol]
@@ -4145,12 +4160,23 @@ async def provision_bot_from_pick(request: Request):
                         match["strategy_track"] = strategy_track
                     if match.get("initial_score") is None and initial_score is not None:
                         match["initial_score"] = initial_score
+                    if match.get("composite_score") is None and initial_score is not None:
+                        match["composite_score"] = initial_score
+                    if match.get("score") is None and initial_score is not None:
+                        match["score"] = initial_score
+                    if pick_ctx:
+                        for field in ["evidence_dossier", "catalyst", "fundamental_reasons", "industry", "current_price", "est_atr_pct"]:
+                            if not match.get(field) and pick_ctx.get(field):
+                                match[field] = pick_ctx[field]
                 else:
-                    already_accepted.append({
+                    cand_entry = dict(pick_ctx) if pick_ctx else {}
+                    cand_entry.update({
                         "symbol": symbol,
                         "ticker": symbol,
                         "strategy_track": strategy_track,
                         "initial_score": initial_score,
+                        "composite_score": cand_entry.get("composite_score") if cand_entry.get("composite_score") is not None else initial_score,
+                        "score": cand_entry.get("score") if cand_entry.get("score") is not None else initial_score,
                         "status": "PROVISIONED",
                         "bot_id": bot_id,
                         "client_id": next_id,
@@ -4158,6 +4184,7 @@ async def provision_bot_from_pick(request: Request):
                         "dashboard_link": f"/bot-focus?bot={next_id}",
                         "status_label": f"Bot Active (client_id: {next_id})"
                     })
+                    already_accepted.append(cand_entry)
                 data["already_accepted"] = already_accepted
                 return True
 

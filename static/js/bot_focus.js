@@ -216,7 +216,7 @@ function populateBotSelector(activeBots, allBots) {
     }
 
     const savedBotId = localStorage.getItem('selectedBotId');
-    const currentSelectedId = savedBotId ? parseInt(savedBotId) : (activeBots[0]?.client_id || 1);
+    const currentSelectedId = (CONFIG && CONFIG.botId) ? CONFIG.botId : (savedBotId ? parseInt(savedBotId) : (activeBots[0]?.client_id || 1));
 
     // Add enabled bots
     if (activeBots.length > 0) {
@@ -305,9 +305,9 @@ function populateBotSelector(activeBots, allBots) {
         selector.appendChild(disabledGroup);
     }
 
-    // Set selected value if saved preference exists
-    if (savedBotId) {
-        selector.value = savedBotId;
+    // Set selected value if active bot or saved preference exists
+    if (currentSelectedId) {
+        selector.value = currentSelectedId.toString();
     }
 
     // Setup custom trigger click listener (once)
@@ -338,6 +338,61 @@ function populateBotSelector(activeBots, allBots) {
 
     Logger.info('BotFocus', `Bot selector populated with ${activeBots.length} active bots, ${disabledBots.length} disabled`);
 }
+
+/**
+ * Refresh bot configurations from API and update the selector dropdown.
+ * If targetBotId is provided, switches active monitoring to that bot.
+ *
+ * @param {number|string|null} targetBotId - Optional bot client_id or symbol to switch to
+ * @returns {Promise<boolean>}
+ */
+async function refreshBotSelector(targetBotId = null) {
+    try {
+        const response = await fetch(`${API_ENDPOINTS.BOT_CONFIGS}?_t=${Date.now()}`);
+        if (!response.ok) return false;
+        const data = await response.json();
+        if (!data.bots || !Array.isArray(data.bots)) return false;
+
+        const activeBots = data.bots.filter(b => b.enabled);
+        if (activeBots.length === 0) return false;
+
+        configVersion = data.version || Date.now();
+
+        // Repopulate selector options (both native select and custom dropdown menu)
+        populateBotSelector(activeBots, data.bots);
+
+        if (targetBotId != null) {
+            const targetParsed = parseInt(targetBotId);
+            const target = activeBots.find(b => {
+                if (!isNaN(targetParsed) && b.client_id === targetParsed) return true;
+                if (b.symbol && b.symbol.toUpperCase() === String(targetBotId).toUpperCase()) return true;
+                return false;
+            });
+
+            if (target) {
+                const selector = document.getElementById('botSelector');
+                if (selector) {
+                    selector.value = target.client_id.toString();
+                }
+                localStorage.setItem('selectedBotId', target.client_id.toString());
+                if (window.history && window.history.replaceState) {
+                    const newUrl = new URL(window.location);
+                    newUrl.searchParams.delete('show');
+                    newUrl.searchParams.set('bot', target.client_id.toString());
+                    window.history.replaceState({}, '', newUrl);
+                }
+                await handleBotSelectorChange({ target: { value: target.client_id } });
+                return true;
+            }
+        }
+        return true;
+    } catch (e) {
+        Logger.warn('BotFocus', 'Failed to refresh bot selector', e);
+        return false;
+    }
+}
+window.refreshBotSelector = refreshBotSelector;
+window.loadBotConfig = loadBotConfig;
 
 /**
  * Toggle the custom bot dropdown menu open/closed
@@ -1253,22 +1308,16 @@ function startConfigUpdatePolling() {
  */
 async function checkForConfigUpdates() {
     try {
-        const response = await fetch(API_ENDPOINTS.BOT_CONFIGS);
+        const response = await fetch(`${API_ENDPOINTS.BOT_CONFIGS}?_t=${Date.now()}`);
         const data = await response.json();
 
         if (data.version && configVersion && data.version > configVersion) {
-            Logger.info('BotFocus', 'Configuration updated detected', {
+            Logger.info('BotFocus', 'Configuration update detected', {
                 old: configVersion,
                 new: data.version
             });
-
-            // Offer reload
-            if (confirm('Bot configuration has been updated. Reload dashboard to apply changes?')) {
-                location.reload();
-            } else {
-                // Update version to avoid repeated prompts
-                configVersion = data.version;
-            }
+            configVersion = data.version;
+            await refreshBotSelector();
         }
     } catch (error) {
         Logger.debug('Config update check failed (non-critical):', error);

@@ -536,9 +536,16 @@ function renderStockPicksTable() {
         // Sanitized symbol: safe in HTML text, element ids AND inline onclick
         // handlers (HTML entities are decoded before the JS parser there).
         const sym = safeSymbol(pick.ticker || pick.symbol || '-') || '-';
-        const track = safeTrack(pick.strategy_track);
-        const score = pick.composite_score != null ? pick.composite_score.toFixed(1) : (pick.score != null ? pick.score.toFixed(1) : '-');
-        const status = pick.status || 'PENDING_REVIEW';
+        const rawScore = pick.composite_score != null
+            ? pick.composite_score
+            : (pick.score != null
+                ? pick.score
+                : (pick.initial_score != null
+                    ? pick.initial_score
+                    : (pick.current_score != null
+                        ? pick.current_score
+                        : null)));
+        const score = (rawScore != null && !isNaN(Number(rawScore))) ? Number(rawScore).toFixed(1) : '-';
         const catalyst = toText(pick.catalyst || pick.fundamental_reasons) || 'Algorithmically identified opportunity';
         const dossier = pick.evidence_dossier || {};
         const industry = toText(pick.industry || dossier.industry) || '';
@@ -927,6 +934,13 @@ async function confirmProvisionBot() {
         const res = await response.json();
         showToast(`✅ Successfully provisioned bot ${res.bot_id} (client_id: ${res.client_id})!`, 'success');
         closeAcceptModal();
+        if (typeof window.refreshBotSelector === 'function') {
+            try {
+                await window.refreshBotSelector(res.client_id);
+            } catch (err) {
+                console.warn('Could not refresh bot selector:', err);
+            }
+        }
         loadStockPicks();
 
     } catch (e) {
@@ -1081,31 +1095,42 @@ function onStockPickerTabInactive() {
  * If already on the Bot Focus page, smoothly transitions from the Stock Picker tab
  * to the selected bot without a full page reload.
  */
-function navigateToBot(clientId, symbol) {
+async function navigateToBot(clientId, symbol) {
     // 1. Switch back from Stock Picker tab to Bot Focus tab if active
     if (typeof showBotFocusTab === 'function') {
         showBotFocusTab(null);
     }
 
-    // 2. Attempt direct selector switch on current page
-    const selector = document.getElementById('botSelector');
-    let targetId = clientId ? parseInt(clientId) : null;
+    const targetId = clientId ? parseInt(clientId) : null;
 
+    // 2. Synchronize bot selector with latest bot list and auto-select
+    if (typeof window.refreshBotSelector === 'function') {
+        try {
+            const switched = await window.refreshBotSelector(targetId || symbol);
+            if (switched) return;
+        } catch (e) {
+            console.warn('refreshBotSelector failed:', e);
+        }
+    }
+
+    // 3. Attempt direct selector switch on current page
+    const selector = document.getElementById('botSelector');
     if (selector) {
-        if (!targetId && symbol) {
+        let matchedId = targetId;
+        if (!matchedId && symbol) {
             const opt = Array.from(selector.options).find(o => o.textContent.toUpperCase().includes(symbol.toUpperCase()));
-            if (opt) targetId = parseInt(opt.value);
+            if (opt) matchedId = parseInt(opt.value);
         }
 
-        if (targetId && !isNaN(targetId)) {
-            selector.value = targetId.toString();
-            localStorage.setItem('selectedBotId', targetId.toString());
+        if (matchedId && !isNaN(matchedId)) {
+            selector.value = matchedId.toString();
+            localStorage.setItem('selectedBotId', matchedId.toString());
 
             // Synchronize custom dropdown if present
             const customOptions = document.querySelectorAll('.custom-bot-option');
             customOptions.forEach(opt => {
                 const optId = opt.getAttribute('data-client-id');
-                const isSelected = optId === targetId.toString();
+                const isSelected = optId === matchedId.toString();
                 opt.classList.toggle('selected', isSelected);
                 opt.setAttribute('aria-selected', isSelected ? 'true' : 'false');
             });
@@ -1114,7 +1139,7 @@ function navigateToBot(clientId, symbol) {
             if (window.history && window.history.replaceState) {
                 const newUrl = new URL(window.location);
                 newUrl.searchParams.delete('show');
-                newUrl.searchParams.set('bot', targetId.toString());
+                newUrl.searchParams.set('bot', matchedId.toString());
                 window.history.replaceState({}, '', newUrl);
             }
 
@@ -1125,7 +1150,7 @@ function navigateToBot(clientId, symbol) {
         }
     }
 
-    // 3. Fallback: Save preference to localStorage and navigate
+    // 4. Fallback: Save preference to localStorage and navigate
     if (targetId && !isNaN(targetId)) {
         localStorage.setItem('selectedBotId', targetId.toString());
     }
