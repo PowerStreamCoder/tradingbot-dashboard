@@ -799,6 +799,134 @@ function formatPickMetrics(pick) {
 // HITL PROVISIONING & REJECT MODALS
 // =============================================================================
 
+function toggleCcModeDropdown(event) {
+    if (event) event.stopPropagation();
+    const trigger = document.getElementById('sp-cc-mode-trigger');
+    const menu = document.getElementById('sp-cc-mode-menu');
+    if (!trigger || !menu) return;
+
+    const isOpen = menu.classList.contains('open');
+    if (isOpen) {
+        menu.classList.remove('open');
+        trigger.classList.remove('open');
+        trigger.setAttribute('aria-expanded', 'false');
+    } else {
+        menu.classList.add('open');
+        trigger.classList.add('open');
+        trigger.setAttribute('aria-expanded', 'true');
+    }
+}
+
+function closeCcModeDropdown() {
+    const trigger = document.getElementById('sp-cc-mode-trigger');
+    const menu = document.getElementById('sp-cc-mode-menu');
+    if (trigger) {
+        trigger.classList.remove('open');
+        trigger.setAttribute('aria-expanded', 'false');
+    }
+    if (menu) {
+        menu.classList.remove('open');
+    }
+}
+
+function applyModeUiState(mode) {
+    const normalizedMode = (mode || 'TOTAL_RETURN').toUpperCase();
+
+    // 1. Update hidden select value
+    const elMode = document.getElementById('modal-param-cc-mode');
+    if (elMode) {
+        elMode.value = normalizedMode;
+    }
+
+    // 2. Update trigger UI badge and title
+    const badgeEl = document.getElementById('sp-trigger-mode-badge');
+    const titleEl = document.getElementById('sp-trigger-mode-title');
+    if (badgeEl && titleEl) {
+        if (normalizedMode === 'EQUITY') {
+            badgeEl.className = 'sp-mode-badge equity';
+            badgeEl.textContent = '📈 Equity';
+            titleEl.textContent = 'Equity (Pure Growth)';
+        } else if (normalizedMode === 'INCOME') {
+            badgeEl.className = 'sp-mode-badge income';
+            badgeEl.textContent = '🛡️ Income';
+            titleEl.textContent = 'Income (Max Premium Yield)';
+        } else {
+            badgeEl.className = 'sp-mode-badge total-return';
+            badgeEl.textContent = '🚀 Total Return';
+            titleEl.textContent = 'Total Return (Growth Upside)';
+        }
+    }
+
+    // 3. Highlight selected option in dropdown menu
+    const options = document.querySelectorAll('#sp-cc-mode-menu .sp-mode-option');
+    options.forEach(opt => {
+        const val = opt.getAttribute('data-value');
+        if (val === normalizedMode) {
+            opt.classList.add('selected');
+            opt.setAttribute('aria-selected', 'true');
+        } else {
+            opt.classList.remove('selected');
+            opt.setAttribute('aria-selected', 'false');
+        }
+    });
+
+    // 4. Update Call Expiration (Days) field states
+    const expContainer = document.getElementById('modal-call-exp-container');
+    const expInput = document.getElementById('modal-param-call-exp-days');
+    const expStatus = document.getElementById('modal-call-exp-status');
+    const expNotice = document.getElementById('modal-call-exp-notice');
+
+    if (normalizedMode === 'EQUITY') {
+        if (expContainer) expContainer.classList.add('disabled-field');
+        if (expInput) {
+            expInput.disabled = true;
+            expInput.value = '0';
+        }
+        if (expStatus) {
+            expStatus.textContent = 'Disabled (Covered calls ignored in Equity mode)';
+            expStatus.style.color = '#94a3b8';
+        }
+        if (expNotice) expNotice.style.display = 'block';
+    } else if (normalizedMode === 'INCOME') {
+        if (expContainer) expContainer.classList.remove('disabled-field');
+        if (expInput) {
+            expInput.disabled = false;
+            const currentVal = parseInt(expInput.value);
+            if (isNaN(currentVal) || currentVal <= 0 || currentVal === 7) {
+                expInput.value = '30';
+            }
+        }
+        if (expStatus) {
+            expStatus.textContent = 'Active (~30 DTE Monthly Calls)';
+            expStatus.style.color = '#34d399';
+        }
+        if (expNotice) expNotice.style.display = 'none';
+    } else {
+        // TOTAL_RETURN
+        if (expContainer) expContainer.classList.remove('disabled-field');
+        if (expInput) {
+            expInput.disabled = false;
+            const currentVal = parseInt(expInput.value);
+            if (isNaN(currentVal) || currentVal <= 0 || currentVal === 30) {
+                expInput.value = '7';
+            }
+        }
+        if (expStatus) {
+            expStatus.textContent = 'Active (7-14 DTE Weekly Calls)';
+            expStatus.style.color = '#34d399';
+        }
+        if (expNotice) expNotice.style.display = 'none';
+    }
+
+    closeCcModeDropdown();
+}
+
+function selectCcMode(mode, event) {
+    if (event) event.stopPropagation();
+    applyModeUiState(mode);
+    refreshParameterAdvice();
+}
+
 function openAcceptModal(sym, track) {
     selectedSymbolForAction = sym;
     selectedTrackForAction = track;
@@ -809,6 +937,9 @@ function openAcceptModal(sym, track) {
 
     if (elSym) elSym.textContent = sym;
     if (elTrack) elTrack.value = track === 'INCOME' ? 'Track 2: Covered Call Income' : 'Track 1: Growth Equity';
+
+    // Set initial mode: INCOME for Track 2, TOTAL_RETURN for Track 1
+    const initialMode = track === 'INCOME' ? 'INCOME' : 'TOTAL_RETURN';
 
     // Check if candidate is degraded and warn operator
     const degWarnModal = document.getElementById('modal-degradation-warning');
@@ -830,7 +961,11 @@ function openAcceptModal(sym, track) {
         }
     }
 
-    if (modal) modal.style.display = 'block';
+    applyModeUiState(initialMode);
+
+    if (modal) {
+        modal.style.display = 'flex';
+    }
 
     refreshParameterAdvice();
 }
@@ -841,13 +976,15 @@ async function refreshParameterAdvice() {
     const track = selectedTrackForAction || 'GROWTH';
     const capitalInput = document.getElementById('modal-accept-capital');
     const capital = capitalInput ? parseFloat(capitalInput.value) || 10000 : 10000;
+    const elMode = document.getElementById('modal-param-cc-mode');
+    const currentMode = elMode ? elMode.value : (track === 'INCOME' ? 'INCOME' : 'TOTAL_RETURN');
 
     const summaryEl = document.getElementById('modal-advice-summary');
     const bulletsEl = document.getElementById('modal-advice-bullets');
     const badgeEl = document.getElementById('modal-advice-risk-badge');
 
     try {
-        const res = await fetch(`/api/stock-picks/parameter-advice?symbol=${encodeURIComponent(sym)}&strategy_track=${encodeURIComponent(track)}&capital_allocation=${capital}`);
+        const res = await fetch(`/api/stock-picks/parameter-advice?symbol=${encodeURIComponent(sym)}&strategy_track=${encodeURIComponent(track)}&capital_allocation=${capital}&cc_mode=${encodeURIComponent(currentMode)}`);
         if (res.ok) {
             const advice = await res.json();
             if (badgeEl) {
@@ -867,10 +1004,19 @@ async function refreshParameterAdvice() {
             if (elStop && atr.trailing_stop_atr_multiplier) elStop.value = atr.trailing_stop_atr_multiplier;
             const elShares = document.getElementById('modal-param-min-shares');
             if (elShares && atr.position_min_shares) elShares.value = atr.position_min_shares;
-            const elMode = document.getElementById('modal-param-cc-mode');
-            if (elMode && cc.cc_mode) elMode.value = cc.cc_mode;
+
             const elExp = document.getElementById('modal-param-call-exp-days');
-            if (elExp && cc.call_expiration_days) elExp.value = cc.call_expiration_days;
+            if (currentMode === 'EQUITY') {
+                if (elExp) {
+                    elExp.disabled = true;
+                    elExp.value = '0';
+                }
+            } else {
+                if (elExp) {
+                    elExp.disabled = false;
+                    if (cc.call_expiration_days) elExp.value = cc.call_expiration_days;
+                }
+            }
         }
     } catch (err) {
         console.error('Error fetching parameter advice:', err);
@@ -880,6 +1026,7 @@ async function refreshParameterAdvice() {
 function closeAcceptModal() {
     const modal = document.getElementById('sp-accept-modal');
     if (modal) modal.style.display = 'none';
+    closeCcModeDropdown();
     selectedSymbolForAction = null;
     selectedTrackForAction = null;
 }
@@ -897,11 +1044,21 @@ async function confirmProvisionBot() {
     const elMode = document.getElementById('modal-param-cc-mode');
     const elExp = document.getElementById('modal-param-call-exp-days');
 
-    const customParams = {};
+    const chosenMode = (elMode ? elMode.value : 'TOTAL_RETURN').toUpperCase();
+    const customParams = {
+        cc_mode: chosenMode
+    };
+
     if (elStop && elStop.value) customParams.trailing_stop_atr_multiplier = parseFloat(elStop.value);
     if (elShares && elShares.value) customParams.position_min_shares = parseInt(elShares.value);
-    if (elMode && elMode.value) customParams.cc_mode = elMode.value;
-    if (elExp && elExp.value) customParams.call_expiration_days = parseInt(elExp.value);
+
+    if (chosenMode === 'EQUITY') {
+        customParams.use_covered_calls = false;
+        customParams.call_expiration_days = 0;
+    } else {
+        customParams.use_covered_calls = true;
+        if (elExp && elExp.value) customParams.call_expiration_days = parseInt(elExp.value);
+    }
 
     const btn = document.getElementById('modal-confirm-provision-btn');
     if (btn) {
@@ -962,7 +1119,7 @@ function openRejectModal(sym) {
     const modal = document.getElementById('sp-reject-modal');
 
     if (elSym) elSym.textContent = sym;
-    if (modal) modal.style.display = 'block';
+    if (modal) modal.style.display = 'flex';
 }
 
 function closeRejectModal() {
@@ -1160,6 +1317,50 @@ async function navigateToBot(clientId, symbol) {
 
 
 // =============================================================================
+// GLOBAL EVENT LISTENERS (Backdrop dismissal, outside clicks, Escape key)
+// =============================================================================
+
+if (typeof window !== 'undefined') {
+    window.addEventListener('click', function(e) {
+        // 1. Close custom CC mode dropdown if click is outside
+        const wrapper = document.getElementById('sp-cc-mode-wrapper');
+        if (wrapper && !wrapper.contains(e.target)) {
+            closeCcModeDropdown();
+        }
+
+        // 2. Close modals on backdrop click
+        const acceptModal = document.getElementById('sp-accept-modal');
+        if (acceptModal && e.target === acceptModal) {
+            closeAcceptModal();
+        }
+        const rejectModal = document.getElementById('sp-reject-modal');
+        if (rejectModal && e.target === rejectModal) {
+            closeRejectModal();
+        }
+    });
+
+    window.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            const menu = document.getElementById('sp-cc-mode-menu');
+            if (menu && menu.classList.contains('open')) {
+                closeCcModeDropdown();
+                return;
+            }
+            const acceptModal = document.getElementById('sp-accept-modal');
+            if (acceptModal && acceptModal.style.display === 'flex') {
+                closeAcceptModal();
+                return;
+            }
+            const rejectModal = document.getElementById('sp-reject-modal');
+            if (rejectModal && rejectModal.style.display === 'flex') {
+                closeRejectModal();
+            }
+        }
+    });
+}
+
+
+// =============================================================================
 // EXPORTS
 // =============================================================================
 
@@ -1170,6 +1371,10 @@ if (typeof window !== 'undefined') {
     window.toggleDossier = toggleDossier;
     window.openAcceptModal = openAcceptModal;
     window.closeAcceptModal = closeAcceptModal;
+    window.toggleCcModeDropdown = toggleCcModeDropdown;
+    window.closeCcModeDropdown = closeCcModeDropdown;
+    window.selectCcMode = selectCcMode;
+    window.applyModeUiState = applyModeUiState;
     window.confirmProvisionBot = confirmProvisionBot;
     window.openRejectModal = openRejectModal;
     window.closeRejectModal = closeRejectModal;

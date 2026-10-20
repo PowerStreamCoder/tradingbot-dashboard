@@ -21,7 +21,8 @@ def generate_expert_parameter_advice(
     solvency_rating: Optional[str] = None,
     is_degraded: bool = False,
     missing_sources: Optional[List[str]] = None,
-    degradation_warnings: Optional[List[str]] = None
+    degradation_warnings: Optional[List[str]] = None,
+    cc_mode: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Generate tailored bot parameters with quant rationale.
@@ -37,6 +38,7 @@ def generate_expert_parameter_advice(
         is_degraded: Whether candidate data feeds were incomplete or degraded
         missing_sources: List of missing upstream data sources
         degradation_warnings: List of specific data degradation warnings
+        cc_mode: Optional explicit mode override ('EQUITY', 'TOTAL_RETURN', 'INCOME')
 
     Returns:
         Structured dictionary with recommended_params, expert_rationale, and risk_tier.
@@ -83,16 +85,33 @@ def generate_expert_parameter_advice(
         sma_desc = "Smoothed 10/30 SMA trend filter tuned to avoid false breakouts on income holdings."
 
     # 4. Covered Call Execution Mode & Expiry
-    if track == "INCOME":
-        cc_mode = "INCOME"
+    # Three canonical modes: EQUITY (no CC), TOTAL_RETURN (growth + weekly CC), INCOME (monthly CC)
+    effective_mode = (cc_mode.strip().upper() if cc_mode and cc_mode.strip() else None)
+    if not effective_mode:
+        effective_mode = "INCOME" if track == "INCOME" else "TOTAL_RETURN"
+
+    if effective_mode == "EQUITY":
+        use_covered_calls = False
+        resolved_cc_mode = "EQUITY"
+        call_expiration_days = 0
+        strike_offset_pct = 0.0
+        cc_desc = "Equity Mode: Pure directional momentum. Covered calls are completely ignored and disabled."
+        advisory_mode_phrase = "pure Equity mode (covered calls disabled)"
+    elif effective_mode == "INCOME":
+        use_covered_calls = True
+        resolved_cc_mode = "INCOME"
         call_expiration_days = 30
         strike_offset_pct = 4.0  # 4% OTM
         cc_desc = "Income mode (30-day expiry, ~4% OTM strike) optimizes theta decay and steady premium yield."
+        advisory_mode_phrase = "INCOME covered call rules"
     else:
-        cc_mode = "TOTAL_RETURN"
+        # Default or TOTAL_RETURN
+        use_covered_calls = True
+        resolved_cc_mode = "TOTAL_RETURN"
         call_expiration_days = 7
         strike_offset_pct = 9.0  # 9% OTM
         cc_desc = "Total Return mode (7-day expiry, ~9% OTM strike) preserves equity capital upside while monetizing weekly calls."
+        advisory_mode_phrase = "TOTAL_RETURN covered call rules"
 
     # 5. Risk Tier Assessment
     if atr_pct >= 0.030 or solvency == "Distressed":
@@ -109,6 +128,7 @@ def generate_expert_parameter_advice(
         f"Covered Call Execution: {cc_desc}",
     ]
 
+    missing_text = ""
     if is_degraded:
         missing_text = ', '.join(missing_sources) if missing_sources else 'partial feeds'
         rationale_bullets.insert(
@@ -142,8 +162,8 @@ def generate_expert_parameter_advice(
                 "sma_slow": sma_slow,
             },
             "covered_calls": {
-                "use_covered_calls": True,
-                "cc_mode": cc_mode,
+                "use_covered_calls": use_covered_calls,
+                "cc_mode": resolved_cc_mode,
                 "call_expiration_days": call_expiration_days,
                 "strike_offset_pct": strike_offset_pct,
             },
@@ -152,7 +172,7 @@ def generate_expert_parameter_advice(
             }
         },
         "expert_rationale": rationale_bullets,
-        "advisory_summary": f"Quant recommendation for {sym}: Deploy ${capital:,.0f} across {buckets_per_group} buckets ({position_min_shares} min shares/order) with a {trailing_stop_multiplier}x ATR stop and {cc_mode} covered call rules." + (
+        "advisory_summary": f"Quant recommendation for {sym}: Deploy ${capital:,.0f} across {buckets_per_group} buckets ({position_min_shares} min shares/order) with a {trailing_stop_multiplier}x ATR stop and {advisory_mode_phrase}." + (
             f" (⚠️ Note: inputs degraded due to missing {missing_text})" if is_degraded else ""
         )
     }
