@@ -536,6 +536,8 @@ function renderStockPicksTable() {
         // Sanitized symbol: safe in HTML text, element ids AND inline onclick
         // handlers (HTML entities are decoded before the JS parser there).
         const sym = safeSymbol(pick.ticker || pick.symbol || '-') || '-';
+        const track = safeTrack(pick.strategy_track);
+        const status = pick.status || 'PENDING_REVIEW';
         const rawScore = pick.composite_score != null
             ? pick.composite_score
             : (pick.score != null

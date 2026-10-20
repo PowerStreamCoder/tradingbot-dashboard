@@ -1,0 +1,9 @@
+{
+  "symbol": "AFRM",
+  "capital": {
+    "capital_per_bucket_long": 5000.0
+  },
+  "covered_calls": {
+    "cc_mode": "EQUITY"
+  }
+}
