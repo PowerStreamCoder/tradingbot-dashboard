@@ -2624,10 +2624,12 @@ async def create_position(request: Request):
                 'pending_command': None
             })
 
+        cmd_timestamp = datetime.now().isoformat()
+
         # Create a create_position command
         create_command = {
             'command': 'create_position',
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': cmd_timestamp,
             'params': {
                 'symbol': symbol,
                 'quantity': 100,  # Always 100 shares for covered calls
@@ -2644,11 +2646,59 @@ async def create_position(request: Request):
 
         return {
             'success': True,
+            'command_timestamp': cmd_timestamp,
             'message': f'Create position command sent for {symbol} (100 shares + covered call). Bot will process it on next update cycle.'
         }
 
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/bot-command-status/{client_id}")
+async def get_bot_command_status(client_id: int):
+    """
+    Get the pending command and last command execution status for a bot.
+    Used by the dashboard UI to monitor real-time command processing.
+
+    Returns:
+        {
+            "success": True,
+            "client_id": client_id,
+            "pending_command": dict or None,
+            "last_command_result": dict or None,
+            "has_active_position": bool
+        }
+    """
+    try:
+        db = firestore.Client()
+        bot_ref = db.collection('bots').document(f'bot_{client_id}')
+        doc = bot_ref.get()
+        if not doc.exists:
+            return {
+                "success": True,
+                "client_id": client_id,
+                "pending_command": None,
+                "last_command_result": None,
+                "has_active_position": False
+            }
+
+        data = doc.to_dict() or {}
+        has_active_position = bool(data.get("active_position"))
+        if not has_active_position:
+            for k, v in data.items():
+                if k.startswith("bucket") and isinstance(v, dict):
+                    if v.get("entryPrice") is not None and v.get("quantity"):
+                        has_active_position = True
+                        break
+
+        return {
+            "success": True,
+            "client_id": client_id,
+            "pending_command": data.get("pending_command"),
+            "last_command_result": data.get("last_command_result"),
+            "has_active_position": has_active_position
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

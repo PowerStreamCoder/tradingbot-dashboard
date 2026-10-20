@@ -1468,27 +1468,68 @@ function showNotification(message, type = 'info') {
     const notification = document.createElement('div');
     notification.className = `notification notification-${type}`;
     notification.textContent = message;
+    const bgColor = type === 'success' ? '#38a169' : type === 'error' ? '#e53e3e' : type === 'warning' ? '#dd6b20' : '#3182ce';
     notification.style.cssText = `
         position: fixed;
         top: 20px;
         right: 20px;
         padding: 15px 20px;
-        background: ${type === 'success' ? '#48bb78' : type === 'error' ? '#f56565' : '#4299e1'};
+        background: ${bgColor};
         color: white;
         border-radius: 8px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
         z-index: 10000;
         font-weight: 500;
+        white-space: pre-line;
+        max-width: 440px;
+        line-height: 1.45;
         animation: slideIn 0.3s ease;
     `;
 
     document.body.appendChild(notification);
 
-    // Remove after 3 seconds
+    // Remove after 4 seconds (6s for error/warning)
+    const timeout = (type === 'error' || type === 'warning') ? 6000 : 4000;
     setTimeout(() => {
         notification.style.animation = 'slideOut 0.3s ease';
         setTimeout(() => notification.remove(), 300);
-    }, 3000);
+    }, timeout);
+}
+
+/**
+ * Show inline operation alert banner above active position & orders table
+ */
+function showPositionOperationAlert(message, type = 'info', autoDismissMs = 0) {
+    const alertEl = document.getElementById('positionOperationAlert');
+    if (!alertEl) return;
+
+    if (!message) {
+        alertEl.style.display = 'none';
+        alertEl.innerHTML = '';
+        return;
+    }
+
+    const typeClass = type === 'success' ? 'alert-success' : type === 'error' || type === 'danger' ? 'alert-danger' : type === 'warning' ? 'alert-warning' : 'alert-info';
+    const icon = type === 'success' ? '✅' : type === 'error' || type === 'danger' ? '❌' : type === 'warning' ? '⚠️' : 'ℹ️';
+
+    alertEl.className = `position-operation-alert ${typeClass}`;
+    alertEl.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <span>${icon}</span>
+            <span>${message}</span>
+        </div>
+        <button type="button" class="alert-close-btn" onclick="showPositionOperationAlert(null)" aria-label="Close alert">&times;</button>
+    `;
+    alertEl.style.display = 'flex';
+
+    if (autoDismissMs > 0) {
+        setTimeout(() => {
+            if (alertEl.textContent.includes(message)) {
+                alertEl.style.display = 'none';
+                alertEl.innerHTML = '';
+            }
+        }, autoDismissMs);
+    }
 }
 
 /**
@@ -1861,6 +1902,11 @@ async function handleClosePosition() {
     }
 }
 
+// Global state tracking for position creation operations
+let isCreatingPosition = false;
+let creatingBotId = null;
+let positionCommandPollTimer = null;
+
 /**
  * Handle Create Position button click
  */
@@ -1868,14 +1914,63 @@ async function handleCreatePosition() {
     const btn = document.getElementById('createPositionBtn');
     if (!btn) return;
 
+    if (isCreatingPosition) {
+        showNotification('Position creation is already in progress. Please wait...', 'warning');
+        return;
+    }
+
+    // Check if active position already exists for this bot
+    const currentBotData = window.latestBotData || {};
+    const existingPosition = getActiveBucket(currentBotData);
+    if (existingPosition && existingPosition.quantity) {
+        showNotification(`A position already exists for ${CONFIG.symbol}. Close the existing position first before creating a new one.`, 'warning');
+        showPositionOperationAlert(`A position already exists for ${CONFIG.symbol}. Close it first before creating a new position.`, 'warning', 6000);
+        return;
+    }
+
     // Confirm action
     if (!confirm(`Create a new LONG position for ${CONFIG.symbol}?\n\n• Buy 100 shares at current market price\n• Sell covered call immediately\n• Uses SMA crossover config (2.0x ATR target, 5% stop loss)\n\nThis will bypass all strategy checks. Continue?`)) {
         return;
     }
 
-    // Disable button during operation
+    const targetBotId = CONFIG.botId;
+    const targetSymbol = CONFIG.symbol;
+
+    // 1. Visual feedback: Disable button and show spinner
+    isCreatingPosition = true;
+    creatingBotId = targetBotId;
     btn.disabled = true;
-    btn.innerHTML = '<span>⏳</span> Creating...';
+    btn.classList.add('loading');
+    btn.innerHTML = '<span class="btn-spinner"></span> Creating Position...';
+    btn.title = `Creating position for ${targetSymbol}...`;
+
+    // 2. Visual feedback: Update orders table body and status badge
+    const tbody = document.getElementById('positionOrdersTableBody');
+    const statusEl = document.getElementById('positionOrdersStatus');
+
+    if (tbody) {
+        tbody.dataset.lastContent = '';
+        tbody.innerHTML = `
+            <tr class="position-creating-loading">
+                <td colspan="8">
+                    <div class="position-creating-spinner-wrap">
+                        <span class="section-switch-spinner"></span>
+                        <div class="position-creating-text">Creating new position for <strong>${targetSymbol}</strong>...</div>
+                        <div class="position-creating-subtext">Order queued (100 shares + covered call). Awaiting bot execution &amp; broker fill...</div>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }
+
+    if (statusEl) {
+        statusEl.innerHTML = '<span style="color: #38bdf8; font-weight: 600;">⏳ Creating position...</span>';
+    }
+
+    showPositionOperationAlert(`⏳ Submitting create position order for ${targetSymbol}...`, 'info');
+    showNotification(`Submitting create position order for ${targetSymbol}...`, 'info');
+
+    let commandStartTime = Date.now() - 5000;
 
     try {
         const response = await fetch('/api/create-position', {
@@ -1885,61 +1980,189 @@ async function handleCreatePosition() {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                client_id: CONFIG.botId,
-                symbol: CONFIG.symbol
+                client_id: targetBotId,
+                symbol: targetSymbol
             })
         });
 
         const result = await response.json();
 
         if (response.ok && result.success) {
-            alert(`✅ ${result.message}\n\nThe bot will create the position on its next update cycle (within 2-5 seconds).`);
-            console.log('Create position command sent successfully');
+            if (result.command_timestamp) {
+                commandStartTime = new Date(result.command_timestamp).getTime() - 2000;
+            }
 
-            // Poll for command result
-            setTimeout(() => checkCommandResult(), 3000);
+            console.log(`Create position command queued for ${targetSymbol} (client_id: ${targetBotId})`);
+            showPositionOperationAlert(`⏳ Order queued for ${targetSymbol} (100 shares + covered call). Waiting for bot execution &amp; broker fill...`, 'info');
+            showNotification(`Order queued for ${targetSymbol}. The bot will execute within 2-5 seconds.`, 'info');
+
+            // 3. Poll for bot command outcome
+            pollPositionCommandStatus(targetBotId, targetSymbol, commandStartTime);
         } else {
-            const errorMsg = result.detail || result.message || 'Unknown error';
-            alert(`❌ Failed to create position:\n\n${errorMsg}`);
-            console.error('Create position failed:', result);
+            const errorMsg = result.detail || result.message || 'Unknown error occurred while queuing position';
+            console.error('Create position request failed:', result);
+            handlePositionCreationFailure(errorMsg);
         }
     } catch (error) {
-        alert(`❌ Error creating position:\n\n${error.message}`);
-        console.error('Create position error:', error);
-    } finally {
-        // Re-enable button
-        btn.disabled = false;
-        btn.innerHTML = '<span>+</span> Create Position';
+        console.error('Create position network error:', error);
+        handlePositionCreationFailure(error.message || 'Network error occurred');
     }
 }
 
 /**
- * Check for command result from bot (last_command_result in Firestore)
+ * Handle failure when initiating or executing position creation
  */
-async function checkCommandResult() {
-    try {
-        const response = await fetch(`${CONFIG.apiEndpoints.botOverview}`);
-        const data = await response.json();
+function handlePositionCreationFailure(errorMsg) {
+    isCreatingPosition = false;
+    creatingBotId = null;
 
-        // Check if there's a recent command result
-        const botData = data.data?.bot1;
-        if (botData?.last_command_result) {
-            const result = botData.last_command_result;
-            const timestamp = new Date(result.timestamp);
-            const ageSeconds = (Date.now() - timestamp.getTime()) / 1000;
+    if (positionCommandPollTimer) {
+        clearInterval(positionCommandPollTimer);
+        positionCommandPollTimer = null;
+    }
 
-            // Only show if result is less than 10 seconds old
-            if (ageSeconds < 10) {
-                if (result.success) {
-                    alert(`✅ Position Created Successfully!\n\n${result.message}\n\nBucket: ${result.bucket_group}-${result.bucket_id}\nEntry Price: $${result.entry_price?.toFixed(2) || '--'}`);
-                } else {
-                    alert(`❌ Position Creation Failed\n\n${result.message}`);
+    const btn = document.getElementById('createPositionBtn');
+    if (btn) {
+        btn.disabled = false;
+        btn.classList.remove('loading');
+        btn.innerHTML = '<span>+</span> Create Position';
+        btn.title = 'Create a new position for this bot';
+    }
+
+    showNotification(`❌ Position Creation Failed:\n\n${errorMsg}`, 'error');
+    showPositionOperationAlert(`❌ Position Creation Failed: ${errorMsg}`, 'danger');
+
+    // Refresh bot data to restore previous valid state in UI
+    updateBotOverview();
+}
+
+/**
+ * Poll bot command status endpoint until position is created or an error/timeout occurs
+ */
+function pollPositionCommandStatus(botId, symbol, startTime) {
+    if (positionCommandPollTimer) {
+        clearInterval(positionCommandPollTimer);
+    }
+
+    let pollAttempts = 0;
+    const maxAttempts = 30; // 30 * 1.5s = 45 seconds
+
+    positionCommandPollTimer = setInterval(async () => {
+        pollAttempts++;
+
+        if (pollAttempts > maxAttempts) {
+            clearInterval(positionCommandPollTimer);
+            positionCommandPollTimer = null;
+            isCreatingPosition = false;
+            creatingBotId = null;
+
+            const btn = document.getElementById('createPositionBtn');
+            if (btn && CONFIG.botId === botId) {
+                btn.disabled = false;
+                btn.classList.remove('loading');
+                btn.innerHTML = '<span>+</span> Create Position';
+                btn.title = 'Create a new position for this bot';
+            }
+
+            const timeoutMsg = 'Position creation timed out waiting for bot response. The bot may be offline or delayed. Please check bot logs and status.';
+            showNotification(`⚠️ ${timeoutMsg}`, 'warning');
+            showPositionOperationAlert(`⚠️ ${timeoutMsg}`, 'warning');
+
+            if (CONFIG.botId === botId) {
+                updateBotOverview();
+            }
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/bot-command-status/${botId}`, {
+                credentials: 'include'
+            });
+            if (!response.ok) return;
+
+            const data = await response.json();
+            if (!data.success) return;
+
+            // Check if bot document has last_command_result
+            if (data.last_command_result) {
+                const cmdResult = data.last_command_result;
+                const resultTime = cmdResult.timestamp ? new Date(cmdResult.timestamp).getTime() : 0;
+
+                // Ensure result corresponds to this command
+                if (resultTime >= startTime) {
+                    clearInterval(positionCommandPollTimer);
+                    positionCommandPollTimer = null;
+                    isCreatingPosition = false;
+                    creatingBotId = null;
+
+                    if (cmdResult.success) {
+                        // Success!
+                        const btn = document.getElementById('createPositionBtn');
+                        if (btn && CONFIG.botId === botId) {
+                            btn.classList.remove('loading');
+                            btn.disabled = true; // Disabled until position is closed
+                            btn.title = 'Position already exists for this bot. Close it first before creating a new one.';
+                            btn.innerHTML = '<span>+</span> Create Position';
+                        }
+
+                        const successDetail = cmdResult.entry_price
+                            ? `Entry Price: $${cmdResult.entry_price.toFixed(2)} (Bucket ${cmdResult.bucket_group || ''}-${cmdResult.bucket_id || ''})`
+                            : '';
+                        const alertMsg = `Position Created Successfully! ${cmdResult.message || ''} ${successDetail}`.trim();
+
+                        showNotification(`✅ Position Created Successfully!\n\n${cmdResult.message || ''}\n${successDetail}`.trim(), 'success');
+                        showPositionOperationAlert(`✅ ${alertMsg}`, 'success', 8000);
+
+                        // Refresh overview and all components
+                        if (CONFIG.botId === botId) {
+                            await updateBotOverview();
+                            await fetchInitialData();
+                        }
+                        return;
+                    } else {
+                        // Error reported by the trading bot!
+                        const errorMsg = cmdResult.message || 'Bot was unable to create position';
+                        handlePositionCreationFailure(errorMsg);
+                        return;
+                    }
                 }
             }
+
+            // Also check if active position is already detected
+            if (data.has_active_position) {
+                clearInterval(positionCommandPollTimer);
+                positionCommandPollTimer = null;
+                isCreatingPosition = false;
+                creatingBotId = null;
+
+                const btn = document.getElementById('createPositionBtn');
+                if (btn && CONFIG.botId === botId) {
+                    btn.classList.remove('loading');
+                    btn.disabled = true;
+                    btn.title = 'Position already exists for this bot. Close it first before creating a new one.';
+                    btn.innerHTML = '<span>+</span> Create Position';
+                }
+
+                showNotification(`✅ Position Created for ${symbol}!`, 'success');
+                showPositionOperationAlert(`✅ Position Active: ${symbol} (100 shares)`, 'success', 8000);
+
+                if (CONFIG.botId === botId) {
+                    await updateBotOverview();
+                    await fetchInitialData();
+                }
+                return;
+            }
+        } catch (pollErr) {
+            console.debug('Error polling bot command status (retrying):', pollErr);
         }
-    } catch (error) {
-        console.error('Error checking command result:', error);
-    }
+    }, 1500);
+}
+
+/**
+ * Check for command result from bot (legacy fallback)
+ */
+async function checkCommandResult() {
+    // Handled by pollPositionCommandStatus
 }
 
 // Chart State
@@ -3844,7 +4067,22 @@ function updatePositionOrdersTable(botData) {
     const roundPrice = (val) => val ? Math.round(val * 100) / 100 : null;
     const roundPnL = (val) => val ? Math.round(val * 100) / 100 : null;
 
+    const createBtn = document.getElementById('createPositionBtn');
+
     if (!activeBucket || !activeBucket.quantity) {
+        // If position creation is in-flight for this bot, keep the loading row intact
+        if (isCreatingPosition && creatingBotId === CONFIG.botId) {
+            return;
+        }
+
+        // Enable create position button when no active position exists and not creating
+        if (createBtn && !isCreatingPosition) {
+            createBtn.disabled = false;
+            createBtn.classList.remove('loading');
+            createBtn.innerHTML = '<span>+</span> Create Position';
+            createBtn.title = 'Create a new position for this bot';
+        }
+
         // No active position - check if already showing empty state
         const emptyStateHash = JSON.stringify({ hasPosition: false });
         if (tbody.dataset.lastContent === emptyStateHash) {
@@ -3861,6 +4099,24 @@ function updatePositionOrdersTable(botData) {
         `;
         if (statusEl) statusEl.textContent = 'No active position';
         return;
+    }
+
+    // Active position exists: if we were creating a position for this bot, finalize creating state
+    if (isCreatingPosition && creatingBotId === CONFIG.botId) {
+        isCreatingPosition = false;
+        creatingBotId = null;
+        if (positionCommandPollTimer) {
+            clearInterval(positionCommandPollTimer);
+            positionCommandPollTimer = null;
+        }
+    }
+
+    // Disable create position button while an active position exists
+    if (createBtn) {
+        createBtn.disabled = true;
+        createBtn.classList.remove('loading');
+        createBtn.innerHTML = '<span>+</span> Create Position';
+        createBtn.title = 'Position already exists for this bot. Close it first before creating a new one.';
     }
 
     // Calculate display values
