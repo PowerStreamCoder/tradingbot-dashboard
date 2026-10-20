@@ -3880,7 +3880,8 @@ async def get_parameter_advice(
     request: Request,
     symbol: str,
     strategy_track: str = "GROWTH",
-    capital_allocation: float = 10000.0
+    capital_allocation: float = 10000.0,
+    cc_mode: Optional[str] = None
 ):
     """
     Get dynamic Quant/AI expert parameter advice for a candidate symbol.
@@ -3937,7 +3938,8 @@ async def get_parameter_advice(
             solvency_rating=solvency,
             is_degraded=is_degraded if 'is_degraded' in locals() else False,
             missing_sources=missing_sources if 'missing_sources' in locals() else None,
-            degradation_warnings=degradation_warnings if 'degradation_warnings' in locals() else None
+            degradation_warnings=degradation_warnings if 'degradation_warnings' in locals() else None,
+            cc_mode=cc_mode
         )
         return advice
     except Exception as e:
@@ -4066,6 +4068,7 @@ async def provision_bot_from_pick(request: Request):
         # inputs at all and silently sizing against a fabricated $100 / 2% ATR.
         _atr_val = pick_ctx.get("est_atr_pct")
         _dossier = pick_ctx.get("evidence_dossier") or {}
+        chosen_cc_mode = (custom_params.get("cc_mode") or "").upper().strip()
         advice = generate_expert_parameter_advice(
             symbol=symbol,
             strategy_track=strategy_track,
@@ -4077,6 +4080,7 @@ async def provision_bot_from_pick(request: Request):
             is_degraded=bool(pick_ctx.get("is_degraded") or _dossier.get("is_degraded", False)),
             missing_sources=pick_ctx.get("missing_sources") or _dossier.get("missing_sources", []),
             degradation_warnings=pick_ctx.get("degradation_warnings") or _dossier.get("degradation_warnings", []),
+            cc_mode=chosen_cc_mode or None,
         )
         recommended = advice["recommended_params"]
 
@@ -4107,9 +4111,16 @@ async def provision_bot_from_pick(request: Request):
         if "covered_calls" not in bot_params:
             bot_params["covered_calls"] = {}
         bot_params["covered_calls"].update(recommended["covered_calls"])
-        if custom_params.get("cc_mode"):
-            bot_params["covered_calls"]["cc_mode"] = custom_params["cc_mode"]
-        if custom_params.get("call_expiration_days"):
+        if chosen_cc_mode == "EQUITY" or custom_params.get("use_covered_calls") is False:
+            bot_params["covered_calls"]["use_covered_calls"] = False
+            bot_params["covered_calls"]["cc_mode"] = "EQUITY"
+            bot_params["covered_calls"]["call_expiration_days"] = 0
+        elif chosen_cc_mode:
+            bot_params["covered_calls"]["use_covered_calls"] = True
+            bot_params["covered_calls"]["cc_mode"] = chosen_cc_mode
+            if custom_params.get("call_expiration_days") is not None:
+                bot_params["covered_calls"]["call_expiration_days"] = int(custom_params["call_expiration_days"])
+        elif custom_params.get("call_expiration_days") is not None:
             bot_params["covered_calls"]["call_expiration_days"] = int(custom_params["call_expiration_days"])
 
         for b_dir in target_dirs:
