@@ -409,6 +409,88 @@ def get_client_id_for_bot(bot_id: int) -> int:
         logger.error(f"Failed to load bot config, using bot_id={bot_id} as client_id: {e}")
         return bot_id
 
+def resolve_bot_target(payload: dict) -> dict:
+    """
+    Resolve an order-routing request to one specific bot.
+
+    Accepts either:
+      * ``client_id`` (preferred, unambiguous) — the trading bot's client_id
+        (e.g. 3..7), which is also its Firestore document suffix
+        (``bots/bot_<client_id>``); or
+      * ``bot_id`` (legacy) — the dashboard's 1-indexed position in ``bots.json``.
+
+    Why the legacy form is dangerous: the bot-focus UI already holds a
+    ``client_id`` (``CONFIG.botId = selectedBot.client_id``) but posted it as
+    ``bot_id``, which ``get_client_id_for_bot`` re-interpreted as a 1-indexed
+    position — so "create position" on the NVDA page wrote to ``bot_6`` (CAT)
+    and was rejected only because CAT refuses a mismatched symbol. client_ids
+    3..5 are *also* valid 1-indexed positions, so the two forms are genuinely
+    ambiguous for those values.
+
+    To make a wrong target impossible to route silently, the resolved bot's
+    configured symbol is cross-checked against the requested symbol and any
+    mismatch is refused.
+
+    Returns:
+        {"client_id": int, "symbol": str, "bot_name": str, "source": str}
+
+    Raises:
+        HTTPException: 400 when the request cannot be resolved to a known bot or
+            the requested symbol does not match that bot's configuration;
+            500 when ``bots.json`` cannot be read.
+    """
+    try:
+        bots = load_bot_configs().get("bots", []) or []
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load bot config: {e}")
+
+    requested_symbol = str(payload.get("symbol") or "").strip().upper()
+
+    client_id = payload.get("client_id")
+    source = "client_id"
+    if client_id is None:
+        bot_id = payload.get("bot_id")
+        if bot_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Missing required field: client_id (or legacy bot_id)",
+            )
+        client_id = get_client_id_for_bot(bot_id)
+        source = "bot_id(1-indexed legacy)"
+
+    if not isinstance(client_id, int) or isinstance(client_id, bool):
+        raise HTTPException(status_code=400, detail=f"Invalid client_id: {client_id!r}")
+
+    match = next((b for b in bots if b.get("client_id") == client_id), None)
+    if match is None:
+        known = ", ".join(f"{b.get('symbol')}={b.get('client_id')}" for b in bots) or "none"
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown bot client_id={client_id}. Configured bots: {known}",
+        )
+
+    configured_symbol = str(match.get("symbol") or "").strip().upper()
+    if not configured_symbol:
+        raise HTTPException(
+            status_code=500, detail=f"Bot client_id={client_id} has no symbol configured"
+        )
+
+    if requested_symbol and requested_symbol != configured_symbol:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Symbol mismatch: request is for {requested_symbol} but client_id={client_id} "
+                f"trades {configured_symbol} (bot '{match.get('name')}'). Refusing to route the order."
+            ),
+        )
+
+    return {
+        "client_id": client_id,
+        "symbol": configured_symbol,
+        "bot_name": match.get("name"),
+        "source": source,
+    }
+
 def get_valid_access_code():
     """Get today's access code in ddmmyy format"""
     return datetime.now().strftime("%d%m%y")
@@ -2411,8 +2493,9 @@ async def close_position(request: Request):
 
     Request body:
         {
-            "bot_id": 1,
-            "symbol": "NVDA",
+            "client_id": 4,          # preferred: the bot's client_id
+            "bot_id": 2,             # legacy alternative: 1-indexed position in bots.json
+            "symbol": "NVDA",        # must match the resolved bot's config
             "bucket_group": "upward",
             "bucket_id": 0,
             "close_covered_calls": true
@@ -2423,23 +2506,26 @@ async def close_position(request: Request):
     """
     try:
         body = await request.json()
-        bot_id = body.get('bot_id')
         symbol = body.get('symbol')
         bucket_group = body.get('bucket_group')
         bucket_id = body.get('bucket_id')
         close_covered_calls = body.get('close_covered_calls', True)
 
         # Validate required fields
-        if not all([bot_id, symbol, bucket_group is not None, bucket_id is not None]):
+        if not all([symbol, bucket_group is not None, bucket_id is not None]):
             raise HTTPException(status_code=400, detail="Missing required fields")
 
-        # Map dashboard bot_id to trading bot client_id dynamically from bots.json
-        # Dashboard bot_id=1 (first bot) -> client_id from config (e.g., 3)
-        # The trading bot uses client_id as its Firestore document ID
+        # Resolve to exactly one bot; refuses a client_id/symbol mismatch
+        # instead of writing the command to the wrong bot.
+        target = resolve_bot_target(body)
+        client_id = target["client_id"]
+
         db = firestore.Client()
-        client_id = get_client_id_for_bot(bot_id)
         bot_ref = db.collection('bots').document(f'bot_{client_id}')
-        print(f"Using bot_{client_id} for symbol {symbol} (dashboard bot_id={bot_id})")
+        print(
+            f"Using bot_{client_id} for symbol {target['symbol']} "
+            f"(source={target['source']}, requested symbol={symbol})"
+        )
 
         # Create a close_position command
         close_command = {
@@ -2478,8 +2564,9 @@ async def create_position(request: Request):
 
     Request body:
         {
-            "bot_id": 1,
-            "symbol": "NVDA"
+            "client_id": 4,          # preferred: the bot's client_id
+            "bot_id": 2,             # legacy alternative: 1-indexed position in bots.json
+            "symbol": "NVDA"         # optional; must match the resolved bot's config
         }
 
     Returns:
@@ -2487,15 +2574,13 @@ async def create_position(request: Request):
     """
     try:
         body = await request.json()
-        bot_id = body.get('bot_id')
-        symbol = body.get('symbol')
 
-        # Validate required fields
-        if not all([bot_id, symbol]):
-            raise HTTPException(status_code=400, detail="Missing required fields: bot_id and symbol")
-
-        # Map dashboard bot_id to trading bot client_id dynamically from bots.json
-        client_id = get_client_id_for_bot(bot_id)
+        # Resolve to exactly one bot; refuses a client_id/symbol mismatch
+        # instead of writing the command to the wrong bot. The symbol is
+        # optional and defaults to the resolved bot's configured symbol.
+        target = resolve_bot_target(body)
+        client_id = target["client_id"]
+        symbol = target["symbol"]
 
         # Update Firestore to trigger bot to create position
         db = firestore.Client()
@@ -2506,7 +2591,7 @@ async def create_position(request: Request):
         if not bot_doc.exists:
             # Create initial bot document
             bot_ref.set({
-                'bot_id': bot_id,
+                'bot_id': client_id,
                 'client_id': client_id,
                 'symbol': symbol,
                 'created_at': datetime.now().isoformat(),

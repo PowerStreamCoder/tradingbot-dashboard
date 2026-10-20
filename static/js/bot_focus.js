@@ -1781,7 +1781,7 @@ async function handleClosePosition() {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                bot_id: botId,
+                client_id: botId,
                 symbol: symbol,
                 bucket_group: bucketGroup,
                 bucket_id: bucketId,
@@ -1832,7 +1832,7 @@ async function handleCreatePosition() {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                bot_id: CONFIG.botId,
+                client_id: CONFIG.botId,
                 symbol: CONFIG.symbol
             })
         });
