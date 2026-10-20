@@ -778,32 +778,72 @@ class TestBotControlEndpoints:
         client, _ = auth_client
 
         # Missing fields
-        res = client.post("/api/close-position", json={"bot_id": 1})
+        res = client.post("/api/close-position", json={"client_id": 4})
         assert res.status_code == 400
 
-        # Success
+        # Unknown client_id -> refused, not silently routed
+        res = client.post("/api/close-position", json={
+            "client_id": 999, "symbol": "NVDA", "bucket_group": "upward", "bucket_id": 0
+        })
+        assert res.status_code == 400
+        assert "Unknown bot client_id" in res.json()["detail"]
+
+        # client_id / symbol mismatch -> refused (this is the regression guard:
+        # the UI used to send a client_id as bot_id, which routed to the wrong bot)
+        res = client.post("/api/close-position", json={
+            "client_id": 3, "symbol": "NVDA", "bucket_group": "upward", "bucket_id": 0
+        })
+        assert res.status_code == 400
+        assert "Symbol mismatch" in res.json()["detail"]
+
+        # Success with an explicit client_id
         with patch("google.cloud.firestore.Client") as mock_fs:
             mock_db = MagicMock()
             mock_fs.return_value = mock_db
             res = client.post("/api/close-position", json={
-                "bot_id": 1, "symbol": "NVDA", "bucket_group": "upward", "bucket_id": 0
+                "client_id": 4, "symbol": "NVDA", "bucket_group": "upward", "bucket_id": 0
             })
             assert res.status_code == 200
             assert res.json()["success"] is True
+            # routed to bot_4 (NVDA), not bot_5 (position 4 in bots.json)
+            assert mock_db.collection().document.call_args[0][0] == "bot_4"
 
             # Error
             mock_db.collection().document().update.side_effect = Exception("firestore fail")
             res = client.post("/api/close-position", json={
-                "bot_id": 1, "symbol": "NVDA", "bucket_group": "upward", "bucket_id": 0
+                "client_id": 4, "symbol": "NVDA", "bucket_group": "upward", "bucket_id": 0
             })
             assert res.status_code == 500
+
+    def test_close_position_legacy_bot_id(self, auth_client):
+        """The legacy 1-indexed bot_id form still works when the symbol matches."""
+        client, _ = auth_client
+        with patch("google.cloud.firestore.Client") as mock_fs:
+            mock_db = MagicMock()
+            mock_fs.return_value = mock_db
+            # bot_id=2 is the 2nd bot in bots.json -> NVDA (client_id 4)
+            res = client.post("/api/close-position", json={
+                "bot_id": 2, "symbol": "NVDA", "bucket_group": "upward", "bucket_id": 0
+            })
+            assert res.status_code == 200
+            assert mock_db.collection().document.call_args[0][0] == "bot_4"
 
     def test_create_position(self, auth_client):
         client, _ = auth_client
 
         # Missing fields
-        res = client.post("/api/create-position", json={"bot_id": 1})
+        res = client.post("/api/create-position", json={})
         assert res.status_code == 400
+
+        # Unknown client_id
+        res = client.post("/api/create-position", json={"client_id": 999, "symbol": "NVDA"})
+        assert res.status_code == 400
+        assert "Unknown bot client_id" in res.json()["detail"]
+
+        # Mismatch -> refused
+        res = client.post("/api/create-position", json={"client_id": 3, "symbol": "NVDA"})
+        assert res.status_code == 400
+        assert "Symbol mismatch" in res.json()["detail"]
 
         # Success when bot doc does not exist
         with patch("google.cloud.firestore.Client") as mock_fs:
@@ -813,14 +853,79 @@ class TestBotControlEndpoints:
             mock_doc.exists = False
             mock_db.collection().document().get.return_value = mock_doc
 
-            res = client.post("/api/create-position", json={"bot_id": 1, "symbol": "NVDA"})
+            res = client.post("/api/create-position", json={"client_id": 4, "symbol": "NVDA"})
             assert res.status_code == 200
             assert res.json()["success"] is True
+            assert mock_db.collection().document.call_args[0][0] == "bot_4"
 
             # Error
             mock_db.collection().document().set.side_effect = Exception("create fail")
-            res = client.post("/api/create-position", json={"bot_id": 1, "symbol": "NVDA"})
+            res = client.post("/api/create-position", json={"client_id": 4, "symbol": "NVDA"})
             assert res.status_code == 500
+
+    def test_create_position_omitted_symbol_defaults_to_configured(self, auth_client):
+        """Omitting symbol uses the resolved bot's configured symbol."""
+        client, _ = auth_client
+        with patch("google.cloud.firestore.Client") as mock_fs:
+            mock_db = MagicMock()
+            mock_fs.return_value = mock_db
+            mock_doc = MagicMock()
+            mock_doc.exists = True
+            mock_db.collection().document().get.return_value = mock_doc
+
+            res = client.post("/api/create-position", json={"client_id": 4})
+            assert res.status_code == 200
+            assert "NVDA" in res.json()["message"]
+
+    @pytest.mark.parametrize("client_id,symbol", [
+        (3, "IWM"), (4, "NVDA"), (5, "MSFT"), (6, "CAT"), (7, "QQQ"),
+    ])
+    def test_resolve_bot_target_every_bot_by_client_id(self, client_id, symbol):
+        """Every bot resolves to itself when addressed by client_id.
+
+        Regression guard for the bot_id/client_id mix-up: the UI sent
+        client_id as bot_id, so NVDA (client_id 4) routed to bot_6 (CAT).
+        """
+        target = main.resolve_bot_target({"client_id": client_id, "symbol": symbol})
+        assert target["client_id"] == client_id
+        assert target["symbol"] == symbol
+        assert target["source"] == "client_id"
+
+    @pytest.mark.parametrize("bot_id,symbol", [
+        (1, "IWM"), (2, "NVDA"), (3, "MSFT"), (4, "CAT"), (5, "QQQ"),
+    ])
+    def test_resolve_bot_target_legacy_one_indexed(self, bot_id, symbol):
+        """The legacy 1-indexed bot_id form maps onto the correct bot."""
+        target = main.resolve_bot_target({"bot_id": bot_id, "symbol": symbol})
+        assert target["symbol"] == symbol
+        assert target["source"].startswith("bot_id")
+
+    def test_resolve_bot_target_rejections(self):
+        # neither identifier
+        with pytest.raises(Exception):
+            main.resolve_bot_target({"symbol": "NVDA"})
+        # non-integer client_id
+        with pytest.raises(Exception):
+            main.resolve_bot_target({"client_id": "4", "symbol": "NVDA"})
+        # bool is not a valid client_id (isinstance(True, int) is True)
+        with pytest.raises(Exception):
+            main.resolve_bot_target({"client_id": True, "symbol": "NVDA"})
+        # mismatch is refused
+        with pytest.raises(Exception):
+            main.resolve_bot_target({"client_id": 4, "symbol": "MSFT"})
+        # symbol matching is case-insensitive / whitespace tolerant
+        assert main.resolve_bot_target({"client_id": 4, "symbol": " nvda "})["symbol"] == "NVDA"
+
+    def test_resolve_bot_target_config_load_failure(self):
+        with patch("main.load_bot_configs", side_effect=Exception("no config")):
+            with pytest.raises(Exception):
+                main.resolve_bot_target({"client_id": 4, "symbol": "NVDA"})
+
+    def test_resolve_bot_target_bot_without_symbol(self):
+        """A bot entry with no symbol is a config error, not a silent route."""
+        with patch("main.load_bot_configs", return_value={"bots": [{"client_id": 4, "name": "nvda"}]}):
+            with pytest.raises(Exception):
+                main.resolve_bot_target({"client_id": 4, "symbol": "NVDA"})
 
     def test_get_current_profile(self):
         client = TestClient(app)
