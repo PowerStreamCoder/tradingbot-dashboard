@@ -1372,6 +1372,7 @@ async function handlePauseResumeBot() {
     try {
         const response = await fetch(`/api/bot-control/${action}`, {
             method: 'POST',
+            credentials: 'include',  // Send session cookie for authentication
             headers: {
                 'Content-Type': 'application/json'
             }
@@ -1602,6 +1603,7 @@ async function handleProfileSwitch() {
 
         const response = await fetch('/api/bot-control/switch-profile', {
             method: 'POST',
+            credentials: 'include',  // Send session cookie for authentication
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({profile: newProfile})
         });
@@ -1777,6 +1779,7 @@ async function handleClosePosition() {
     try {
         const response = await fetch('/api/close-position', {
             method: 'POST',
+            credentials: 'include',  // Send session cookie for authentication
             headers: {
                 'Content-Type': 'application/json'
             },
@@ -1828,6 +1831,7 @@ async function handleCreatePosition() {
     try {
         const response = await fetch('/api/create-position', {
             method: 'POST',
+            credentials: 'include',  // Send session cookie for authentication
             headers: {
                 'Content-Type': 'application/json',
             },

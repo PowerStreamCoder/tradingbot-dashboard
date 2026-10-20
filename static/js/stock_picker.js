@@ -182,7 +182,8 @@ async function runStockPickerNow() {
     let succeeded = false;
     try {
         const response = await fetch('/api/stock-picks/run', {
-            method: 'POST'
+            method: 'POST',
+            credentials: 'include'  // Send session cookie for authentication
         });
 
         if (!response.ok) {
@@ -904,6 +905,7 @@ async function confirmProvisionBot() {
     try {
         const response = await fetch('/api/stock-picks/provision-bot', {
             method: 'POST',
+            credentials: 'include',  // Send session cookie for authentication
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 symbol: sym,
@@ -974,6 +976,7 @@ async function confirmRejectLead() {
     try {
         const response = await fetch('/api/stock-picks/reject', {
             method: 'POST',
+            credentials: 'include',  // Send session cookie for authentication
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 symbol: sym,

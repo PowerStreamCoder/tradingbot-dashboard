@@ -595,18 +595,147 @@ class TestTradeHistoryAndExport:
 
 
 # ============================================================================
+# 4b. D12 — POST /api/* MUST BE AUTHENTICATED (dashboard issue #79)
+# ============================================================================
+
+class TestPostApiRequiresAuthentication:
+    """
+    Regression tests for D12: the middleware used to exempt *every* POST
+    /api/* request, so the order-placing endpoints were reachable by anyone
+    with the URL (and none of those handlers checked the session themselves).
+    """
+
+    # Endpoints that place or affect real orders / trading state.
+    SENSITIVE_POSTS = [
+        "/api/create-position",
+        "/api/close-position",
+        "/api/bot-control/stop",
+        "/api/bot-control/restart",
+        "/api/bot-control/reset/nvda",
+        "/api/bot-control/switch-profile",
+    ]
+
+    def test_sensitive_posts_reject_unauthenticated(self):
+        client = TestClient(app)
+        for path in self.SENSITIVE_POSTS:
+            res = client.post(path, json={})
+            assert res.status_code == 401, f"{path} was reachable unauthenticated"
+            assert res.json() == {"detail": "Authentication required"}
+
+    def test_deprecated_bot_writer_posts_reject_unauthenticated(self):
+        # Bots write to Firestore directly since v2.0; these are not exempt.
+        client = TestClient(app)
+        for path in [
+            "/api/bot-overview/update",
+            "/api/bot-overview/delete-bucket",
+            "/api/pnl-sync",
+            "/api/trade-history/add",
+            "/api/pnl-statement/update",
+        ]:
+            res = client.post(path, json={})
+            assert res.status_code == 401, f"{path} was reachable unauthenticated"
+
+    def test_learning_decision_post_rejects_unauthenticated(self):
+        client = TestClient(app)
+        res = client.post(
+            "/api/learning-candidates/decision",
+            json={"finding_id": "x", "decision": "accept"},
+        )
+        assert res.status_code == 401
+
+    def test_delete_trade_requires_authentication(self):
+        client = TestClient(app)
+        res = client.delete("/api/trade-history/delete")
+        assert res.status_code == 401
+
+    def test_profile_audit_and_switch_require_authentication(self):
+        # /api/bot-control/profile-audit is a GET that exposes governance
+        # history; the old `bot-control/` prefix exemption covered it too.
+        client = TestClient(app)
+        assert client.get("/api/bot-control/profile-audit").status_code == 401
+        assert client.post("/api/bot-control/switch-profile", json={}).status_code == 401
+
+    def test_readonly_bot_control_exemptions_still_open(self):
+        # current-profile is read-only and drives the UI's initial render;
+        # it must stay reachable without a session (as before this change).
+        client = TestClient(app)
+        res = client.get("/api/bot-control/current-profile")
+        assert res.status_code != 401
+
+    def test_readonly_learning_listing_exemptions_still_open(self):
+        # The listing + stats GETs stay public so the review page can render;
+        # only the POST decision is authenticated.
+        client = TestClient(app)
+        with patch("google.cloud.firestore.Client") as mock_fs:
+            mock_db = MagicMock()
+            mock_fs.return_value = mock_db
+            mock_db.collection("learning_candidates").stream.return_value = []
+            assert client.get("/api/learning-candidates").status_code != 401
+        assert client.get("/api/learning-candidates/stats").status_code != 401
+
+    def test_options_preflight_is_exempt(self):
+        # CORS preflight carries no cookie and must not be 401'd.
+        client = TestClient(app)
+        res = client.options("/api/create-position")
+        assert res.status_code != 401
+
+    def test_expired_cached_session_survives_firestore_delete_failure(self):
+        # An expired session is purged locally even when the Firestore cleanup
+        # throws - the request must still be rejected, not 500.
+        client = TestClient(app)
+        session_id = "expired-session-firestore-delete-fails"
+        authenticated_sessions[session_id] = datetime.now() - timedelta(minutes=5)
+        client.cookies.set("dashboard_session", session_id)
+        try:
+            with patch.object(main.sessions_ref, "document") as mock_doc_fn:
+                mock_doc_fn.return_value.delete.side_effect = Exception("fs down")
+                res = client.post("/api/create-position", json={})
+            assert res.status_code == 401
+            assert session_id not in authenticated_sessions
+        finally:
+            authenticated_sessions.pop(session_id, None)
+
+    def test_machine_write_path_is_still_open(self):
+        # /api/logs/update is the ONLY endpoint the bots post to
+        # (trading/dashboard.py:826) and they carry no session, so it must
+        # remain exempt. Assert it is exempt and not merely returning a
+        # non-401 error from the handler.
+        client = TestClient(app)
+        res = client.post("/api/logs/update", json={"botId": 1, "logs": ["x"]})
+        assert res.status_code != 401
+
+    def test_machine_write_paths_are_exactly_the_documented_set(self):
+        # Guard against a future "fix" widening the exemption silently.
+        assert main.MACHINE_WRITE_PATHS == {"/api/logs/update"}
+
+    def test_sensitive_posts_work_with_valid_session(self, auth_client):
+        # The fix must not lock out the real UI: a valid session still passes
+        # the middleware. The handler then proxies to the VM, so mock that hop
+        # and assert the *middleware* did not 401 us.
+        client, _ = auth_client
+        mock_response = MagicMock()
+        mock_response.is_success = True
+        mock_response.json.return_value = {"status": "success", "message": "Bots stopped"}
+
+        with patch("httpx.AsyncClient.post", return_value=mock_response):
+            res = client.post("/api/bot-control/stop")
+        assert res.status_code == 200
+        assert res.json()["status"] == "success"
+
+
+# ============================================================================
 # 5. MAIN.PY: MUTATION ENDPOINTS (BOT OVERVIEW, LOGS, TRADES, PNL)
 # ============================================================================
 
 class TestDashboardMutations:
-    def test_update_bot_overview(self):
-        client = TestClient(app)
+    def test_update_bot_overview(self, auth_client):
+        client, _ = auth_client
         res = client.post("/api/bot-overview/update", json={"nvda": {"price": 120.0}})
         assert res.status_code == 200
         assert res.json()["status"] == "error"
 
-    def test_delete_bucket(self):
-        client = TestClient(app)
+    def test_delete_bucket(self, auth_client):
+        client, _ = auth_client
         dashboard_data.bot_data = {
             "msft-bot": {
                 "bucket3": {"shares": 10}
@@ -639,8 +768,8 @@ class TestDashboardMutations:
             res = client.post("/api/logs/update", json={"botId": 1, "lines": []})
             assert res.status_code == 500
 
-    def test_pnl_sync(self):
-        client = TestClient(app)
+    def test_pnl_sync(self, auth_client):
+        client, _ = auth_client
         res = client.post("/api/pnl-sync", json={"botId": 1, "bot_realized_pnl": 100.0})
         assert res.status_code == 200
         assert res.json()["status"] == "success"
@@ -649,8 +778,8 @@ class TestDashboardMutations:
         res_err = client.post("/api/pnl-sync", json={})
         assert res_err.status_code == 500
 
-    def test_add_trade(self):
-        client = TestClient(app)
+    def test_add_trade(self, auth_client):
+        client, _ = auth_client
         trade_payload = {
             "timestamp": "2026-10-10T12:00:00Z",
             "botName": "nvda_sma",
@@ -666,8 +795,8 @@ class TestDashboardMutations:
         assert res.status_code == 200
         assert res.json()["status"] == "error"
 
-    def test_update_pnl_statement(self):
-        client = TestClient(app)
+    def test_update_pnl_statement(self, auth_client):
+        client, _ = auth_client
         period_data = {"bot1": {"trades": 1, "pnl": 100.0}, "bot2": {"trades": 0, "pnl": 0.0}, "total": {"trades": 1, "pnl": 100.0}}
         pnl_data = {
             "day": period_data,
@@ -954,8 +1083,8 @@ class TestBotControlEndpoints:
             assert res_ex.status_code == 200
             assert res_ex.json()["profile"] == "paper"
 
-    def test_switch_profile_and_audit(self):
-        client = TestClient(app)
+    def test_switch_profile_and_audit(self, auth_client):
+        client, _ = auth_client
         import httpx
 
         with patch("google.cloud.firestore.Client") as mock_fs:
@@ -1008,8 +1137,8 @@ class TestBotControlEndpoints:
                 res = client.post("/api/bot-control/switch-profile", json={"profile": "live"})
                 assert res.status_code == 500
 
-    def test_get_profile_audit(self):
-        client = TestClient(app)
+    def test_get_profile_audit(self, auth_client):
+        client, _ = auth_client
         with patch("google.cloud.firestore.Client") as mock_fs:
             mock_db = MagicMock()
             mock_fs.return_value = mock_db
@@ -1032,8 +1161,8 @@ class TestBotControlEndpoints:
 # ============================================================================
 
 class TestLearningAndGovernanceEndpoints:
-    def test_learning_candidates_endpoints(self):
-        client = TestClient(app)
+    def test_learning_candidates_endpoints(self, auth_client):
+        client, _ = auth_client
 
         with patch("google.cloud.firestore.Client") as mock_fs:
             mock_db = MagicMock()
