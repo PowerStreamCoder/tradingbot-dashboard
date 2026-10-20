@@ -3413,3 +3413,106 @@ td.loss {
     transition: border-color 0.3s ease, box-shadow 0.3s ease;
 }
 
+/* Button loading spinner */
+.btn.loading {
+    cursor: wait;
+    opacity: 0.85;
+    pointer-events: none;
+    position: relative;
+}
+
+.btn .btn-spinner {
+    display: inline-block;
+    width: 13px;
+    height: 13px;
+    margin-right: 6px;
+    vertical-align: middle;
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    border-radius: 50%;
+    border-top-color: #ffffff;
+    animation: switchSpinnerRotate 0.75s linear infinite;
+}
+
+/* Position creating state in Active Position table */
+.position-creating-loading {
+    text-align: center;
+    padding: 30px 16px !important;
+    background: rgba(14, 165, 233, 0.06) !important;
+    border: 1px dashed rgba(56, 189, 248, 0.35) !important;
+    border-radius: 6px;
+}
+
+.position-creating-spinner-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 6px 0;
+}
+
+.position-creating-text {
+    font-size: 0.95rem;
+    color: #38bdf8;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+
+.position-creating-subtext {
+    font-size: 0.82rem;
+    color: #94a3b8;
+}
+
+/* Position operation alert banner */
+.position-operation-alert {
+    margin: 0 0 16px 0;
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 0.88rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    animation: fadeInSlide 0.25s ease;
+    transition: opacity 0.3s ease;
+}
+
+.position-operation-alert.alert-info {
+    background: rgba(14, 165, 233, 0.12);
+    border: 1px solid rgba(56, 189, 248, 0.35);
+    color: #38bdf8;
+}
+
+.position-operation-alert.alert-success {
+    background: rgba(34, 197, 94, 0.12);
+    border: 1px solid rgba(74, 222, 128, 0.35);
+    color: #4ade80;
+}
+
+.position-operation-alert.alert-danger {
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(248, 113, 113, 0.35);
+    color: #f87171;
+}
+
+.position-operation-alert.alert-warning {
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(251, 191, 36, 0.35);
+    color: #fbbf24;
+}
+
+.position-operation-alert .alert-close-btn {
+    background: none;
+    border: none;
+    color: inherit;
+    font-size: 1.1rem;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+    opacity: 0.7;
+}
+
+.position-operation-alert .alert-close-btn:hover {
+    opacity: 1;
+}
+

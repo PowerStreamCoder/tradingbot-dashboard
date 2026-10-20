@@ -1005,6 +1005,50 @@ class TestBotControlEndpoints:
             res = client.post("/api/create-position", json={"client_id": 4})
             assert res.status_code == 200
             assert "NVDA" in res.json()["message"]
+            assert "command_timestamp" in res.json()
+
+    def test_get_bot_command_status(self, auth_client):
+        """Test GET /api/bot-command-status/{client_id} endpoint."""
+        client, _ = auth_client
+
+        with patch("google.cloud.firestore.Client") as mock_fs:
+            mock_db = MagicMock()
+            mock_fs.return_value = mock_db
+
+            # Case 1: Bot doc does not exist
+            mock_doc = MagicMock()
+            mock_doc.exists = False
+            mock_db.collection().document().get.return_value = mock_doc
+
+            res = client.get("/api/bot-command-status/4")
+            assert res.status_code == 200
+            data = res.json()
+            assert data["success"] is True
+            assert data["client_id"] == 4
+            assert data["pending_command"] is None
+            assert data["last_command_result"] is None
+            assert data["has_active_position"] is False
+
+            # Case 2: Bot doc exists with pending command and last_command_result
+            mock_doc.exists = True
+            mock_doc.to_dict.return_value = {
+                "bot_id": 4,
+                "pending_command": {"command": "create_position"},
+                "last_command_result": {"success": True, "message": "Position created"},
+                "bucket1": {"entryPrice": 140.0, "quantity": 100}
+            }
+            res = client.get("/api/bot-command-status/4")
+            assert res.status_code == 200
+            data = res.json()
+            assert data["success"] is True
+            assert data["pending_command"]["command"] == "create_position"
+            assert data["last_command_result"]["success"] is True
+            assert data["has_active_position"] is True
+
+            # Case 3: Firestore error returns 500
+            mock_db.collection().document().get.side_effect = Exception("firestore error")
+            res = client.get("/api/bot-command-status/4")
+            assert res.status_code == 500
 
     @pytest.mark.parametrize("client_id,symbol", [
         (3, "IWM"), (4, "NVDA"), (5, "MSFT"), (6, "CAT"), (7, "QQQ"),
