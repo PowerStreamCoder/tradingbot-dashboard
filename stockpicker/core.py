@@ -442,10 +442,11 @@ def fetch_polygon_benzinga(since_date: str) -> List[NewsItem]:
 
 def fetch_finnhub_news(since_iso: str) -> List[NewsItem]:
     """
-    Fetch news from Finnhub (FALLBACK - only used when premium sources unavailable).
+    Fetch news from Finnhub (real-time market & catalyst news).
 
-    Finnhub provides general market news with free tier (60 calls/min).
-    Used as fallback when NewsAPI, Polygon, and Twitter are not configured.
+    Finnhub provides market news with free tier (60 calls/min).
+    Fetches latest articles across general and merger categories,
+    filtering by publication timestamp.
 
     Args:
         since_iso: ISO timestamp to fetch news from
@@ -464,26 +465,54 @@ def fetch_finnhub_news(since_iso: str) -> List[NewsItem]:
         # Convert ISO timestamp to Unix timestamp (Finnhub uses Unix time)
         from_dt = datetime.fromisoformat(since_iso.replace('Z', '+00:00'))
         from_unix = int(from_dt.timestamp())
-        to_unix = int(datetime.now(UTC).timestamp())
 
-        # Fetch general market news
-        data = safe_get(FINNHUB_NEWS_URL, params={
-            'category': 'general',
-            'minId': from_unix,
-            'token': api_key
-        })
+        # In Finnhub API, minId is the article ID sequence (default 0), NOT a unix timestamp.
+        # We fetch latest general and merger news with minId=0, then filter by datetime in python.
+        categories = ['general', 'merger']
+        raw_articles = []
+        seen_ids = set()
+
+        for category in categories:
+            try:
+                data = safe_get(FINNHUB_NEWS_URL, params={
+                    'category': category,
+                    'minId': 0,
+                    'token': api_key
+                })
+                cat_results = data if isinstance(data, list) else []
+                for a in cat_results:
+                    art_id = a.get('id')
+                    h_key = (a.get('headline') or a.get('url') or '').strip().lower()
+                    if art_id is not None and art_id in seen_ids:
+                        continue
+                    if art_id is None and h_key and h_key in seen_ids:
+                        continue
+                    if art_id is not None:
+                        seen_ids.add(art_id)
+                    elif h_key:
+                        seen_ids.add(h_key)
+                    raw_articles.append(a)
+            except Exception as cat_err:
+                logger.warning(f"Failed to fetch Finnhub category '{category}': {cat_err}")
 
         items = []
-        results = data if isinstance(data, list) else []
+        for article in raw_articles:
+            pub_unix = article.get('datetime')
+            # If datetime is provided, filter out articles older than our lookback window
+            if pub_unix is not None:
+                try:
+                    if float(pub_unix) < from_unix:
+                        continue
+                    pub_iso = datetime.fromtimestamp(float(pub_unix), UTC).isoformat()
+                except Exception:
+                    pub_iso = str(pub_unix)
+            else:
+                pub_iso = datetime.now(UTC).isoformat()
 
-        for article in results:
-            # Filter for catalyst keywords (same as NewsAPI logic)
-            headline = article.get('headline', '').lower()
-            summary = article.get('summary', '').lower()
-            text = f"{headline} {summary}"
-
-            # Check if news mentions catalyst terms
-            has_catalyst = any(term.lower() in text for term in SEARCH_TERMS)
+            headline = article.get('headline', '') or ''
+            summary = article.get('summary', '') or ''
+            if not headline and not summary:
+                continue
 
             # Calculate engagement from related symbols count
             engagement = float(len(article.get('related', '').split(',')) if article.get('related') else 0)
@@ -491,16 +520,16 @@ def fetch_finnhub_news(since_iso: str) -> List[NewsItem]:
             items.append(NewsItem(
                 source_type='finnhub',
                 source_name='Finnhub',
-                published_at=str(article.get('datetime', '')),  # Unix timestamp
-                headline=article.get('headline', ''),
-                summary=article.get('summary', ''),
+                published_at=pub_iso,
+                headline=headline,
+                summary=summary,
                 url=article.get('url', ''),
                 engagement=engagement,
                 tickers=article.get('related', ''),  # Comma-separated tickers
                 raw_json=json.dumps(article)
             ))
 
-        logger.info(f"Fetched {len(items)} items from Finnhub (fallback source)")
+        logger.info(f"Fetched {len(items)} items from Finnhub (categories: {categories})")
         return items
 
     except Exception as e:
@@ -738,10 +767,10 @@ def fetch_all_news(hours=24) -> List[NewsItem]:
     """
     Fetch news from all available sources with fallback priority.
 
-    Priority order:
+    Sources:
     1. Premium sources: NewsAPI, Twitter/X, Polygon/Benzinga
-    2. Fallback tier 1: Alpha Vantage (free, 25 calls/day, with sentiment)
-    3. Fallback tier 2: Finnhub (free, 60 calls/min, general market news)
+    2. Primary reliable market news: Finnhub (free tier: 60 calls/min)
+    3. Sentiment fallback: Alpha Vantage (25 calls/day)
 
     All sources are optional - works with any combination configured.
 
@@ -761,26 +790,39 @@ def fetch_all_news(hours=24) -> List[NewsItem]:
 
     logger.info(f"Fetching news from last {hours} hours (since {since_iso})")
 
-    # Fetch from premium sources first (each returns [] if not configured)
     news_items = []
+    # Fetch from premium sources first (each returns [] if not configured)
     news_items.extend(fetch_newsapi(since_iso))
     news_items.extend(fetch_x_recent())
     news_items.extend(fetch_polygon_benzinga(since_date))
 
-    # Use free tier fallbacks only if premium sources returned nothing
-    if not news_items:
-        logger.info("No results from premium sources - trying free tier alternatives")
+    # Finnhub provides reliable live market and merger news
+    if env('FINNHUB_API_KEY'):
+        news_items.extend(fetch_finnhub_news(since_iso))
 
-        # Try Alpha Vantage first (better quality, sentiment scores)
+    # Free tier fallback if primary sources returned nothing
+    if not news_items and env('ALPHAVANTAGE_API_KEY'):
+        logger.info("No results from primary sources - trying Alpha Vantage fallback")
         news_items.extend(fetch_alphavantage_news(since_iso))
 
-        # If still no results, try Finnhub as last resort
-        if not news_items:
-            logger.info("No results from Alpha Vantage - using Finnhub as final fallback")
-            news_items.extend(fetch_finnhub_news(since_iso))
+    # Deduplicate items by headline
+    deduped = []
+    seen = set()
+    for item in news_items:
+        h = (item.headline or '').strip().lower()
+        if h and h in seen:
+            continue
+        if h:
+            seen.add(h)
+        deduped.append(item)
 
-    logger.info(f"Total fetched: {len(news_items)} news items from all sources")
-    return news_items
+    # Weekend / low volume fallback: expand lookback if sparse
+    if len(deduped) < 15 and hours < 48:
+        logger.info(f"Only {len(deduped)} news items found in last {hours}h - expanding lookback to 48 hours for market/weekend coverage")
+        return fetch_all_news(hours=48)
+
+    logger.info(f"Total fetched: {len(deduped)} news items from all sources")
+    return deduped
 
 
 # =============================================================================
@@ -817,59 +859,75 @@ def heuristic_rank(records: List[Dict]) -> List[Dict]:
     """
     Rank news using keyword-based heuristic (FALLBACK when no Gemini key).
 
-    This is a simple keyword matching algorithm that:
-    1. Scores each news item based on keyword matches
-    2. Maps to most relevant industry
-    3. Calculates explosiveness from engagement and keyword density
+    This algorithm:
+    1. Scores each news item based on industry keyword matches (with word boundaries)
+    2. Identifies high-conviction catalyst keywords (M&A, contracts, FDA, breakout momentum)
+    3. Maps to the most relevant industry and direct tickers
+    4. Calculates explosiveness from industry density, catalyst intensity, and engagement
 
     Args:
         records: List of news items as dicts (headline, summary, engagement)
 
     Returns:
-        List of ranked items with explosiveness scores
-
-    Note:
-        Scores typically range 5.0-9.5 (lower than LLM which can be more nuanced).
-        This is acceptable for basic operation but LLM gives better results.
+        List of ranked items with explosiveness scores (typically 5.0 - 9.5)
     """
-    # Industry keyword mappings
+    # Industry keyword patterns (using \b for short words to avoid substring false positives)
     keywords = {
-        'AI/Cloud Infrastructure': ['ai', 'data center', 'cloud', 'gpu'],
-        'Semiconductors/Foundry': ['chip', 'semiconductor', 'foundry', 'intel', 'tsmc'],
-        'Humanoid Robotics/Automation': ['robot', 'humanoid', 'automation'],
-        'Energy/Tanker Shipping': ['oil', 'brent', 'hormuz', 'opec', 'tanker'],
-        'Consumer Tech Supply Chain': ['apple', 'iphone', 'consumer tech'],
-        'Biotech/MedTech': ['fda', 'trial', 'drug', 'biotech'],
-        'Cybersecurity': ['cyber', 'breach', 'ransomware'],
-        'Defense/Aerospace': ['defense', 'missile', 'drone', 'satellite'],
-        'Financials/Fintech': ['bank', 'payment', 'fintech', 'credit']
+        'AI/Cloud Infrastructure': [r'\bai\b', r'data center', r'cloud', r'\bgpu\b', r'artificial intelligence', r'machine learning', r'nvidia'],
+        'Semiconductors/Foundry': [r'\bchip\b', r'semiconductor', r'foundry', r'intel', r'tsmc', r'asml', r'wafer'],
+        'Humanoid Robotics/Automation': [r'robot', r'humanoid', r'automation', r'autonomous', r'robotics'],
+        'Energy/Tanker Shipping': [r'\boil\b', r'brent', r'crude', r'hormuz', r'opec', r'tanker', r'lng', r'refinery'],
+        'Consumer Tech Supply Chain': [r'apple', r'iphone', r'smartphone', r'display', r'consumer tech'],
+        'Biotech/MedTech': [r'\bfda\b', r'clinical trial', r'drug', r'biotech', r'pharmaceutical', r'therapy', r'vaccine'],
+        'Cybersecurity': [r'cyber', r'breach', r'ransomware', r'hack', r'malware'],
+        'Defense/Aerospace': [r'defense', r'missile', r'military', r'satellite', r'pentagon', r'aerospace', r'warfare', r'houthi'],
+        'Financials/Fintech': [r'bank', r'payment', r'fintech', r'credit', r'fed', r'interest rate', r'yield']
     }
+
+    # General explosive market catalyst keywords
+    catalyst_keywords = [
+        r'merger', r'acquisition', r'acquires', r'acquired', r'takeover', r'buyout',
+        r'fda approval', r'breakthrough', r'patent', r'guidance', r'contract',
+        r'surge', r'soar', r'plunge', r'record', r'sanction', r'strike', r'attack',
+        r'shortage', r'halt', r'deal', r'investigation', r'lawsuit', r'earnings surprise'
+    ]
 
     out = []
     for rec in records:
         # Combine headline and summary for keyword matching
         text = (str(rec.get('headline', '')) + ' ' + str(rec.get('summary', ''))).lower()
 
-        # Find best matching industry
+        # Find best matching industry using regex word boundaries
         industry = 'Financials/Fintech'  # Default
         best_match_score = 0
 
         for ind, kws in keywords.items():
-            score = sum(k in text for k in kws)
+            score = sum(1 for k in kws if (bool(re.search(k, text)) if '\\b' in k else k in text))
             if score > best_match_score:
                 best_match_score, industry = score, ind
 
-        # Calculate explosiveness: baseline 5.0 + engagement + keyword density (score >= 2 reaches 7.6+)
-        explosive = 5.0 + min(4.5, rec.get('engagement', 0) / 2000 + best_match_score * 1.3)
+        # Calculate general catalyst keyword score
+        cat_score = sum(1 for ck in catalyst_keywords if (bool(re.search(ck, text)) if '\\b' in ck else ck in text))
+
+        # Calculate explosiveness: baseline 5.0 + industry score + catalyst score + engagement
+        # Score reaches 7.5+ for high-conviction catalysts with clear industry context
+        total_signal = (best_match_score * 1.2) + (cat_score * 1.0)
+        engagement_pts = min(1.5, rec.get('engagement', 0) / 2000)
+        explosive = 5.0 + min(4.5, total_signal + engagement_pts)
+
+        direct_ticker = (rec.get('tickers', '').split(',')[0].strip().upper() if rec.get('tickers') else '')
+        impacted = list(SECTOR_TO_CANDIDATES.get(industry, [])[:4])
+        if direct_ticker and direct_ticker not in impacted:
+            impacted = [direct_ticker] + impacted[:3]
 
         out.append({
             'headline': rec.get('headline'),
             'explosiveness': round(explosive, 2),
             'industry': industry,
-            'direct_ticker': (rec.get('tickers', '').split(',')[0] if rec.get('tickers') else ''),
-            'thesis': 'Heuristic sector impact classification',
-            'impacted_us_tickers': SECTOR_TO_CANDIDATES.get(industry, [])[:4],
-            'rationale_short': f'Derived from keyword match (score: {best_match_score}) and engagement proxy'
+            'direct_ticker': direct_ticker,
+            'thesis': 'Heuristic sector impact classification' if cat_score == 0 else f'Catalyst detected in {industry}',
+            'impacted_us_tickers': impacted,
+            'rationale_short': f'Derived from industry match ({best_match_score}), catalyst intensity ({cat_score}), and engagement proxy'
         })
 
     logger.info(f"Heuristic ranking completed: {len(out)} items scored")
@@ -2095,13 +2153,12 @@ def score_candidates(
             continue  # Skip low-impact news (but allow fundamentals-only picks through)
 
         industry = news_item.get('industry', '')
-        candidates = news_item.get('impacted_us_tickers', [])
+        candidates = list(news_item.get('impacted_us_tickers', []))
 
-        # Fallback: use direct ticker if no candidate list
-        if not candidates:
-            direct = news_item.get('direct_ticker')
-            if direct:
-                candidates = [direct]
+        # Include direct ticker if present
+        direct = (news_item.get('direct_ticker') or '').strip().upper()
+        if direct and direct not in candidates:
+            candidates = [direct] + candidates
 
         if not candidates:
             logger.warning(f"No candidates for industry {industry}, skipping")

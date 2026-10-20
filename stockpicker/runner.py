@@ -94,6 +94,8 @@ def detect_active_sources() -> List[str]:
     # Optional news sources
     if os.getenv('NEWSAPI_KEY'):
         sources.append('newsapi')
+    if os.getenv('FINNHUB_API_KEY'):
+        sources.append('finnhub')
     if os.getenv('X_BEARER_TOKEN'):
         sources.append('twitter')
     if os.getenv('POLYGON_API_KEY'):
