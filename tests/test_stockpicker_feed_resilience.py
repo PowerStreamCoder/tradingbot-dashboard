@@ -126,3 +126,83 @@ def test_options_cache_prevents_duplicate_calls():
         opt2 = fetch_yahoo_options("KO")
         assert opt2 == opt1
         assert mock_get.call_count == 1
+
+
+def test_fetch_finnhub_news_min_id_and_categories():
+    """Verify Finnhub queries minId=0 across both general and merger categories and formats ISO timestamps."""
+    from stockpicker.core import fetch_finnhub_news
+
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    old_ts = now_ts - 200000  # Older than 24h
+
+    fake_general = [
+        {"id": 101, "datetime": now_ts - 100, "headline": "Oil tankers strike deal in Hormuz", "summary": "Crude surges", "related": "FRO,TNK"},
+        {"id": 102, "datetime": old_ts, "headline": "Ancient news headline", "summary": "Old summary", "related": "AAPL"}
+    ]
+    fake_merger = [
+        {"id": 101, "datetime": now_ts - 100, "headline": "Oil tankers strike deal in Hormuz", "summary": "Crude surges", "related": "FRO,TNK"},  # Duplicate
+        {"id": 103, "datetime": now_ts - 50, "headline": "CoreWeave acquires AI startup", "summary": "Major cloud merger", "related": "CRWV"}
+    ]
+
+    def mock_safe_get(url, headers=None, params=None, timeout=30):
+        assert params.get("minId") == 0
+        cat = params.get("category")
+        if cat == "general":
+            return fake_general
+        elif cat == "merger":
+            return fake_merger
+        return []
+
+    with patch("stockpicker.core.env", return_value="fake_finnhub_key"), \
+         patch("stockpicker.core.safe_get", side_effect=mock_safe_get):
+        since_iso = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        items = fetch_finnhub_news(since_iso)
+
+        # 102 is skipped (old), 101 is deduped across categories -> items should contain 101 and 103
+        assert len(items) == 2
+        headlines = [it.headline for it in items]
+        assert "Oil tankers strike deal in Hormuz" in headlines
+        assert "CoreWeave acquires AI startup" in headlines
+        # Verify published_at is an ISO formatted string, not raw unix timestamp integer
+        for it in items:
+            assert "T" in it.published_at
+            assert it.published_at.endswith("+00:00") or it.published_at.endswith("Z")
+
+
+def test_heuristic_rank_avoids_substring_false_positive():
+    """Verify words like 'against' or 'claim' do NOT falsely trigger AI/Cloud Infrastructure."""
+    from stockpicker.core import heuristic_rank
+
+    records = [
+        {
+            "headline": "Houthis claim attacks against Red Sea oil facilities",
+            "summary": "Crude tanker operations disrupted as Brent surges",
+            "engagement": 100,
+            "tickers": "FRO"
+        }
+    ]
+    ranked = heuristic_rank(records)
+    assert len(ranked) == 1
+    # Must correctly identify Energy/Tanker Shipping, NOT AI/Cloud Infrastructure
+    assert ranked[0]["industry"] == "Energy/Tanker Shipping"
+    # Catalyst words (attacks, surges, oil, tanker) should yield >= 7.5 explosiveness
+    assert ranked[0]["explosiveness"] >= 7.5
+
+
+def test_heuristic_rank_catalyst_detection():
+    """Verify high-impact catalysts like FDA approvals and M&A reach >= 7.5 threshold."""
+    from stockpicker.core import heuristic_rank
+
+    records = [
+        {
+            "headline": "FDA approval granted for breakthrough oncology drug therapy",
+            "summary": "Biotech firm secures key milestone with commercial rollout",
+            "engagement": 200,
+            "tickers": "RXRX"
+        }
+    ]
+    ranked = heuristic_rank(records)
+    assert len(ranked) == 1
+    assert ranked[0]["industry"] == "Biotech/MedTech"
+    assert ranked[0]["explosiveness"] >= 7.5
+    assert "RXRX" in ranked[0]["impacted_us_tickers"]

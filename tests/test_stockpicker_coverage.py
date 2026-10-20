@@ -271,6 +271,7 @@ def test_setup_logging_exception_handling():
 def test_detect_active_sources_all_envs(monkeypatch):
     """Verify detect_active_sources includes all configured env keys."""
     monkeypatch.setenv("NEWSAPI_KEY", "news-123")
+    monkeypatch.setenv("FINNHUB_API_KEY", "finnhub-123")
     monkeypatch.setenv("X_BEARER_TOKEN", "twitter-token")
     monkeypatch.setenv("POLYGON_API_KEY", "poly-123")
     monkeypatch.setenv("GEMINI_API_KEY", "gemini-123")
@@ -280,6 +281,7 @@ def test_detect_active_sources_all_envs(monkeypatch):
     assert "sec_edgar" in sources
     assert "yahoo_finance" in sources
     assert "newsapi" in sources
+    assert "finnhub" in sources
     assert "twitter" in sources
     assert "polygon" in sources
     assert "gemini" in sources
