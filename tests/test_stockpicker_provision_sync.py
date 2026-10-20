@@ -373,3 +373,105 @@ def test_frontend_modal_ux_and_custom_dropdown_contract():
     assert "window.selectCcMode = selectCcMode" in js
     assert "disabled-field" in js
 
+
+def test_stockpicker_js_track_and_status_defined():
+    """
+    Regression test: Ensure stock_picker.js defines track and status variables
+    in renderStockPicksTable to avoid 'track is not defined' ReferenceError.
+    """
+    js_path = os.path.join(os.path.dirname(__file__), "..", "static", "js", "stock_picker.js")
+    with open(js_path, "r", encoding="utf-8") as f:
+        js = f.read()
+
+    assert "const track = safeTrack(pick.strategy_track);" in js
+    assert "const status = pick.status || 'PENDING_REVIEW';" in js
+
+
+def test_load_bot_configs_merges_provisioned_bots_from_firestore(tmp_path):
+    """
+    Verify that load_bot_configs() merges bots from Firestore stock_picks/current already_accepted
+    that are marked PROVISIONED even if bots.json does not yet list them (e.g., after redeployment).
+    """
+    from main import load_bot_configs, _bot_config_cache
+
+    fake_config = {
+        "bots": [
+            {"name": "qqq_sma", "symbol": "QQQ", "client_id": 7, "enabled": True}
+        ]
+    }
+    config_file = tmp_path / "bots.json"
+    config_file.write_text(json.dumps(fake_config))
+
+    mock_doc = MagicMock()
+    mock_doc.exists = True
+    mock_doc.to_dict.return_value = {
+        "already_accepted": [
+            {
+                "symbol": "AFRM",
+                "client_id": 8,
+                "status": "PROVISIONED",
+                "strategy_track": "GROWTH",
+                "composite_score": 80.74,
+                "strategy": "sma_crossover"
+            }
+        ]
+    }
+
+    mock_stock_ref = MagicMock()
+    mock_stock_ref.document.return_value.get.return_value = mock_doc
+
+    with _bot_config_cache['lock']:
+        _bot_config_cache['config'] = None
+        _bot_config_cache['mtime'] = None
+
+    with patch("os.path.exists", return_value=True), \
+         patch("builtins.open", mock_open(read_data=json.dumps(fake_config))), \
+         patch.object(dashboard_data, "stock_picks_ref", mock_stock_ref):
+        cfg = load_bot_configs()
+
+        bot_symbols = [b["symbol"] for b in cfg.get("bots", [])]
+        assert "QQQ" in bot_symbols
+        assert "AFRM" in bot_symbols
+        afrm = next(b for b in cfg["bots"] if b["symbol"] == "AFRM")
+        assert afrm["client_id"] == 8
+        assert afrm["strategy_track"] == "GROWTH"
+
+
+def test_load_bot_parameters_falls_back_to_firestore(tmp_path):
+    """
+    Verify that load_bot_parameters falls back to Firestore 'bots' collection
+    when the local json file is not found on disk.
+    """
+    from main import load_bot_parameters, _bot_params_cache
+
+    with _bot_params_cache["lock"]:
+        _bot_params_cache["params"].pop("AFRM", None)
+        _bot_params_cache["mtimes"].pop("AFRM", None)
+
+    mock_doc = MagicMock()
+    mock_doc.to_dict.return_value = {
+        "symbol": "AFRM",
+        "bot_params": {
+            "symbol": "AFRM",
+            "capital": {"capital_per_bucket_long": 5000.0},
+            "covered_calls": {"cc_mode": "EQUITY"}
+        }
+    }
+
+    mock_db = MagicMock()
+    mock_coll = MagicMock()
+    mock_query = MagicMock()
+    mock_limit = MagicMock()
+    mock_limit.stream.return_value = [mock_doc]
+    mock_query.limit.return_value = mock_limit
+    mock_coll.where.return_value = mock_query
+    mock_db.collection.return_value = mock_coll
+
+    with patch("os.path.exists", return_value=False), \
+         patch.object(dashboard_data, "db", mock_db):
+        params = load_bot_parameters("AFRM")
+        assert params is not None
+        assert params["symbol"] == "AFRM"
+        assert params["covered_calls"]["cc_mode"] == "EQUITY"
+
+

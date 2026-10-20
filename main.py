@@ -28,6 +28,7 @@ from google.cloud import firestore
 import os
 import re
 import json
+import time
 
 try:
     from dotenv import load_dotenv
@@ -331,6 +332,48 @@ def load_bot_configs():
             with open(bots_config_path, 'r') as f:
                 config = json.load(f)
 
+            # Merge dynamically provisioned bots from Firestore stock_picks/current
+            # This ensures provisioned bots survive Cloud Run container redeployments
+            try:
+                if dashboard_data and hasattr(dashboard_data, "stock_picks_ref") and dashboard_data.stock_picks_ref:
+                    pdoc = dashboard_data.stock_picks_ref.document("current").get()
+                    if getattr(pdoc, "exists", False):
+                        pdata = pdoc.to_dict() or {}
+                        already_accepted = pdata.get("already_accepted", [])
+                        bots = config.get("bots", [])
+                        known_client_ids = {b.get("client_id") for b in bots}
+                        known_symbols = {(b.get("symbol") or "").upper() for b in bots}
+                        merged_any = False
+                        for p in already_accepted:
+                            if p.get("status") == "PROVISIONED":
+                                cid = p.get("client_id")
+                                sym = (p.get("symbol") or p.get("ticker") or "").upper()
+                                if cid and sym and cid not in known_client_ids and sym not in known_symbols:
+                                    bot_entry = {
+                                        "name": p.get("bot_id") or f"{sym.lower()}_sma",
+                                        "symbol": sym,
+                                        "client_id": int(cid),
+                                        "script": "bots/UniversalSMABot.py",
+                                        "strategy": p.get("strategy") or "sma_crossover",
+                                        "enabled": True,
+                                        "strategy_track": p.get("strategy_track") or "GROWTH",
+                                        "initial_score": p.get("initial_score") or p.get("composite_score") or p.get("score"),
+                                        "description": f"{sym} SMA 5/20 trader (provisioned via Stock Picker)"
+                                    }
+                                    bots.append(bot_entry)
+                                    known_client_ids.add(cid)
+                                    known_symbols.add(sym)
+                                    merged_any = True
+                        if merged_any:
+                            config["bots"] = bots
+                            try:
+                                with open(bots_config_path, "w") as f_out:
+                                    json.dump(config, f_out, indent=2)
+                            except Exception:
+                                pass
+            except Exception as fs_err:
+                logger.debug(f"Could not merge provisioned bots from Firestore: {fs_err}")
+
             # Increment version on reload (for frontend cache invalidation)
             _bot_config_cache['version'] += 1
 
@@ -372,6 +415,27 @@ def load_bot_parameters(symbol: str) -> Optional[dict]:
             break
 
     if not file_path:
+        # Check Firestore for dynamically provisioned bot parameters
+        try:
+            db_client = getattr(dashboard_data, "db", None) or firestore.Client()
+            bot_docs = list(db_client.collection("bots").where("symbol", "==", symbol_clean.upper()).limit(1).stream())
+            if bot_docs:
+                b_data = bot_docs[0].to_dict() or {}
+                if b_data.get("bot_params"):
+                    params = b_data["bot_params"]
+                    with _bot_params_cache['lock']:
+                        _bot_params_cache['params'][symbol_clean] = params
+                        _bot_params_cache['mtimes'][symbol_clean] = time.time()
+                    try:
+                        local_path = os.path.join(os.path.dirname(__file__), "config", "bots", f"{symbol_clean}.json")
+                        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                        with open(local_path, "w") as f:
+                            json.dump(params, f, indent=2)
+                    except Exception:
+                        pass
+                    return params
+        except Exception as e:
+            logger.debug(f"Firestore lookup for {symbol_clean} bot params failed: {e}")
         return None
 
     with _bot_params_cache['lock']:
@@ -4184,6 +4248,19 @@ async def provision_bot_from_pick(request: Request):
 
         stage = "UPDATING_FIRESTORE"
         now_str = datetime.now(timezone.utc).isoformat()
+        try:
+            db_client = getattr(dashboard_data, "db", None) or firestore.Client()
+            db_client.collection("bots").document(f"bot_{next_id}").set({
+                "bot_id": bot_id,
+                "client_id": next_id,
+                "symbol": symbol,
+                "strategy_track": strategy_track,
+                "bot_params": bot_params,
+                "provisioned_at": now_str
+            }, merge=True)
+        except Exception as fs_bot_err:
+            logger.warning(f"Could not persist bot params to Firestore bots/bot_{next_id}: {fs_bot_err}")
+
         try:
             from stockpicker.firestore_utils import run_stock_pick_rmw
 
