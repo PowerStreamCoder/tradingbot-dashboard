@@ -971,6 +971,11 @@
             window.history.replaceState({}, '', newUrl);
         }
 
+        // Refresh bot selector dropdown so newly provisioned bots are available immediately
+        if (typeof window.refreshBotSelector === 'function') {
+            window.refreshBotSelector();
+        }
+
         // Resize chart if already initialized so layout recalculates properly
         if (typeof priceChart !== 'undefined' && priceChart) {
             try {
