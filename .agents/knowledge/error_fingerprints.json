@@ -1,5 +1,5 @@
 {
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Error fingerprint database mapping stack traces, error messages, and symptoms to root causes and quick resolutions.",
   "fingerprints": [
     {
@@ -209,6 +209,22 @@
       "root_cause": "The bot's config cannot be constructed - typically a config write that bypassed a cross-section invariant (D18: max_hold_hours below the covered-call horizon floor) - so load_trading_config() raises at module level under __main__ and the process exits 1. Popen itself succeeded, so the supervisor counted a *successful start* and reset its failure counter; the persistent-failure branch was unreachable for the most common cause of a bot failing to trade. A deploy that failed the #222 config-code gate then restarted the fleet anyway, turning one broken config into a fleet-wide bounce.",
       "resolution": "Fix the write path so the persisted value satisfies the invariant the loader enforces (D18: bots #350). The supervisor now counts process deaths, not just Popen failures, and escalates after 3 consecutive deaths with a 120s backoff (bots #355). The deploy rollback restarts the services only when that run had already restarted them, so a gate failure leaves the running fleet untouched (bots #354).",
       "verification_cmd": "python3 -m pytest tradingbot-bots/tests/test_bot_manager.py tradingbot-bots/tests/test_350_cc_horizon_guard.py tradingbot-bots/tests/test_deploy_rollback_guards.py"
+    },
+    {
+      "id": "ERR_DEPLOY_VERIFY_WINDOW",
+      "patterns": [
+        "Not all enabled bots are running after 12 attempts",
+        "Verification attempt 1/12",
+        "Deploy to Trading VM (Daily) failure at Verify bots are running"
+      ],
+      "symptom": "The deploy fails at 'Verify bots are running' and rolls the code back. Off-hours (the bots are stopped by design) the gate cannot pass, so the nightly deploy - which fires at 03:00 UTC = 23:00 ET, inside the stopped window - always rolls back and never delivers the code.",
+      "affected_files": [
+        ".github/workflows/deploy-to-vm.yml",
+        "services/bot_manager.py"
+      ],
+      "root_cause": "The verify gate asks `bot_manager.py --status-json`, which exits 0 iff EVERY enabled bot runs. The fleet only runs 08:51-16:39 ET (systemd timers) and `bot_manager.py::_is_market_active` refuses to run a bot outside 08:45-16:45 ET on a weekday, so outside that window 'the bots are not running' is the intended state - but the gate read it as a failed deployment and the rollback undid a perfectly good deploy.",
+      "resolution": "Distinguish 'the fleet is stopped by design' from 'a bot failed to start': inside the running window the bots must be running (unchanged); outside it the deployment is judged on the restart itself, i.e. trading-bot-manager must be active. The window is read from the VM's clock (bots #357, PR #358). Also note that a deploy failing after 'Record deployed commit on VM' must restore the marker, or the next deploy skips the VM entirely (bots #354, PR #356).",
+      "verification_cmd": "python3 -m pytest tradingbot-bots/tests/test_deploy_verify_gate.py tradingbot-bots/tests/test_deploy_rollback_guards.py"
     }
   ]
 }
