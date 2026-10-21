@@ -1,5 +1,5 @@
 [tool.coverage.run]
-source = ["main", "services", "stockpicker"]
+source = ["main", "access_code", "services", "stockpicker"]
 omit = ["tests/*"]
 
 [tool.coverage.report]
@@ -16,5 +16,5 @@ exclude_lines = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = "--cov=main --cov=services --cov=stockpicker --cov-report=term-missing"
+addopts = "--cov=main --cov=access_code --cov=services --cov=stockpicker --cov-report=term-missing"
 filterwarnings = ["ignore::DeprecationWarning", "ignore::pytest.PytestReturnNotNoneWarning"]

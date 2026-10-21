@@ -38,6 +38,8 @@ except ImportError:
 from io import BytesIO
 import xlsxwriter
 import secrets
+from access_code import access_code as derive_access_code
+from access_code import code_matches, secret_from_env
 from threading import Lock
 import logging
 
@@ -580,8 +582,17 @@ def resolve_bot_target(payload: dict) -> dict:
     }
 
 def get_valid_access_code():
-    """Get today's access code in ddmmyy format"""
-    return datetime.now().strftime("%d%m%y")
+    """Get today's access code.
+
+    The derivation lives in ``access_code.py`` — the same module the
+    operator's helper script (``scripts/dashboard_access_code.py``) uses — so
+    the code printed for the operator and the code the server accepts can
+    never disagree.
+
+    With ``DASHBOARD_ACCESS_SECRET`` configured the code is derived from that
+    secret; without it, it falls back to the legacy ``ddmmyy`` date code.
+    """
+    return derive_access_code(secret_from_env())
 
 def get_login_page():
     """Generate login page HTML"""
@@ -1091,8 +1102,10 @@ async def authenticate(request: Request):
         body = await request.json()
         access_code = body.get("access_code", "")
 
-        # Validate access code
-        if access_code == get_valid_access_code():
+        # Validate the access code. The comparison is constant-time, and the
+        # expected code is derived from the configured secret - a date-only
+        # code is a shared convention, not a credential (see access_code.py).
+        if code_matches(access_code, secret_from_env()):
             # Generate session ID
             session_id = secrets.token_urlsafe(32)
             # Kept on the same naive-time basis as every other session datetime
