@@ -50,7 +50,9 @@ When a new bug or unexpected failure is identified and fixed:
 
 3. **VM INTERACTION RESTRICTIONS**:
    - `gcloud compute ssh` may ONLY be used for non-mutating log inspection (`journalctl`) or system health status verification.
+   - Direct SSH with the local deploy key is allowed for exactly the same read-only purposes: `ssh -i ~/.ssh/tradingbot_deploy i030983@<VM_IP> '<read-only command>'`.
    - Do NOT run manual python execution commands or bypass the GitHub Actions deployment workflow.
+   - **The VM's external IP is not fixed** — it changes whenever the instance is recreated or has its address deleted and re-added. Always resolve it first with `gcloud compute instances list` (instance `trading-bot-vm`, zone `us-central1-a`) instead of trusting an IP written in a note, a doc, or memory. A stale IP produces a connect timeout that looks exactly like "the VM is unreachable" while the VM is perfectly healthy — that false conclusion has already caused unnecessary deploys.
 
 4. **DEPLOYMENT TRIGGER DISCIPLINE — DO NOT TRIGGER THE VM DEPLOY MANUALLY**:
    - **Do NOT dispatch `deploy-to-vm.yml` (or any VM-deploying workflow) manually** to land a change, to "make sure" a commit is live, or to test the deploy path. A `workflow_dispatch` on the deploy workflow **restarts the whole trading fleet** and, because `workflow_dispatch` bypasses the "VM is already up-to-date" check, it deploys even when the VM is already current.
@@ -60,4 +62,16 @@ When a new bug or unexpected failure is identified and fixed:
    - A successful merge is **not** a reason to deploy. Report "merged, the scheduled deploy will pick it up" instead.
 
 5. **VERIFY THE FLEET WITHOUT DEPLOYING**:
-   - To check what is running on the VM, read the logs of an existing run (`gh run view --log`) or query the status through an existing read-only path. Do **not** dispatch a deploy just to obtain a status reading — that is a fleet restart disguised as a health check.
+   - The VM is reachable read-only from the workstation. **Never dispatch a deploy just to obtain a status reading** — that is a fleet restart disguised as a health check.
+   - Resolve the host: `gcloud compute instances list` → `trading-bot-vm` / `us-central1-a` → NAT IP (34.46.214.78 as of 2026-10-21; re-resolve, never hardcode).
+   - Read-only probes (`IP=<nat ip>`):
+     | Question | Command |
+     |---|---|
+     | Is the manager up? | `ssh -i ~/.ssh/tradingbot_deploy i030983@$IP 'systemctl is-active trading-bot-manager'` |
+     | How many bots are actually trading? | `ssh -i ~/.ssh/tradingbot_deploy i030983@$IP 'ps -eo cmd \| grep "[l]auncher.py" \| wc -l'` |
+     | When does the fleet start/stop? | `ssh -i ~/.ssh/tradingbot_deploy i030983@$IP 'systemctl list-timers --all \| grep trading-bot-manager'` |
+     | Which commit is live? | `ssh -i ~/.ssh/tradingbot_deploy i030983@$IP 'cat $HOME/backups/bots/latest_deployed_commit.txt'` |
+     | What did the manager just do? | `ssh -i ~/.ssh/tradingbot_deploy i030983@$IP 'journalctl -u trading-bot-manager -n 40 --no-pager'` |
+     | Is the command API alive? | `curl -s http://$IP:8080/health` (unauthenticated, returns `{"status":"healthy"}`) |
+   - **Do not judge fleet state by the manager unit alone.** Outside market hours the manager unit is `active` but deliberately idle ("Outside market hours: supervisor idle, N bot(s) NOT started") and zero bot processes exist — that is the healthy off-hours state. The fleet runs 08:51 → 16:39 ET (weekday timers `trading-bot-manager-start.timer` / `-stop.timer`).
+   - `gh run view --log` on an existing run remains the way to read deploy history.
