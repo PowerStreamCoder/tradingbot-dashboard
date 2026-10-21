@@ -51,3 +51,13 @@ When a new bug or unexpected failure is identified and fixed:
 3. **VM INTERACTION RESTRICTIONS**:
    - `gcloud compute ssh` may ONLY be used for non-mutating log inspection (`journalctl`) or system health status verification.
    - Do NOT run manual python execution commands or bypass the GitHub Actions deployment workflow.
+
+4. **DEPLOYMENT TRIGGER DISCIPLINE — DO NOT TRIGGER THE VM DEPLOY MANUALLY**:
+   - **Do NOT dispatch `deploy-to-vm.yml` (or any VM-deploying workflow) manually** to land a change, to "make sure" a commit is live, or to test the deploy path. A `workflow_dispatch` on the deploy workflow **restarts the whole trading fleet** and, because `workflow_dispatch` bypasses the "VM is already up-to-date" check, it deploys even when the VM is already current.
+   - **Let the daily scheduled deploy (`cron: '0 3 * * *'`) deliver the code.** Merging to `main` is enough; the scheduled run picks the commit up.
+   - A manual deploy is permitted **only when it is urgent and mandatory** — i.e. a live production incident or a broken state on the VM that cannot wait for the next scheduled run. If the schedule is close enough, wait for it.
+   - When a manual deploy is genuinely required, state the reason explicitly before triggering it, and prefer the pre-market window (the fleet is stopped from 16:39 ET to 08:51 ET) so the fleet bounce is harmless. Never trigger one mid-session without saying why.
+   - A successful merge is **not** a reason to deploy. Report "merged, the scheduled deploy will pick it up" instead.
+
+5. **VERIFY THE FLEET WITHOUT DEPLOYING**:
+   - To check what is running on the VM, read the logs of an existing run (`gh run view --log`) or query the status through an existing read-only path. Do **not** dispatch a deploy just to obtain a status reading — that is a fleet restart disguised as a health check.
