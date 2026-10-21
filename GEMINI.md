@@ -116,7 +116,7 @@
 - Changelog: `../tradingbot-documentation/CHANGELOG.md`
 
 ## Code Knowledge Graph
-_Auto-updated 2026-10-20. Full graph: `tradingbot-tools/knowledge-graph/output/`_
+_Auto-updated 2026-10-21. Full graph: `tradingbot-tools/knowledge-graph/output/`_
 
 ### Key Classes
 | Class | File | Role |
@@ -174,7 +174,7 @@ BasePaperTrader._heartbeat_loop() → Writes last_heartbeat timestamp, connectio
 | `ERR_IBKR_HMDS_162` | Bot receives 0 historical bars on startup and rema | Use bar_size '5 mins' and whatToShow='TRADES'. |
 | `ERR_OPTION_PNL_ZERO` | Tick-based exit calculations evaluate covered call | Pass bucket parameter explicitly to _check_exit_conditions to pul |
 | `ERR_PENDING_SUBMIT_TIMEOUT` | Bot classified as unhealthy on latency spike or th | Set unhealthy threshold to 7 timeouts and add 60-second cooldown  |
-| `ERR_ASYNC_FILL_ORPHAN` | IBKR fills order after bot gave up waiting, causin | Use AsyncFillMonitor to track timed-out order IDs for 60 seconds. |
+| `ERR_ASYNC_FILL_ORPHAN` | IBKR fills order after bot gave up waiting, causin | Use AsyncFillMonitor to track timed-out order IDs for 60 seconds  |
 
 ### Quick Verification Tools
 - Fast parameter eval: `python3 tradingbot-tools/scripts/quick_backtest_eval.py --symbol <TICKER> --compact`
