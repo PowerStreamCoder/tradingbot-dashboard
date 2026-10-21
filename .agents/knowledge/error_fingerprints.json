@@ -1,5 +1,5 @@
 {
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Error fingerprint database mapping stack traces, error messages, and symptoms to root causes and quick resolutions.",
   "fingerprints": [
     {
@@ -225,6 +225,24 @@
       "root_cause": "The verify gate asks `bot_manager.py --status-json`, which exits 0 iff EVERY enabled bot runs. The fleet only runs 08:51-16:39 ET (systemd timers) and `bot_manager.py::_is_market_active` refuses to run a bot outside 08:45-16:45 ET on a weekday, so outside that window 'the bots are not running' is the intended state - but the gate read it as a failed deployment and the rollback undid a perfectly good deploy.",
       "resolution": "Distinguish 'the fleet is stopped by design' from 'a bot failed to start': inside the running window the bots must be running (unchanged); outside it the deployment is judged on the restart itself, i.e. trading-bot-manager must be active. The window is read from the VM's clock (bots #357, PR #358). Also note that a deploy failing after 'Record deployed commit on VM' must restore the marker, or the next deploy skips the VM entirely (bots #354, PR #356).",
       "verification_cmd": "python3 -m pytest tradingbot-bots/tests/test_deploy_verify_gate.py tradingbot-bots/tests/test_deploy_rollback_guards.py"
+    },
+    {
+      "id": "ERR_HUNG_BOT_FALSE_POSITIVE",
+      "patterns": [
+        "Hung Bot Detected",
+        "process is alive but has not sent a heartbeat",
+        "bot_hung",
+        "bot_hung:SYMBOL"
+      ],
+      "symptom": "The operator gets a 'CRITICAL TRADING ALERT - Hung Bot Detected: <SYM>' email saying the bot's process is alive but has not sent a heartbeat for N minutes, while the same fault is also reported by the supervisor as a crash loop. The bot is not hung: it is dying at boot and being restarted, so between two restarts a live process exists while the heartbeat stays frozen at the last successful one.",
+      "affected_files": [
+        "notification_service/event_detector.py",
+        "notification_service/main.py",
+        "services/bot_manager.py"
+      ],
+      "root_cause": "The watchdog decides liveness by sampling the pidfile's pid (os.kill(pid, 0) plus a /proc/<pid>/cmdline check), so it observes a crash-looping bot as 'alive' during the instant between two restarts, and a stale Firestore heartbeat then reads as a hang. It samples liveness and never sees deaths, so the supervisor's crash-loop detection (D21, bots #355) does not cover it and the two alerts contradict each other about one fault. The pidfile already carried the discriminator - bot_manager._write_pidfile writes '<pid>\\n<start_epoch>' - but only the pid was read.",
+      "resolution": "Read the start epoch from the pidfile and suppress the hung event while the current process instance is younger than the heartbeat timeout (a process that has just started has not yet had a full window to heartbeat, so a stale heartbeat belongs to a dead predecessor). An unknown or negative uptime still alerts, so a real hang is never silenced. bots #363.",
+      "verification_cmd": "python3 -m pytest tradingbot-bots/tests/test_event_detector.py tradingbot-bots/tests/test_notification_service.py"
     }
   ]
 }
