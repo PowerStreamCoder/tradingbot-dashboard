@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Error fingerprint database mapping stack traces, error messages, and symptoms to root causes and quick resolutions.",
   "fingerprints": [
     {
@@ -10,7 +10,11 @@
         "offset-naive"
       ],
       "symptom": "Trade timestamps mismatched or offset datetime error in Firestore/calculations",
-      "affected_files": ["trading/base.py", "trading/strategies/sma_crossover_trader.py", "trading/dashboard.py"],
+      "affected_files": [
+        "trading/base.py",
+        "trading/strategies/sma_crossover_trader.py",
+        "trading/dashboard.py"
+      ],
       "root_cause": "datetime.now() without tzinfo parameter used instead of UTC aware datetime.",
       "resolution": "Use datetime.now(timezone.utc) or utcnow() helper. All Firestore timestamps must be offset-aware UTC.",
       "verification_cmd": "pytest tests/ -v"
@@ -23,7 +27,10 @@
         "IBKR execution report for closed position"
       ],
       "symptom": "Bot triggers exit callback for position no longer held or duplicate trade record.",
-      "affected_files": ["trading/base.py", "trading/dashboard.py"],
+      "affected_files": [
+        "trading/base.py",
+        "trading/dashboard.py"
+      ],
       "root_cause": "_on_exec_details processed IBKR execution reports without verifying live position status or deduplicating execution IDs.",
       "resolution": "Check ib.positions() before processing fill and enforce exec_id deduplication set in log_trade().",
       "verification_cmd": "pytest tests/ -v"
@@ -36,7 +43,10 @@
         "0 historical bars"
       ],
       "symptom": "Bot receives 0 historical bars on startup and remains inactive.",
-      "affected_files": ["trading/base.py", "trading/config.py"],
+      "affected_files": [
+        "trading/base.py",
+        "trading/config.py"
+      ],
       "root_cause": "Requesting bar_size '1 hour' at open before enough bars exist or using whatToShow='MIDPOINT' instead of 'TRADES'.",
       "resolution": "Use bar_size '5 mins' and whatToShow='TRADES'.",
       "verification_cmd": "pytest tests/ -v"
@@ -48,7 +58,10 @@
         "covered call pnl missing in tick exit"
       ],
       "symptom": "Tick-based exit calculations evaluate covered call P&L as 0.0.",
-      "affected_files": ["trading/strategies/sma_crossover_trader.py", "trading/pnl_calculator.py"],
+      "affected_files": [
+        "trading/strategies/sma_crossover_trader.py",
+        "trading/pnl_calculator.py"
+      ],
       "root_cause": "on_tick_update_entries did not pass resolved Bucket object to _check_exit_conditions.",
       "resolution": "Pass bucket parameter explicitly to _check_exit_conditions to pull bucket.option_pnl.",
       "verification_cmd": "pytest tests/ -v"
@@ -60,7 +73,10 @@
         "IBKR connection unhealthy"
       ],
       "symptom": "Bot classified as unhealthy on latency spike or thrashing exit attempts.",
-      "affected_files": ["trading/base.py", "trading/exit_handler.py"],
+      "affected_files": [
+        "trading/base.py",
+        "trading/exit_handler.py"
+      ],
       "root_cause": "Unhealthy threshold set too low (3 timeouts) or profit floor exit lacked cooldown.",
       "resolution": "Set unhealthy threshold to 7 timeouts and add 60-second cooldown on exit retries.",
       "verification_cmd": "pytest tests/ -v"
@@ -72,9 +88,12 @@
         "order fill post timeout"
       ],
       "symptom": "IBKR fills order after bot gave up waiting, causing untracked position.",
-      "affected_files": ["trading/execution_manager.py"],
-      "root_cause": "Timeout logic in execution_manager did not retain order_id for post-timeout fill callbacks.",
-      "resolution": "Use AsyncFillMonitor to track timed-out order IDs for 60 seconds.",
+      "affected_files": [
+        "trading/execution_manager.py",
+        "trading/base.py"
+      ],
+      "root_cause": "Timeout logic in execution_manager did not retain order_id for post-timeout fill callbacks. v4.5 also found enter_bucket registered the pending entry only AFTER place_order() returned, so an execDetails firing during the call was dropped; pending entries from the `result is None` path stored no order_id, so _handle_async_fill could never adopt them.",
+      "resolution": "Use AsyncFillMonitor to track timed-out order IDs for 60 seconds (max_retries 6 x 10s). v4.5: register pending_entry_orders BEFORE place_order and guard against double-processing; _handle_async_fill falls back to side+quantity matching when no order_id is stored; verify_no_orphaned_position grants a 120s grace for fresh in-flight entries; exit-position refresh waits for the target symbol.",
       "verification_cmd": "pytest tests/ -v"
     },
     {
@@ -86,61 +105,14 @@
         "IBKR has orphaned position"
       ],
       "symptom": "Realized P/L is duplicated/inflated in logs or IBKR position mismatch reported on startup after exit timeout.",
-      "affected_files": ["trading/exit_handler.py", "trading/strategies/sma_crossover_trader.py", "trading/base.py"],
+      "affected_files": [
+        "trading/exit_handler.py",
+        "trading/strategies/sma_crossover_trader.py",
+        "trading/base.py"
+      ],
       "root_cause": "exit_handler checked 'if order_result:' which evaluates to True for (None, order_id) 2-tuples on timeout. Strategy on_exit_fill lacked 'if self.active_position is None: return' guard.",
       "resolution": "Check 'if order_result and order_result[0] is not None:' before setting success=True. Add active_position is None guard in on_exit_fill. Allow manual/orphaned exit orders with bucket_id=None.",
       "verification_cmd": "python3 -m pytest tradingbot-bots/tests"
-    },
-    {
-      "id": "ERR_BOT_SELECTOR_UNDEFINED_FUNCTION",
-      "patterns": [
-        "stopUpdates is not defined",
-        "startUpdates is not defined",
-        "ReferenceError.*handleBotSelectorChange"
-      ],
-      "symptom": "Bot selector change fires but dashboard does not switch — console shows ReferenceError, bot data stays on previous bot.",
-      "affected_files": ["static/js/bot_focus.js"],
-      "root_cause": "handleBotSelectorChange called stopUpdates()/startUpdates() which were never defined. The handler aborts on the ReferenceError before loadBotConfig() is reached.",
-      "resolution": "Use stopAllTimers() and startPeriodicTimers() instead. Verify all function names called in handleBotSelectorChange exist before deploying.",
-      "verification_cmd": "grep -n 'stopUpdates\\|startUpdates' static/js/bot_focus.js"
-    },
-    {
-      "id": "ERR_LEAKED_SETINTERVAL_ON_BOT_SWITCH",
-      "patterns": [
-        "duplicate API calls after bot switch",
-        "stale symbol in polling after switch",
-        "chart still showing old bot after switch"
-      ],
-      "symptom": "After switching bots, multiple overlapping polling loops run simultaneously — some fetch the new bot, others still fetch the old bot.",
-      "affected_files": ["static/js/bot_focus.js"],
-      "root_cause": "setInterval handles for chart/tables/logs timers were not stored in variables, so clearInterval could not be called on them during bot switch. Each switch adds new intervals without removing old ones.",
-      "resolution": "Declare chartTimer, tablesTimer, logsTimer at module level. Assign all setInterval return values. Call clearInterval on all four timers in stopAllTimers() before each switch.",
-      "verification_cmd": "grep -n 'setInterval' static/js/bot_focus.js"
-    },
-    {
-      "id": "ERR_TRADE_HISTORY_CROSS_BOT_BLEED",
-      "patterns": [
-        "trade history shows wrong symbol after bot switch",
-        "NVDA trades visible when IWM selected"
-      ],
-      "symptom": "Trade history table shows trades from a different bot after switching the bot selector.",
-      "affected_files": ["static/js/bot_focus.js"],
-      "root_cause": "updateTradeHistory fetches /api/trade-history/all (all bots) and only filtered by trading_mode (paper/live), not by CONFIG.symbol.",
-      "resolution": "Add symbol filter: trade.symbol === CONFIG.symbol (also check trade.analysis_metadata?.symbol for backward compat).",
-      "verification_cmd": "grep -n 'filteredTrades' static/js/bot_focus.js"
-    },
-    {
-      "id": "ERR_BOT_CONFIG_STALE_LOCAL_COPY",
-      "patterns": [
-        "bot not appearing in selector",
-        "new bot missing from dropdown",
-        "selector only shows one bot"
-      ],
-      "symptom": "A bot exists in tradingbot-config/bots.json but does not appear in the dashboard bot selector.",
-      "affected_files": ["tradingbot-dashboard/config/bots.json", "tradingbot-dashboard/main.py"],
-      "root_cause": "Dashboard has its own bundled config/bots.json that diverged from the canonical tradingbot-config/bots.json. load_bot_configs() was checking the local copy first.",
-      "resolution": "load_bot_configs() now checks ../tradingbot-config/bots.json first (canonical), falling back to local config/bots.json for Cloud Run. Keep both in sync when adding/removing bots.",
-      "verification_cmd": "curl http://localhost:8080/api/bot-configs | python3 -m json.tool"
     },
     {
       "id": "ERR_EXTENDED_HOURS_MARKET_ORDER",
@@ -149,10 +121,94 @@
         "PendingSubmit after 10s outside RTH"
       ],
       "symptom": "Emergency or manual market exit orders stall in PendingSubmit and timeout during extended hours trading.",
-      "affected_files": ["trading/execution_manager.py"],
+      "affected_files": [
+        "trading/execution_manager.py"
+      ],
       "root_cause": "US stock exchanges prohibit Market orders outside Regular Trading Hours (9:30 AM - 4:00 PM ET), causing IBKR to hold MarketOrders until market open.",
       "resolution": "Route all orders outside RTH to limit_escalation (LimitOrder with outsideRth=True).",
       "verification_cmd": "python3 -m pytest tradingbot-bots/tests"
+    },
+    {
+      "id": "ERR_CLOSE_ALL_CLI_HANG",
+      "patterns": [
+        "clientId 3 already in use",
+        "Error 326",
+        "Executing --close-all"
+      ],
+      "symptom": "Running --close-all via CLI keeps python process running in background, causing Client ID 3 socket conflict on next service start.",
+      "affected_files": [
+        "trading/launcher.py",
+        "trading/base.py"
+      ],
+      "root_cause": "run_trader in launcher.py invoked trader.run() after close_all_positions() instead of disconnecting and exiting immediately.",
+      "resolution": "Update launcher.py to call trader.disconnect() and sys.exit(0) immediately after close_all_positions(). Add reqHistoricalData price fallback in base.py if ticker returns None or NaN.",
+      "verification_cmd": "python3 -m py_compile trading/launcher.py trading/base.py"
+    },
+    {
+      "id": "ERR_LEGACY_CLOSE_PLACE_ORDER_SIG",
+      "patterns": [
+        "Unexpected keyword argument `limit_price` in function `BasePaperTrader.place_order`",
+        "Unexpected keyword argument `urgency` in function `BasePaperTrader.place_order`"
+      ],
+      "symptom": "IDE error or TypeError raised during _legacy_close_position invocation.",
+      "affected_files": [
+        "trading/base.py"
+      ],
+      "root_cause": "_legacy_close_position passed limit_price and urgency kwargs to place_order which accepts price, is_exit, reason, bucket_id.",
+      "resolution": "Pass price=price, is_exit=True, reason=reason, bucket_id=bucket.bucket_id to place_order and unpack tuple return value (fill_price, order_id).",
+      "verification_cmd": "python3 -m py_compile trading/base.py"
+    },
+    {
+      "id": "ERR_REENTRY_SUPPRESSION_PEAK_ZERO",
+      "patterns": [
+        "RE-ENTRY SUPPRESSION",
+        "re_entry_block_peak",
+        "fresh swing breakout past"
+      ],
+      "symptom": "After a churn exit the bot re-enters immediately; the suppression log shows a peak of $0.00 / direction LONG on every churn exit.",
+      "affected_files": [
+        "trading/strategies/sma_crossover_trader.py",
+        "trading/config.py"
+      ],
+      "root_cause": "on_exit_fill() assigned self.active_position = None BEFORE calling _arm_re_entry_suppression(), so (self.active_position or {}).get('peak_price') was always 0.0 and direction defaulted to LONG. The ~1 ATR breakout early-clear then fired on the first tick check (tick >= 0 + ATR), lifting the block instantly.",
+      "resolution": "Snapshot exit_peak_price and exit_direction from active_position inside the lock before clearing, then pass them explicitly to _arm_re_entry_suppression(reason, exit_peak_price=..., exit_direction=...). Never read active_position after it is cleared.",
+      "verification_cmd": "python3 -m pytest tradingbot-bots/tests/test_re_entry_suppression.py"
+    },
+    {
+      "id": "ERR_THRESHOLD_BUCKETS_DROPPED_FALSY",
+      "patterns": [
+        "effective_thresholds",
+        "forked from global",
+        "per-regime"
+      ],
+      "symptom": "Feedback engine logs '\u270f\ufe0f peak_giveback_min_r[REGIME]: X \u2192 Y (forked from global)' but adaptive_pnl.effective_thresholds stays {} and the global scalar never changes.",
+      "affected_files": [
+        "trading/adaptive_feedback_engine.py",
+        "trading/adaptive_pnl_agent.py",
+        "trading/config.py"
+      ],
+      "root_cause": "Target bucket resolved with 'getattr(config, 'effective_thresholds', None) or {}'. An empty (falsy) effective_thresholds takes the 'or {}' branch, allocating a throwaway dict; setdefault() mutations are written to that temp dict, not the config \u2014 nudge silently lost.",
+      "resolution": "Use an explicit None check instead of 'or {}': buckets = getattr(config, 'effective_thresholds', None); if buckets is None: buckets = {}. Reattach buckets to the config attrs so setdefault() mutates the live dict.",
+      "verification_cmd": "python3 -m pytest tradingbot-bots/tests/test_adaptive_feedback_engine.py tradingbot-bots/tests/test_adaptive_pnl_agent.py"
+    },
+    {
+      "id": "ERR_CONFIG_LOAD_BOOT_CRASHLOOP",
+      "patterns": [
+        "Covered-call horizon incoherent",
+        "ValueError: Covered-call horizon",
+        "bot exits with code 1 immediately after start",
+        "restart failure persisting"
+      ],
+      "symptom": "A bot starts and exits with code 1 within seconds of every start. The supervisor restarts it every ~5s (dozens of times in minutes) and the operator sees only the debounced 'Trading Bot Down' email - the critical 'restart failure persisting' alert never fires.",
+      "affected_files": [
+        "bots/UniversalSMABot.py",
+        "trading/config.py",
+        "trading/config_loader.py",
+        "services/bot_manager.py"
+      ],
+      "root_cause": "The bot's config cannot be constructed - typically a config write that bypassed a cross-section invariant (D18: max_hold_hours below the covered-call horizon floor) - so load_trading_config() raises at module level under __main__ and the process exits 1. Popen itself succeeded, so the supervisor counted a *successful start* and reset its failure counter; the persistent-failure branch was unreachable for the most common cause of a bot failing to trade. A deploy that failed the #222 config-code gate then restarted the fleet anyway, turning one broken config into a fleet-wide bounce.",
+      "resolution": "Fix the write path so the persisted value satisfies the invariant the loader enforces (D18: bots #350). The supervisor now counts process deaths, not just Popen failures, and escalates after 3 consecutive deaths with a 120s backoff (bots #355). The deploy rollback restarts the services only when that run had already restarted them, so a gate failure leaves the running fleet untouched (bots #354).",
+      "verification_cmd": "python3 -m pytest tradingbot-bots/tests/test_bot_manager.py tradingbot-bots/tests/test_350_cc_horizon_guard.py tradingbot-bots/tests/test_deploy_rollback_guards.py"
     }
   ]
 }
