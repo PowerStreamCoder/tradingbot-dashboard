@@ -138,6 +138,14 @@ class TestCodeMatches:
     def test_accepts_the_date_code_when_no_secret_is_set(self):
         assert ac.code_matches(ac.today_code(), "") is True
 
+    def test_accepts_code_case_insensitively(self):
+        code = ac.access_code(TEST_SECRET)
+        assert ac.code_matches(code.lower(), TEST_SECRET) is True
+
+    def test_accepts_code_with_surrounding_whitespace(self):
+        code = ac.access_code(TEST_SECRET)
+        assert ac.code_matches(f"  {code} \n", TEST_SECRET) is True
+
 
 # --------------------------------------------------------------------------- #
 # The server
@@ -159,6 +167,17 @@ class TestServer:
             mock_doc_fn.return_value = MagicMock()
             res = client.post(
                 "/authenticate", json={"access_code": ac.access_code(TEST_SECRET)}
+            )
+            assert res.status_code == 200
+            assert "dashboard_session" in res.cookies
+
+    def test_authenticate_accepts_lowercase_code(self, monkeypatch):
+        monkeypatch.setenv("DASHBOARD_ACCESS_SECRET", TEST_SECRET)
+        client = TestClient(main.app)
+        with patch.object(main.sessions_ref, "document") as mock_doc_fn:
+            mock_doc_fn.return_value = MagicMock()
+            res = client.post(
+                "/authenticate", json={"access_code": ac.access_code(TEST_SECRET).lower()}
             )
             assert res.status_code == 200
             assert "dashboard_session" in res.cookies
@@ -210,8 +229,8 @@ class TestHelperScript:
         assert result.returncode == 0
         assert result.stdout.strip() == ac.access_code(TEST_SECRET)
 
-    def test_it_reports_when_no_secret_is_configured(self):
-        result = self._run()
+    def test_it_reports_when_no_secret_is_configured(self, tmp_path):
+        result = self._run(env={"HOME": str(tmp_path)})
         assert result.returncode == 0
         assert result.stdout.strip() == ac.today_code()
         assert "No access secret configured" in result.stderr

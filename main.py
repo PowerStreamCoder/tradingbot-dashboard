@@ -674,7 +674,7 @@ def get_login_page():
         <h1>🔒 Trading Dashboard</h1>
         <p class="subtitle">Enter access code to continue</p>
         <form id="loginForm">
-            <input type="text" id="accessCode" placeholder="Enter 6-digit code" maxlength="6" pattern="[0-9]{6}" required autofocus>
+            <input type="text" id="accessCode" placeholder="Enter 6-character code" maxlength="6" pattern="[0-9A-Za-z]{6}" required autofocus style="text-transform: uppercase;">
             <button type="submit">Access Dashboard</button>
         </form>
         <div class="error" id="errorMsg">❌ Invalid access code. Please try again.</div>
@@ -683,7 +683,7 @@ def get_login_page():
     <script>
         document.getElementById('loginForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const code = document.getElementById('accessCode').value;
+            const code = document.getElementById('accessCode').value.trim().toUpperCase();
             const errorMsg = document.getElementById('errorMsg');
 
             try {
