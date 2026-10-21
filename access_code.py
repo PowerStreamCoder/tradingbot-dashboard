@@ -87,5 +87,6 @@ def code_matches(candidate, secret: str = "", now=None) -> bool:
         return False
     expected = access_code(secret, now=now)
     return hmac.compare_digest(
-        candidate.encode("utf-8"), expected.encode("utf-8")
+        candidate.strip().upper().encode("utf-8"), expected.encode("utf-8")
     )
+
