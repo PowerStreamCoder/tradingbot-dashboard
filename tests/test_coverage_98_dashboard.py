@@ -120,7 +120,12 @@ class TestDashboardConfigAndData:
 
     def test_get_valid_access_code(self):
         code = get_valid_access_code()
-        assert code == datetime.now().strftime("%d%m%y")
+        # The date component is UTC (Cloud Run runs in UTC, and the operator's
+        # helper script runs on their own machine in their own timezone). With
+        # no secret configured the code is that date, unchanged.
+        from access_code import today_code
+        assert code == today_code()
+        assert code == datetime.now(timezone.utc).strftime("%d%m%y")
 
     def test_get_login_page(self):
         html = get_login_page()
