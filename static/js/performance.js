@@ -50,6 +50,11 @@ const PERF_SECTION_CONFIG = {
         tileId: 'tileSec605',
         label: 'SEC 605'
     },
+    machinery: {
+        badgeId: 'perfBadge-machinery',
+        tileId: 'tileMachinery',
+        label: 'engine machinery'
+    },
     instCta: {
         badgeId: 'perfBadge-instCta',
         tileId: 'tileInstCta',
@@ -671,6 +676,9 @@ async function loadPerformanceData(force = false, isSilent = false, reason = '')
         completePerfSectionLoading('instCta');
         completePerfSectionLoading('buyHold');
 
+        renderMachinery(data.machinery);
+        completePerfSectionLoading('machinery');
+
         renderBots(data.bots);
         completePerfSectionLoading('bots');
 
@@ -824,8 +832,11 @@ function renderKPIs(kpis) {
 
     setVal('kpiSlippage', kpis.avg_slippage_per_share != null
         ? `$${kpis.avg_slippage_per_share.toFixed(3)}/sh` : NOT_AVAILABLE);
-    setVal('kpiFillConf', kpis.fill_confirmation_rate_pct != null
-        ? `${kpis.fill_confirmation_rate_pct.toFixed(1)}%` : NOT_AVAILABLE);
+    const fillConfText = kpis.fill_confirmation_rate_pct != null
+        ? `${kpis.fill_confirmation_rate_pct.toFixed(1)}%` : NOT_AVAILABLE;
+    const fillRateText = kpis.fill_rate_pct != null
+        ? `${kpis.fill_rate_pct.toFixed(1)}%` : null;
+    setVal('kpiFillConf', fillRateText ? `${fillConfText} (Fill: ${fillRateText})` : fillConfText);
 
     setVal('kpiMaxDd', kpis.max_drawdown_pct != null
         ? `${kpis.max_drawdown_pct.toFixed(2)}%` : NOT_AVAILABLE);
@@ -841,6 +852,20 @@ function renderBenchmarks(benchmarks) {
     renderBenchmarkTable('tableSec605', benchmarks.sec_rule_605);
     renderBenchmarkTable('tableInstCta', benchmarks.institutional_cta);
     renderBenchmarkTable('tableBuyHold', benchmarks.buy_and_hold);
+}
+
+function renderMachinery(machinery) {
+    const tbody = document.getElementById('tableMachinery');
+    if (!tbody) return;
+
+    const metrics = (machinery && machinery.metrics) || [];
+    if (!metrics.length) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:#94a3b8; padding:1.5rem;">
+            No core-engine machinery telemetry available in this scope.</td></tr>`;
+        return;
+    }
+
+    renderBenchmarkTable('tableMachinery', metrics);
 }
 
 function renderBenchmarkTable(tableId, list) {

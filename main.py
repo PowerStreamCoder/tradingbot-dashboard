@@ -908,6 +908,7 @@ class DashboardData:
             self.trades_ref = self.db.collection('trades')
             self.logs_ref = self.db.collection('bot_logs')
             self.stock_picks_ref = self.db.collection('stock_picks')  # StockPicker integration
+            self.execution_metrics_ref = self.db.collection('execution_metrics')
 
             # Load data from Firestore on startup
             self.bot_data = self._load_bot_data()
@@ -983,6 +984,17 @@ class DashboardData:
             return trades
         except Exception as e:
             print(f"Error loading trades from Firestore: {e}")
+            return []
+
+    def _load_execution_metrics(self, limit: int = 500) -> List[Dict]:
+        """Load execution metrics snapshots or records from Firestore if collection exists."""
+        try:
+            if not hasattr(self, 'execution_metrics_ref') or self.execution_metrics_ref is None:
+                return []
+            docs = self.execution_metrics_ref.order_by('ts', direction=firestore.Query.DESCENDING).limit(limit).stream()
+            return [doc.to_dict() for doc in docs if doc.exists]
+        except Exception as e:
+            logger.debug(f"Execution metrics not available in Firestore: {e}")
             return []
 
     def _load_logs(self) -> Dict:
@@ -1363,6 +1375,13 @@ async def get_engine_performance_endpoint(
         if trades_list:
             benchmark_series = _fetch_benchmark_price_series(benchmark, period)
 
+        # Safely fetch execution metrics if collection is populated (Issue #300 / #299 transport sink)
+        exec_metrics_list = None
+        try:
+            exec_metrics_list = dashboard_data._load_execution_metrics(limit=500)
+        except Exception:
+            pass
+
         perf_data = calculate_engine_performance(
             trades=trades_list,
             bot_overview_data=bot_overview_raw,
@@ -1373,7 +1392,8 @@ async def get_engine_performance_endpoint(
             mode=mode,
             benchmark_symbol=benchmark,
             benchmark_price_series=benchmark_series,
-            history_limit=TRADE_HISTORY_ROW_CAP
+            history_limit=TRADE_HISTORY_ROW_CAP,
+            execution_metrics_data=exec_metrics_list,
         )
 
         if response:
