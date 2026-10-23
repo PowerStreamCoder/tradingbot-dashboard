@@ -183,12 +183,32 @@ class ExecutivePerformanceKPIs(BaseModel):
     metrics_basis: Dict[str, str] = Field(default_factory=dict)
 
 
+class EngineMachineryReport(BaseModel):
+    is_available: bool = False
+    data_basis: str = "unavailable"
+    scope_note: str = "Live / Paper only (virtual clock in replay)"
+    tick_to_trade_ms: Optional[float] = None
+    cascade_p99_us: Optional[float] = None
+    queue_wait_p99_ms: Optional[float] = None
+    markout_1s_bps: Optional[float] = None
+    markout_5s_bps: Optional[float] = None
+    markout_30s_bps: Optional[float] = None
+    reconciliation_events: Optional[int] = None
+    exit_blocked_by_entry: Optional[int] = None
+    event_loop_errors: Optional[int] = None
+    broker_quote_calls: Optional[int] = None
+    cascade_p95_us: Optional[float] = None
+    cascade_evaluations: Optional[int] = None
+    metrics: List[BenchmarkComparisonMetric] = Field(default_factory=list)
+
+
 class EnginePerformanceResponse(BaseModel):
     scorecard: EngineScorecard
     executive_kpis: ExecutivePerformanceKPIs
     benchmarks: PublicBenchmarkReport
     bots: List[BotPerformanceRecord]
     diagnostics: List[EngineDiagnosticFinding]
+    machinery: EngineMachineryReport = Field(default_factory=EngineMachineryReport)
     period: str
     mode: str
     bot_scope: str
@@ -436,6 +456,480 @@ def _compare_status(engine_value: Optional[float], benchmark_value: Optional[flo
     return "BEATING" if engine_value <= benchmark_value else "LAGGING"
 
 
+def _build_empty_machinery_report() -> EngineMachineryReport:
+    empty_metrics = [
+        BenchmarkComparisonMetric(
+            name="Tick-to-Trade Latency",
+            category="LATENCY",
+            engine_value=None,
+            engine_formatted="--",
+            benchmark_name="Institutional Standard",
+            benchmark_value=150.0,
+            benchmark_formatted="< 150.0 ms",
+            status="UNMEASURED",
+            data_basis="unavailable",
+            description="Signal detection to IBKR submit and fill confirmation delay (signal_age_s + total_execute_ns).",
+        ),
+        BenchmarkComparisonMetric(
+            name="Tail Latency & Jitter (p99)",
+            category="TAIL_JITTER",
+            engine_value=None,
+            engine_formatted="--",
+            benchmark_name="Hedge Fund Execution SLA",
+            benchmark_value=500.0,
+            benchmark_formatted="Cascade < 500 µs | Queue < 50 ms",
+            status="UNMEASURED",
+            data_basis="unavailable",
+            description="p99 tail latency of exit condition check cascade and execution thread queue wait.",
+        ),
+        BenchmarkComparisonMetric(
+            name="Adverse Selection / Markout (+30s)",
+            category="MARKOUT",
+            engine_value=None,
+            engine_formatted="--",
+            benchmark_name="Rule 605 Alpha Markout",
+            benchmark_value=0.0,
+            benchmark_formatted="> 0.0 bps (Favorable)",
+            status="UNMEASURED",
+            data_basis="unavailable",
+            description="Signed post-entry price move from fill price at +1s, +5s, +30s (+ = favorable, - = adverse).",
+        ),
+        BenchmarkComparisonMetric(
+            name="Order-State Reconciliation Lag",
+            category="RECONCILIATION",
+            engine_value=None,
+            engine_formatted="--",
+            benchmark_name="Zero-Desync Standard",
+            benchmark_value=0.0,
+            benchmark_formatted="0 events",
+            status="UNMEASURED",
+            data_basis="unavailable",
+            description="Buckets entering post-submit broker reconciliation due to unconfirmed broker fills (F4).",
+        ),
+        BenchmarkComparisonMetric(
+            name="Technical Concurrency / Non-Blocking",
+            category="CONCURRENCY",
+            engine_value=None,
+            engine_formatted="--",
+            benchmark_name="Non-Blocking Architecture",
+            benchmark_value=0.0,
+            benchmark_formatted="0 blocked / 0 errors",
+            status="UNMEASURED",
+            data_basis="unavailable",
+            description="Exits delayed behind blocking entries (F2) and asyncio/ib_insync event loop errors (F4).",
+        ),
+        BenchmarkComparisonMetric(
+            name="Broker Calls on Hot Path",
+            category="HOT_PATH",
+            engine_value=None,
+            engine_formatted="--",
+            benchmark_name="Hot-Path Hygiene (F1)",
+            benchmark_value=0.0,
+            benchmark_formatted="0 calls",
+            status="UNMEASURED",
+            data_basis="unavailable",
+            description="Live broker quote round-trips executed on the critical tick evaluation path.",
+        ),
+        BenchmarkComparisonMetric(
+            name="Decision-Path Cost",
+            category="DECISION_COST",
+            engine_value=None,
+            engine_formatted="--",
+            benchmark_name="Sub-Millisecond Cascade (F5)",
+            benchmark_value=150.0,
+            benchmark_formatted="< 150.0 µs",
+            status="UNMEASURED",
+            data_basis="unavailable",
+            description="Exit condition check cascade duration (cascade_ns p90) and evaluation throughput.",
+        ),
+    ]
+    return EngineMachineryReport(
+        is_available=False,
+        data_basis="unavailable",
+        scope_note="Live / Paper only (virtual clock in replay)",
+        metrics=empty_metrics,
+    )
+
+
+def _summarize_execution_metrics(
+    raw_data: Any,
+    bot_scope: str = "ALL",
+    period_start: Optional[datetime] = None,
+) -> Tuple[Optional[float], Optional[float], Optional[float], EngineMachineryReport]:
+    """
+    Summarize execution-metrics intervals and order records (Issue #300).
+
+    Returns:
+        (effective_over_quoted_ratio_pct, rejection_rate_pct, fill_rate_pct, machinery_report)
+    """
+    if not raw_data:
+        return None, None, None, _build_empty_machinery_report()
+
+    raw_orders: List[Dict[str, Any]] = []
+    raw_intervals: List[Dict[str, Any]] = []
+
+    if isinstance(raw_data, dict):
+        if "orders" in raw_data and isinstance(raw_data["orders"], list):
+            raw_orders.extend(raw_data["orders"])
+        if "order_records" in raw_data and isinstance(raw_data["order_records"], list):
+            raw_orders.extend(raw_data["order_records"])
+        if "intervals" in raw_data and isinstance(raw_data["intervals"], list):
+            raw_intervals.extend(raw_data["intervals"])
+        if "snapshots" in raw_data and isinstance(raw_data["snapshots"], list):
+            raw_intervals.extend(raw_data["snapshots"])
+        if "records" in raw_data and isinstance(raw_data["records"], list):
+            for rec in raw_data["records"]:
+                if isinstance(rec, dict):
+                    if rec.get("type") == "order" or ("spread_at_execution" in rec and "counters" not in rec):
+                        raw_orders.append(rec)
+                    else:
+                        raw_intervals.append(rec.get("snapshot") or rec)
+        if "counters" in raw_data or "latency" in raw_data:
+            raw_intervals.append(raw_data)
+    elif isinstance(raw_data, list):
+        for rec in raw_data:
+            if isinstance(rec, dict):
+                if rec.get("type") == "order" or ("spread_at_execution" in rec and "counters" not in rec):
+                    raw_orders.append(rec)
+                else:
+                    raw_intervals.append(rec.get("snapshot") or rec)
+
+    norm_scope = (bot_scope or "ALL").upper().strip()
+
+    def _match_scope(item: Dict[str, Any]) -> bool:
+        if norm_scope == "ALL":
+            return True
+        sym = (item.get("symbol") or (item.get("snapshot") or {}).get("symbol") or "").upper().strip()
+        return not sym or sym == norm_scope
+
+    def _match_period(item: Dict[str, Any]) -> bool:
+        if period_start is None:
+            return True
+        raw_ts = item.get("ts") or item.get("timestamp")
+        if not raw_ts:
+            return True
+        dt = parse_iso_datetime(raw_ts)
+        if dt and dt < period_start:
+            return False
+        return True
+
+    orders = [o for o in raw_orders if _match_scope(o) and _match_period(o)]
+    intervals = [i for i in raw_intervals if _match_scope(i) and _match_period(i)]
+
+    if not orders and not intervals:
+        return None, None, None, _build_empty_machinery_report()
+
+    # Part A: The 3 execution metrics
+    eq_ratio: Optional[float] = None
+    valid_eq_orders = [
+        o for o in orders
+        if o.get("spread_at_execution") is not None
+        and float(o.get("spread_at_execution") or 0.0) > 0
+        and o.get("slippage") is not None
+    ]
+    if valid_eq_orders:
+        total_eff = sum(2.0 * abs(float(o["slippage"])) for o in valid_eq_orders)
+        total_quoted = sum(float(o["spread_at_execution"]) for o in valid_eq_orders)
+        if total_quoted > 0:
+            eq_ratio = round((total_eff / total_quoted) * 100.0, 1)
+
+    rejection_rate: Optional[float] = None
+    if orders:
+        rejected = sum(
+            1 for o in orders
+            if o.get("timeout") is True
+            or o.get("market_fallback") is True
+            or o.get("success") is False
+        )
+        rejection_rate = round((rejected / len(orders)) * 100.0, 2)
+
+    fill_rate: Optional[float] = None
+    if orders:
+        filled = sum(1 for o in orders if o.get("success") is True)
+        fill_rate = round((filled / len(orders)) * 100.0, 2)
+    elif intervals:
+        submitted = sum((iv.get("snapshot") or iv).get("counters", {}).get("orders_submitted", 0) for iv in intervals)
+        if submitted > 0:
+            flush_errs = sum((iv.get("snapshot") or iv).get("counters", {}).get("flush_errors", 0) for iv in intervals)
+            fill_rate = round(max(0.0, min(100.0, ((submitted - flush_errs) / submitted) * 100.0)), 2)
+
+    # Part B: Machinery aggregation helper functions
+    def _get_series(series_name: str) -> Dict[str, Optional[float]]:
+        counts = 0
+        weighted_sum = 0.0
+        p90_vals = []
+        p99_vals = []
+        max_val = None
+
+        for iv in intervals:
+            snap = iv.get("snapshot") or iv
+            lat = snap.get("latency") or {}
+            entry = lat.get(series_name)
+            if not isinstance(entry, dict):
+                continue
+            n = int(entry.get("count") or 0)
+            if n <= 0:
+                continue
+            counts += n
+            mean_v = entry.get("mean")
+            if mean_v is not None:
+                weighted_sum += float(mean_v) * n
+            p90_v = entry.get("p90")
+            if p90_v is not None:
+                p90_vals.append(float(p90_v))
+            p99_v = entry.get("p99")
+            if p99_v is not None:
+                p99_vals.append(float(p99_v))
+            max_v = entry.get("max")
+            if max_v is not None:
+                max_val = max(max_val, float(max_v)) if max_val is not None else float(max_v)
+
+        if counts <= 0:
+            return {"count": 0, "mean": None, "p90": None, "p99": None, "max": None}
+        return {
+            "count": counts,
+            "mean": weighted_sum / counts,
+            "p90": max(p90_vals) if p90_vals else None,
+            "p99": max(p99_vals) if p99_vals else None,
+            "max": max_val,
+        }
+
+    def _get_counter(counter_name: str) -> Optional[int]:
+        if not intervals:
+            return None
+        total = 0
+        found = False
+        for iv in intervals:
+            snap = iv.get("snapshot") or iv
+            counters = snap.get("counters") or {}
+            if counter_name in counters:
+                found = True
+                total += int(counters.get(counter_name) or 0)
+        return total if found else 0
+
+    # 1. Tick-to-Trade Latency
+    sig_age_info = _get_series("signal_age_s")
+    sig_age_ms = (sig_age_info["mean"] * 1000.0) if sig_age_info.get("mean") is not None else None
+
+    exec_ns_vals = [float(o["total_execute_ns"]) for o in orders if o.get("total_execute_ns") is not None]
+    exec_ms = (sum(exec_ns_vals) / len(exec_ns_vals)) / 1e6 if exec_ns_vals else None
+    if exec_ms is None:
+        exec_s_vals = [float(o["execution_time_seconds"]) for o in orders if o.get("execution_time_seconds") is not None]
+        if exec_s_vals:
+            exec_ms = (sum(exec_s_vals) / len(exec_s_vals)) * 1000.0
+
+    t2t_ms: Optional[float] = None
+    if sig_age_ms is not None or exec_ms is not None:
+        t2t_ms = round((sig_age_ms or 0.0) + (exec_ms or 0.0), 1)
+
+    # 2. Tail Latency & Jitter
+    cascade_info = _get_series("cascade_ns")
+    queue_info = _get_series("queue_wait_ns")
+    cascade_p99_us = round(cascade_info["p99"] / 1000.0, 1) if cascade_info.get("p99") is not None else None
+    queue_p99_ms = round(queue_info["p99"] / 1e6, 2) if queue_info.get("p99") is not None else None
+
+    # 3. Adverse Selection / Markout
+    m1 = _get_series("markout_1s_bps").get("mean")
+    m5 = _get_series("markout_5s_bps").get("mean")
+    m30 = _get_series("markout_30s_bps").get("mean")
+    m1_val = round(m1, 2) if m1 is not None else None
+    m5_val = round(m5, 2) if m5 is not None else None
+    m30_val = round(m30, 2) if m30 is not None else None
+
+    # 4. Reconciliation Lag
+    rec_events = _get_counter("reconciliation_events")
+
+    # 5. Technical Concurrency
+    exit_blocked = _get_counter("exit_blocked_by_entry")
+    loop_errors = _get_counter("event_loop_errors")
+
+    # 6. Broker calls on hot path
+    broker_quotes = None
+    if intervals:
+        broker_quotes = max(
+            (int((iv.get("snapshot") or iv).get("broker_quote_calls_total") or 0))
+            for iv in intervals
+        )
+        if broker_quotes == 0:
+            broker_quotes = sum(
+                (int((iv.get("snapshot") or iv).get("broker_quote_calls_interval") or 0))
+                for iv in intervals
+            )
+        if broker_quotes == 0:
+            counter_quotes = _get_counter("broker_quote_calls")
+            if counter_quotes:
+                broker_quotes = counter_quotes
+
+
+    # 7. Decision-Path Cost
+    cascade_p95_ns = cascade_info.get("p90")
+    cascade_p95_us = round(cascade_p95_ns / 1000.0, 1) if cascade_p95_ns is not None else None
+    cascade_evals = _get_counter("cascade_evaluations")
+
+    metrics_list: List[BenchmarkComparisonMetric] = []
+
+    # 1. Tick-to-Trade
+    metrics_list.append(BenchmarkComparisonMetric(
+        name="Tick-to-Trade Latency",
+        category="LATENCY",
+        engine_value=t2t_ms,
+        engine_formatted=f"{t2t_ms:.1f} ms" if t2t_ms is not None else "--",
+        benchmark_name="Institutional Standard",
+        benchmark_value=150.0,
+        benchmark_formatted="< 150.0 ms",
+        status=_compare_status(t2t_ms, 150.0, higher_is_better=False) if t2t_ms is not None else "UNMEASURED",
+        data_basis="measured" if t2t_ms is not None else "unavailable",
+        description="Signal detection to IBKR submit and fill confirmation delay (signal_age_s + total_execute_ns).",
+    ))
+
+    # 2. Tail Latency
+    tail_str = "--"
+    tail_status = "UNMEASURED"
+    tail_basis = "unavailable"
+    if cascade_p99_us is not None or queue_p99_ms is not None:
+        casc_label = f"{cascade_p99_us:.1f} µs" if cascade_p99_us is not None else "N/A"
+        q_label = f"{queue_p99_ms:.1f} ms" if queue_p99_ms is not None else "N/A"
+        tail_str = f"Cascade: {casc_label} | Queue: {q_label}"
+        tail_status = "OPTIMAL" if (cascade_p99_us is None or cascade_p99_us <= 500.0) and (queue_p99_ms is None or queue_p99_ms <= 50.0) else "WARNING"
+        tail_basis = "measured"
+
+    metrics_list.append(BenchmarkComparisonMetric(
+        name="Tail Latency & Jitter (p99)",
+        category="TAIL_JITTER",
+        engine_value=cascade_p99_us,
+        engine_formatted=tail_str,
+        benchmark_name="Hedge Fund Execution SLA",
+        benchmark_value=500.0,
+        benchmark_formatted="Cascade < 500 µs | Queue < 50 ms",
+        status=tail_status,
+        data_basis=tail_basis,
+        description="p99 tail latency of exit condition check cascade and execution thread queue wait.",
+    ))
+
+    # 3. Markout
+    markout_str = "--"
+    markout_status = "UNMEASURED"
+    markout_basis = "unavailable"
+    if m1_val is not None or m5_val is not None or m30_val is not None:
+        m1_s = f"{m1_val:+.1f} bps" if m1_val is not None else "N/A"
+        m5_s = f"{m5_val:+.1f} bps" if m5_val is not None else "N/A"
+        m30_s = f"{m30_val:+.1f} bps" if m30_val is not None else "N/A"
+        markout_str = f"+1s: {m1_s} | +5s: {m5_s} | +30s: {m30_s}"
+        markout_status = "BEATING" if (m30_val is not None and m30_val >= 0.0) else ("LAGGING" if m30_val is not None else "OPTIMAL")
+        markout_basis = "measured"
+
+    metrics_list.append(BenchmarkComparisonMetric(
+        name="Adverse Selection / Markout (+30s)",
+        category="MARKOUT",
+        engine_value=m30_val,
+        engine_formatted=markout_str,
+        benchmark_name="Rule 605 Alpha Markout",
+        benchmark_value=0.0,
+        benchmark_formatted="> 0.0 bps (Favorable)",
+        status=markout_status,
+        data_basis=markout_basis,
+        description="Signed post-entry price move from fill price at +1s, +5s, +30s (+ = favorable, - = adverse).",
+    ))
+
+    # 4. Reconciliation
+    metrics_list.append(BenchmarkComparisonMetric(
+        name="Order-State Reconciliation Lag",
+        category="RECONCILIATION",
+        engine_value=float(rec_events) if rec_events is not None else None,
+        engine_formatted=f"{rec_events} events" if rec_events is not None else "--",
+        benchmark_name="Zero-Desync Standard",
+        benchmark_value=0.0,
+        benchmark_formatted="0 events",
+        status=("BEATING" if rec_events == 0 else "LAGGING") if rec_events is not None else "UNMEASURED",
+        data_basis="measured" if rec_events is not None else "unavailable",
+        description="Buckets entering post-submit broker reconciliation due to unconfirmed broker fills (F4).",
+    ))
+
+    # 5. Technical Concurrency
+    conc_str = "--"
+    conc_status = "UNMEASURED"
+    conc_basis = "unavailable"
+    if exit_blocked is not None or loop_errors is not None:
+        b_val = exit_blocked or 0
+        e_val = loop_errors or 0
+        conc_str = f"{b_val} blocked / {e_val} errors"
+        conc_status = "BEATING" if (b_val == 0 and e_val == 0) else "LAGGING"
+        conc_basis = "measured"
+
+    metrics_list.append(BenchmarkComparisonMetric(
+        name="Technical Concurrency / Non-Blocking",
+        category="CONCURRENCY",
+        engine_value=float((exit_blocked or 0) + (loop_errors or 0)) if (exit_blocked is not None or loop_errors is not None) else None,
+        engine_formatted=conc_str,
+        benchmark_name="Non-Blocking Architecture",
+        benchmark_value=0.0,
+        benchmark_formatted="0 blocked / 0 errors",
+        status=conc_status,
+        data_basis=conc_basis,
+        description="Exits delayed behind blocking entries (F2) and asyncio/ib_insync event loop errors (F4).",
+    ))
+
+    # 6. Broker calls on hot path
+    metrics_list.append(BenchmarkComparisonMetric(
+        name="Broker Calls on Hot Path",
+        category="HOT_PATH",
+        engine_value=float(broker_quotes) if broker_quotes is not None else None,
+        engine_formatted=f"{broker_quotes} calls" if broker_quotes is not None else "--",
+        benchmark_name="Hot-Path Hygiene (F1)",
+        benchmark_value=0.0,
+        benchmark_formatted="0 calls",
+        status=("BEATING" if broker_quotes == 0 else "LAGGING") if broker_quotes is not None else "UNMEASURED",
+        data_basis="measured" if broker_quotes is not None else "unavailable",
+        description="Live broker quote round-trips executed on the critical tick evaluation path.",
+    ))
+
+    # 7. Decision-path cost
+    dec_str = "--"
+    dec_status = "UNMEASURED"
+    dec_basis = "unavailable"
+    if cascade_p95_us is not None or (cascade_evals is not None and cascade_evals > 0):
+        c_p = f"{cascade_p95_us:.1f} µs (p90)" if cascade_p95_us is not None else "N/A"
+        ev_s = f"{cascade_evals:,} evals" if cascade_evals is not None else "0 evals"
+        dec_str = f"{c_p} | {ev_s}"
+        dec_status = "BEATING" if (cascade_p95_us is None or cascade_p95_us <= 150.0) else "LAGGING"
+        dec_basis = "measured"
+
+    metrics_list.append(BenchmarkComparisonMetric(
+        name="Decision-Path Cost",
+        category="DECISION_COST",
+        engine_value=cascade_p95_us,
+        engine_formatted=dec_str,
+        benchmark_name="Sub-Millisecond Cascade (F5)",
+        benchmark_value=150.0,
+        benchmark_formatted="< 150.0 µs",
+        status=dec_status,
+        data_basis=dec_basis,
+        description="Exit condition check cascade duration (cascade_ns p90) and evaluation throughput.",
+    ))
+
+    has_measured = any(m.data_basis == "measured" for m in metrics_list)
+    machinery_report = EngineMachineryReport(
+        is_available=has_measured,
+        data_basis="measured" if has_measured else "unavailable",
+        scope_note="Live / Paper only (virtual clock in replay)",
+        tick_to_trade_ms=t2t_ms,
+        cascade_p99_us=cascade_p99_us,
+        queue_wait_p99_ms=queue_p99_ms,
+        markout_1s_bps=m1_val,
+        markout_5s_bps=m5_val,
+        markout_30s_bps=m30_val,
+        reconciliation_events=rec_events,
+        exit_blocked_by_entry=exit_blocked,
+        event_loop_errors=loop_errors,
+        broker_quote_calls=broker_quotes,
+        cascade_p95_us=cascade_p95_us,
+        cascade_evaluations=cascade_evals,
+        metrics=metrics_list,
+    )
+
+    return eq_ratio, rejection_rate, fill_rate, machinery_report
+
+
 # ---------------------------------------------------------------------------
 # Core Engine Performance Calculator
 # ---------------------------------------------------------------------------
@@ -451,7 +945,8 @@ def calculate_engine_performance(
     benchmark_symbol: str = "SPY",
     benchmark_price_series: Optional[List[float]] = None,
     history_limit: Optional[int] = None,
-    now: Optional[datetime] = None
+    now: Optional[datetime] = None,
+    execution_metrics_data: Optional[Any] = None,
 ) -> EnginePerformanceResponse:
     """
     Evaluates engine performance per bot and across the overall portfolio.
@@ -474,8 +969,9 @@ def calculate_engine_performance(
         norm_mode = "all"
 
     series_key = len(benchmark_price_series) if benchmark_price_series else 0
+    metrics_key = len(execution_metrics_data) if isinstance(execution_metrics_data, (list, dict)) else (1 if execution_metrics_data else 0)
     # Check cache
-    cache_key = f"perf_{period}_{bot_scope}_{benchmark_symbol}_{norm_mode}_{series_key}"
+    cache_key = f"perf_{period}_{bot_scope}_{benchmark_symbol}_{norm_mode}_{series_key}_{metrics_key}"
     with _perf_cache_lock:
         if cache_key in _perf_cache:
             entry = _perf_cache[cache_key]
@@ -975,12 +1471,18 @@ def calculate_engine_performance(
         summary_assessment=summary_text,
     )
 
+    # Summarize execution metrics (Issue #300 / Wave 0)
+    effective_over_quoted_ratio_pct, rejection_rate_pct, fill_rate_pct, machinery_report = _summarize_execution_metrics(
+        execution_metrics_data, bot_scope=resolved_scope, period_start=(None if period.upper() == "ALL" else period_start)
+    )
+
     metrics_basis = {
         "execution.fill_confirmation": "measured" if overall_fill_confirmation is not None else "unavailable",
         "execution.reconciliation": "measured" if overall_reconciliation is not None else "unavailable",
         "execution.slippage": "measured" if avg_portfolio_slippage is not None else "unavailable",
-        "execution.effective_over_quoted": "unavailable",
-        "execution.rejection_rate": "unavailable",
+        "execution.effective_over_quoted": "measured" if effective_over_quoted_ratio_pct is not None else "unavailable",
+        "execution.rejection_rate": "measured" if rejection_rate_pct is not None else "unavailable",
+        "execution.fill_rate": "measured" if fill_rate_pct is not None else "unavailable",
         "risk.sharpe": "measured" if overall_sharpe is not None else "unavailable",
         "risk.sortino": "measured" if overall_sortino is not None else "unavailable",
         "risk.calmar": "measured" if overall_calmar is not None else "unavailable",
@@ -1004,9 +1506,9 @@ def calculate_engine_performance(
         calmar_ratio=overall_calmar,
         max_drawdown_pct=overall_mdd,
         avg_slippage_per_share=avg_portfolio_slippage,
-        effective_over_quoted_ratio_pct=None,
-        fill_rate_pct=None,
-        rejection_rate_pct=None,
+        effective_over_quoted_ratio_pct=effective_over_quoted_ratio_pct,
+        fill_rate_pct=fill_rate_pct,
+        rejection_rate_pct=rejection_rate_pct,
         fill_confirmation_rate_pct=overall_fill_confirmation,
         reconciliation_rate_pct=overall_reconciliation,
         transaction_cost_drag_pct=portfolio_cost_drag,
@@ -1052,26 +1554,38 @@ def calculate_engine_performance(
             BenchmarkComparisonMetric(
                 name="Effective-over-Quoted (E/Q) Spread Ratio",
                 category="EXECUTION",
-                engine_value=None,
-                engine_formatted="N/A",
+                engine_value=effective_over_quoted_ratio_pct,
+                engine_formatted=_format_value(effective_over_quoted_ratio_pct, "%", 1) if effective_over_quoted_ratio_pct is not None else "N/A",
                 benchmark_name="SEC Rule 605 Industry Standard",
                 benchmark_value=100.0,
                 benchmark_formatted="< 100.0%",
-                status="UNMEASURED",
-                data_basis="unavailable",
-                description="Requires per-order bid/ask quote capture, which the trade log does not currently store.",
+                status=_compare_status(effective_over_quoted_ratio_pct, 100.0, higher_is_better=False) if effective_over_quoted_ratio_pct is not None else "UNMEASURED",
+                data_basis="measured" if effective_over_quoted_ratio_pct is not None else "unavailable",
+                description="Ratio of effective spread to quoted spread at execution (SEC Rule 605). < 100% indicates execution inside the quote." if effective_over_quoted_ratio_pct is not None else "Requires per-order bid/ask quote capture, which the trade log does not currently store.",
             ),
             BenchmarkComparisonMetric(
                 name="Order Rejection Rate",
                 category="EXECUTION",
-                engine_value=None,
-                engine_formatted="N/A",
+                engine_value=rejection_rate_pct,
+                engine_formatted=_format_value(rejection_rate_pct, "%", 2) if rejection_rate_pct is not None else "N/A",
                 benchmark_name="Institutional DMA Benchmark",
                 benchmark_value=0.10,
                 benchmark_formatted="< 0.10%",
-                status="UNMEASURED",
-                data_basis="unavailable",
-                description="Requires broker order-reject events, which the trade log does not currently store.",
+                status=_compare_status(rejection_rate_pct, 0.10, higher_is_better=False) if rejection_rate_pct is not None else "UNMEASURED",
+                data_basis="measured" if rejection_rate_pct is not None else "unavailable",
+                description="Share of submitted orders resulting in timeout, market fallback, or rejection." if rejection_rate_pct is not None else "Requires broker order-reject events, which the trade log does not currently store.",
+            ),
+            BenchmarkComparisonMetric(
+                name="Order Fill Rate",
+                category="EXECUTION",
+                engine_value=fill_rate_pct,
+                engine_formatted=_format_value(fill_rate_pct, "%", 1) if fill_rate_pct is not None else "N/A",
+                benchmark_name="Institutional Execution Standard",
+                benchmark_value=98.0,
+                benchmark_formatted="> 98.0%",
+                status=_compare_status(fill_rate_pct, 98.0, higher_is_better=True) if fill_rate_pct is not None else "UNMEASURED",
+                data_basis="measured" if fill_rate_pct is not None else "unavailable",
+                description="Share of submitted orders successfully filled." if fill_rate_pct is not None else "Requires execution attempt records vs fills, which the trade log does not currently store.",
             ),
         ],
         institutional_cta=[
@@ -1320,6 +1834,7 @@ def calculate_engine_performance(
         benchmarks=benchmarks,
         bots=bot_records,
         diagnostics=diagnostics,
+        machinery=machinery_report,
         period=period,
         mode=norm_mode,
         bot_scope=resolved_scope,

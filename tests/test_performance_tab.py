@@ -898,3 +898,387 @@ def test_fetch_benchmark_price_series_too_few_or_error():
     failing.history.side_effect = RuntimeError("network down")
     with patch("yfinance.Ticker", return_value=failing):
         assert main._fetch_benchmark_price_series("DIA", "1M", now=FIXED_NOW) is None
+
+
+# ---------------------------------------------------------------------------
+# Issue #300: Pillar-1 'Engine Machinery' section + 3 execution metrics tests
+# ---------------------------------------------------------------------------
+
+def test_calculate_engine_performance_without_execution_metrics_defaults():
+    trades = _make_adequate_trades(n=10, days=8)
+    res = calculate_engine_performance(
+        trades=trades,
+        bot_overview_data={},
+        bot_configs=[],
+        period="1M",
+        bot_scope="ALL",
+        mode="all",
+        now=FIXED_NOW,
+        execution_metrics_data=None,
+    )
+
+    # The 3 metrics stay None and unavailable
+    assert res.executive_kpis.effective_over_quoted_ratio_pct is None
+    assert res.executive_kpis.rejection_rate_pct is None
+    assert res.executive_kpis.fill_rate_pct is None
+    assert res.executive_kpis.metrics_basis["execution.effective_over_quoted"] == "unavailable"
+    assert res.executive_kpis.metrics_basis["execution.rejection_rate"] == "unavailable"
+    assert res.executive_kpis.metrics_basis["execution.fill_rate"] == "unavailable"
+
+    # SEC Rule 605 table has UNMEASURED entries for E/Q, Rejection, Fill Rate
+    sec_metrics = {m.name: m for m in res.benchmarks.sec_rule_605}
+    assert sec_metrics["Effective-over-Quoted (E/Q) Spread Ratio"].status == "UNMEASURED"
+    assert sec_metrics["Effective-over-Quoted (E/Q) Spread Ratio"].data_basis == "unavailable"
+    assert sec_metrics["Order Rejection Rate"].status == "UNMEASURED"
+    assert sec_metrics["Order Rejection Rate"].data_basis == "unavailable"
+    assert sec_metrics["Order Fill Rate"].status == "UNMEASURED"
+    assert sec_metrics["Order Fill Rate"].data_basis == "unavailable"
+
+    # Machinery report is unmeasured
+    assert res.machinery.is_available is False
+    assert res.machinery.data_basis == "unavailable"
+    assert len(res.machinery.metrics) == 7
+    for m in res.machinery.metrics:
+        assert m.status == "UNMEASURED"
+        assert m.engine_formatted == "--"
+        assert m.data_basis == "unavailable"
+
+
+def test_calculate_engine_performance_with_populated_execution_metrics():
+    trades = _make_adequate_trades(n=10, days=8)
+
+    sample_metrics = {
+        "orders": [
+            {
+                "symbol": "NVDA",
+                "ts": "2026-10-20T14:00:00",
+                "spread_at_execution": 0.04,
+                "slippage": 0.01,
+                "fill_price": 215.51,
+                "reference_price": 215.50,
+                "success": True,
+                "total_execute_ns": 120_000_000,
+                "timeout": False,
+                "market_fallback": False,
+            },
+            {
+                "symbol": "NVDA",
+                "ts": "2026-10-20T14:05:00",
+                "spread_at_execution": 0.06,
+                "slippage": -0.02,
+                "fill_price": 215.48,
+                "reference_price": 215.50,
+                "success": True,
+                "total_execute_ns": 180_000_000,
+                "timeout": False,
+                "market_fallback": False,
+            },
+            {
+                "symbol": "NVDA",
+                "ts": "2026-10-20T14:10:00",
+                "spread_at_execution": 0.05,
+                "slippage": 0.05,
+                "fill_price": 215.55,
+                "reference_price": 215.50,
+                "success": False,
+                "total_execute_ns": 200_000_000,
+                "timeout": True,
+                "market_fallback": False,
+            },
+        ],
+        "intervals": [
+            {
+                "symbol": "NVDA",
+                "ts": "2026-10-20T14:00:00",
+                "counters": {
+                    "cascade_evaluations": 120,
+                    "reconciliation_events": 0,
+                    "exit_blocked_by_entry": 0,
+                    "event_loop_errors": 0,
+                    "orders_submitted": 3,
+                },
+                "latency": {
+                    "signal_age_s": {"count": 2, "mean": 0.025, "p90": 0.030, "p99": 0.035},
+                    "cascade_ns": {"count": 120, "mean": 85000.0, "p90": 110000.0, "p99": 250000.0},
+                    "queue_wait_ns": {"count": 2, "mean": 15000000.0, "p90": 20000000.0, "p99": 25000000.0},
+                    "markout_1s_bps": {"count": 2, "mean": 1.5, "p90": 2.0, "p99": 2.5},
+                    "markout_5s_bps": {"count": 2, "mean": 2.2, "p90": 2.8, "p99": 3.0},
+                    "markout_30s_bps": {"count": 2, "mean": 3.1, "p90": 3.5, "p99": 4.0},
+                },
+                "broker_quote_calls_total": 0,
+                "broker_quote_calls_interval": 0,
+            }
+        ]
+    }
+
+    res = calculate_engine_performance(
+        trades=trades,
+        bot_overview_data={},
+        bot_configs=[],
+        period="1M",
+        bot_scope="ALL",
+        mode="all",
+        now=FIXED_NOW,
+        execution_metrics_data=sample_metrics,
+    )
+
+    # 1. E/Q: Eff spread = 2 * (0.01 + 0.02 + 0.05) = 0.16. Quoted = 0.04 + 0.06 + 0.05 = 0.15. Ratio = (0.16 / 0.15) * 100 = 106.7%
+    assert res.executive_kpis.effective_over_quoted_ratio_pct == 106.7
+    assert res.executive_kpis.metrics_basis["execution.effective_over_quoted"] == "measured"
+
+    # 2. Rejection rate: 1 failed out of 3 = 33.33%
+    assert res.executive_kpis.rejection_rate_pct == 33.33
+    assert res.executive_kpis.metrics_basis["execution.rejection_rate"] == "measured"
+
+    # 3. Fill rate: 2 succeeded out of 3 = 66.67%
+    assert res.executive_kpis.fill_rate_pct == 66.67
+    assert res.executive_kpis.metrics_basis["execution.fill_rate"] == "measured"
+
+    # SEC Rule 605 table has measured metrics
+    sec_metrics = {m.name: m for m in res.benchmarks.sec_rule_605}
+    assert sec_metrics["Effective-over-Quoted (E/Q) Spread Ratio"].data_basis == "measured"
+    assert sec_metrics["Effective-over-Quoted (E/Q) Spread Ratio"].engine_formatted == "106.7%"
+    assert sec_metrics["Order Rejection Rate"].data_basis == "measured"
+    assert sec_metrics["Order Rejection Rate"].engine_formatted == "33.33%"
+    assert sec_metrics["Order Fill Rate"].data_basis == "measured"
+    assert sec_metrics["Order Fill Rate"].engine_formatted == "66.7%"
+
+    # Machinery section is measured and populated
+    assert res.machinery.is_available is True
+    assert res.machinery.data_basis == "measured"
+    assert res.machinery.cascade_p99_us == 250.0
+    assert res.machinery.queue_wait_p99_ms == 25.0
+    assert res.machinery.markout_30s_bps == 3.1
+    assert res.machinery.reconciliation_events == 0
+    assert res.machinery.broker_quote_calls == 0
+    assert res.machinery.cascade_evaluations == 120
+    assert len(res.machinery.metrics) == 7
+
+    mach_dict = {m.name: m for m in res.machinery.metrics}
+    assert mach_dict["Tick-to-Trade Latency"].data_basis == "measured"
+    assert mach_dict["Tail Latency & Jitter (p99)"].data_basis == "measured"
+    assert mach_dict["Adverse Selection / Markout (+30s)"].data_basis == "measured"
+    assert mach_dict["Order-State Reconciliation Lag"].status == "BEATING"
+    assert mach_dict["Technical Concurrency / Non-Blocking"].status == "BEATING"
+    assert mach_dict["Broker Calls on Hot Path"].status == "BEATING"
+
+
+def test_calculate_engine_performance_symbol_scope_filters_execution_metrics():
+    trades = _make_adequate_trades(n=10, days=8)
+
+    sample_metrics = {
+        "orders": [
+            {
+                "symbol": "NVDA",
+                "spread_at_execution": 0.05,
+                "slippage": 0.01,
+                "success": True,
+            },
+            {
+                "symbol": "MSFT",
+                "spread_at_execution": 0.10,
+                "slippage": 0.05,
+                "success": False,
+                "timeout": True,
+            },
+        ],
+        "intervals": [
+            {
+                "symbol": "NVDA",
+                "counters": {"cascade_evaluations": 100, "reconciliation_events": 0},
+                "latency": {"cascade_ns": {"count": 100, "mean": 50000.0, "p90": 60000.0, "p99": 80000.0}},
+            },
+            {
+                "symbol": "MSFT",
+                "counters": {"cascade_evaluations": 500, "reconciliation_events": 5},
+                "latency": {"cascade_ns": {"count": 500, "mean": 90000.0, "p90": 120000.0, "p99": 200000.0}},
+            },
+        ]
+    }
+
+    # Filter to NVDA
+    res = calculate_engine_performance(
+        trades=trades,
+        bot_overview_data={},
+        bot_configs=[{"symbol": "NVDA", "name": "nvda_sma"}],
+        period="1M",
+        bot_scope="NVDA",
+        mode="all",
+        now=FIXED_NOW,
+        execution_metrics_data=sample_metrics,
+    )
+
+    # NVDA only has 1 successful order, no timeout
+    assert res.executive_kpis.rejection_rate_pct == 0.0
+    assert res.executive_kpis.fill_rate_pct == 100.0
+    # Reconciliation events for NVDA is 0, not 5
+    assert res.machinery.reconciliation_events == 0
+    assert res.machinery.cascade_evaluations == 100
+
+
+def test_get_engine_performance_api_returns_machinery(test_client, sample_bot_configs):
+    async def fake_history(days=60, response=None):
+        return {"trades": _make_adequate_trades(n=14, days=12)}
+
+    mock_db = MagicMock()
+    mock_coll = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.exists = False
+    mock_coll.limit.return_value.stream.return_value = []
+    mock_coll.order_by.return_value.limit.return_value.stream.return_value = []
+    mock_coll.document.return_value.get.return_value = mock_doc
+    mock_db.collection.return_value = mock_coll
+
+    with patch("main.get_all_trade_history", new=fake_history), \
+         patch("main.load_bot_configs", return_value={"bots": sample_bot_configs}), \
+         patch("main._fetch_benchmark_price_series", return_value=[100.0, 101.0, 99.0, 102.0]), \
+         patch.object(main.dashboard_data, "db", mock_db), \
+         patch.object(main.dashboard_data, "_load_bot_data", return_value={}):
+        response = test_client.get("/api/engine-performance?benchmark=SPY")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "machinery" in data
+    assert "is_available" in data["machinery"]
+    assert "metrics" in data["machinery"]
+    assert len(data["machinery"]["metrics"]) == 7
+
+
+def test_calculate_engine_performance_execution_metrics_edge_cases():
+    trades = _make_adequate_trades(n=10, days=8)
+
+    # 1. Test dict with order_records, snapshots, records, top-level counters, execution_time_seconds, latency max update
+    multi_shape_data = {
+        "order_records": [
+            {
+                "symbol": "AAPL",
+                "execution_time_seconds": 0.05,
+                "spread_at_execution": 0.04,
+                "slippage": 0.01,
+                "success": True,
+                "ts": "2026-10-20T10:00:00Z",
+            }
+        ],
+        "snapshots": [
+            {
+                "symbol": "AAPL",
+                "counters": {"orders_submitted": 10, "flush_errors": 1, "broker_quote_calls": 3},
+                "latency": {
+                    "cascade_ns": {"count": 10, "mean": 50000.0, "p90": 60000.0, "p99": 70000.0, "max": 80000.0},
+                    "signal_age_s": {"count": 0, "mean": None},
+                },
+                "ts": "2026-10-20T10:00:00Z",
+            },
+            {
+                "symbol": "AAPL",
+                "latency": {
+                    "cascade_ns": {"count": 5, "mean": 60000.0, "p90": 65000.0, "p99": 90000.0, "max": 100000.0},
+                },
+                "ts": "2026-10-20T10:05:00Z",
+            }
+        ],
+        "records": [
+            {
+                "type": "order",
+                "symbol": "AAPL",
+                "spread_at_execution": 0.02,
+                "slippage": 0.005,
+                "success": False,
+                "market_fallback": True,
+                "ts": "2026-10-20T10:10:00Z",
+            },
+            {
+                "type": "snapshot",
+                "snapshot": {
+                    "counters": {"reconciliation_events": 1},
+                },
+                "ts": "2026-10-20T10:10:00Z",
+            }
+        ],
+        "counters": {"exit_blocked_by_entry": 0},
+    }
+
+    res = calculate_engine_performance(
+        trades=trades,
+        bot_overview_data={},
+        bot_configs=[],
+        period="1M",
+        bot_scope="ALL",
+        mode="all",
+        now=FIXED_NOW,
+        execution_metrics_data=multi_shape_data,
+    )
+
+    assert res.executive_kpis.fill_rate_pct == 50.0  # 1 of 2 succeeded
+    assert res.executive_kpis.rejection_rate_pct == 50.0  # 1 market_fallback
+    assert res.machinery.broker_quote_calls == 3
+    assert res.machinery.reconciliation_events == 1
+    # Tick-to-trade latency calculated from execution_time_seconds
+    assert res.machinery.tick_to_trade_ms == 50.0
+
+    # 2. Test raw_data as a list of dicts with an old ts that gets filtered out by period
+    list_data = [
+        {
+            "symbol": "AAPL",
+            "spread_at_execution": 0.05,
+            "slippage": 0.01,
+            "success": True,
+            "ts": "2020-01-01T00:00:00Z",  # Too old, will be filtered out by period="1M"
+        },
+        {
+            "symbol": "AAPL",
+            "counters": {"broker_quote_calls": 5, "orders_submitted": 20, "flush_errors": 2},
+            "ts": "2026-10-20T10:00:00Z",
+        }
+    ]
+
+    res2 = calculate_engine_performance(
+        trades=trades,
+        bot_overview_data={},
+        bot_configs=[],
+        period="1M",
+        bot_scope="ALL",
+        mode="all",
+        now=FIXED_NOW,
+        execution_metrics_data=list_data,
+    )
+    # Orders were filtered out, so fill_rate is computed from interval counters
+    assert res2.executive_kpis.fill_rate_pct == 90.0  # (20 - 2) / 20 = 90%
+    assert res2.machinery.broker_quote_calls == 5
+
+    # 3. Test when all items are filtered out by symbol scope -> empty machinery report
+    res3 = calculate_engine_performance(
+        trades=trades,
+        bot_overview_data={},
+        bot_configs=[{"symbol": "MSFT", "name": "msft_bot"}],
+        period="1M",
+        bot_scope="MSFT",
+        mode="all",
+        now=FIXED_NOW,
+        execution_metrics_data=list_data,
+    )
+    assert res3.machinery.is_available is False
+
+    # 4. Test period="ALL" (period_start is None)
+    res4 = calculate_engine_performance(
+        trades=trades,
+        bot_overview_data={},
+        bot_configs=[],
+        period="ALL",
+        bot_scope="ALL",
+        mode="all",
+        now=FIXED_NOW,
+        execution_metrics_data=[
+            {
+                "type": "order",
+                "spread_at_execution": 0.10,
+                "slippage": 0.02,
+                "success": True,
+                "ts": "2019-01-01T00:00:00Z",
+            }
+        ],
+    )
+    assert res4.executive_kpis.fill_rate_pct == 100.0
+    # No intervals passed -> machinery counters return None
+    assert res4.machinery.broker_quote_calls is None
+
