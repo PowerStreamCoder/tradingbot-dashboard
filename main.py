@@ -991,8 +991,16 @@ class DashboardData:
         try:
             if not hasattr(self, 'execution_metrics_ref') or self.execution_metrics_ref is None:
                 return []
-            docs = self.execution_metrics_ref.order_by('ts', direction=firestore.Query.DESCENDING).limit(limit).stream()
-            return [doc.to_dict() for doc in docs if doc.exists]
+            try:
+                docs = list(self.execution_metrics_ref.order_by('ts', direction=firestore.Query.DESCENDING).limit(limit).stream())
+            except Exception:
+                try:
+                    docs = list(self.execution_metrics_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(limit).stream())
+                except Exception:
+                    docs = list(self.execution_metrics_ref.limit(limit).stream())
+            results = [doc.to_dict() for doc in docs if doc.exists]
+            results.sort(key=lambda d: str(d.get("ts") or d.get("timestamp") or ""), reverse=True)
+            return results
         except Exception as e:
             logger.debug(f"Execution metrics not available in Firestore: {e}")
             return []
