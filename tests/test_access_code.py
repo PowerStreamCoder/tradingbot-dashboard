@@ -263,6 +263,82 @@ class TestHelperScript:
         assert TEST_SECRET not in result.stderr
         assert TEST_SECRET not in result.stdout
 
+    def test_setup_helper_script_runs(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(REPO_ROOT / "scripts" / "setup_google_authenticator.py"),
+                "--no-open",
+            ],
+            capture_output=True,
+            text=True,
+            env={"DASHBOARD_ACCESS_SECRET": TEST_SECRET},
+            cwd=str(REPO_ROOT),
+            timeout=30,
+        )
+        assert result.returncode == 0
+        assert "Google Authenticator Setup" in result.stdout
+        assert "Setup Key:" in result.stdout
+        assert "Current Code:" in result.stdout
+
+
+# --------------------------------------------------------------------------- #
+# Google Authenticator TOTP (RFC 6238)
+# --------------------------------------------------------------------------- #
+class TestGoogleAuthenticatorTOTP:
+    def test_rfc6238_standard_test_vectors(self):
+        """Standard RFC 6238 TOTP test vectors with 30s period and SHA1."""
+        # 12345678901234567890 base32 encoded per RFC 6238 appendix B
+        import base64
+        rfc_secret = base64.b32encode(b"12345678901234567890").decode()  # gitleaks:allow
+        assert ac.totp_code(rfc_secret, for_time=59) == "287082"
+        assert ac.totp_code(rfc_secret, for_time=1111111109) == "081804"
+        assert ac.totp_code(rfc_secret, for_time=1111111111) == "050471"
+        assert ac.totp_code(rfc_secret, for_time=1234567890) == "005924"
+        assert ac.totp_code(rfc_secret, for_time=2000000000) == "279037"
+
+    def test_clock_drift_window_acceptance(self):
+        """Codes within +- 30 seconds are accepted to handle minor clock skew."""
+        b32_sec = ac.get_totp_secret(TEST_SECRET)
+        t_now = 1700000000
+        current_code = ac.totp_code(b32_sec, for_time=t_now)
+        prev_code = ac.totp_code(b32_sec, for_time=t_now - 25)
+        next_code = ac.totp_code(b32_sec, for_time=t_now + 25)
+
+        assert ac.code_matches(current_code, TEST_SECRET, now=t_now) is True
+        assert ac.code_matches(prev_code, TEST_SECRET, now=t_now) is True
+        assert ac.code_matches(next_code, TEST_SECRET, now=t_now) is True
+
+    def test_expired_code_is_rejected(self):
+        """Codes outside the window (>+- 30s) are rejected."""
+        b32_sec = ac.get_totp_secret(TEST_SECRET)
+        t_now = 1700000000
+        old_code = ac.totp_code(b32_sec, for_time=t_now - 90)
+        future_code = ac.totp_code(b32_sec, for_time=t_now + 90)
+
+        assert ac.code_matches(old_code, TEST_SECRET, now=t_now) is False
+        assert ac.code_matches(future_code, TEST_SECRET, now=t_now) is False
+
+    def test_explicit_totp_secret_env_var(self, monkeypatch):
+        """Explicit DASHBOARD_TOTP_SECRET can override or provide TOTP key."""
+        import base64
+        custom_b32 = base64.b32encode(b"custom_test_totp").decode()  # gitleaks:allow
+        monkeypatch.setenv("DASHBOARD_TOTP_SECRET", custom_b32)
+        code = ac.totp_code(custom_b32)
+        assert ac.code_matches(code) is True
+
+    def test_otpauth_uri_generation(self):
+        import base64
+        test_key = base64.b32encode(b"test_uri_key_data").decode()  # gitleaks:allow
+        uri = ac.get_totp_uri(
+            test_key, account_name="operator", issuer="TradingDashboard"
+        )
+        assert (
+            uri
+            == f"otpauth://totp/TradingDashboard:operator?secret={test_key}&issuer=TradingDashboard"
+        )
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+

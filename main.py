@@ -672,12 +672,12 @@ def get_login_page():
 <body>
     <div class="login-container">
         <h1>🔒 Trading Dashboard</h1>
-        <p class="subtitle">Enter access code to continue</p>
+        <p class="subtitle">Enter 6-digit Google Authenticator code</p>
         <form id="loginForm">
-            <input type="text" id="accessCode" placeholder="Enter 6-character code" maxlength="6" pattern="[0-9A-Za-z]{6}" required autofocus style="text-transform: uppercase;">
+            <input type="text" id="accessCode" placeholder="Enter 6-digit code" maxlength="6" pattern="[0-9]{6}" inputmode="numeric" required autofocus>
             <button type="submit">Access Dashboard</button>
         </form>
-        <div class="error" id="errorMsg">❌ Invalid access code. Please try again.</div>
+        <div class="error" id="errorMsg">❌ Invalid code. Check Google Authenticator and try again.</div>
     </div>
 
     <script>
