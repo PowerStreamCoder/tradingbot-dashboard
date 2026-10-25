@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Print today's dashboard access code.
+"""Print the current dashboard access code (Google Authenticator TOTP).
 
-The dashboard's human login uses a code that changes every day. To log in,
-run this:
+The dashboard's human login uses Google Authenticator (TOTP RFC 6238). To inspect
+the current rolling 6-digit code from the terminal, run this:
 
     python3 scripts/dashboard_access_code.py
+
+To scan the QR code into the Google Authenticator app on your phone, run:
+
+    python3 scripts/setup_google_authenticator.py
 
 The secret is read from, in order:
 
@@ -16,10 +20,6 @@ The secret is read from, in order:
 The derivation is the *server's* — imported from ``access_code.py``, not
 re-implemented here — so the code printed here and the code the server
 accepts can never disagree.
-
-If no secret is configured the code is today's date in ``ddmmyy`` format.
-That is the original behaviour, and it is **not a secret**: anyone who can
-derive today's date can log in. The script says so rather than pretending.
 """
 
 import argparse
