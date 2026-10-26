@@ -1282,3 +1282,78 @@ def test_calculate_engine_performance_execution_metrics_edge_cases():
     # No intervals passed -> machinery counters return None
     assert res4.machinery.broker_quote_calls is None
 
+
+def test_cascade_phase_breakdown_names_the_f5_tail():
+    """#372 / F5: cascade_phase_*_ns series surface as per-phase machinery rows.
+
+    A phase whose p99 blows the 500 ms budget is flagged LAGGING (it owns the
+    tail); cheap phases are BEATING. Scopes without phased data (pre-#394) add
+    no phase rows at all.
+    """
+    def _series(count, mean_ns, p99_ns):
+        return {"count": count, "mean": mean_ns, "p50": mean_ns,
+                "p90": p99_ns, "p99": p99_ns, "max": p99_ns}
+
+    intervals = [{
+        "type": "interval",
+        "ts": "2026-10-13T14:35:00Z",  # within the default period of FIXED_NOW
+        "snapshot": {
+            "symbol": "NVDA",
+            "counters": {"cascade_evaluations": 100},
+            "latency": {
+                "cascade_ns": _series(100, 36_000_000, 3_000_000_000),
+                "cascade_phase_marks_ns": _series(100, 30_000_000, 2_900_000_000),
+                "cascade_phase_adaptive_ns": _series(100, 4_000_000, 80_000_000),
+                "cascade_phase_guard_ns": _series(100, 50_000, 200_000),
+            },
+        },
+    }]
+
+    res = calculate_engine_performance(
+        trades=[],
+        bot_overview_data={},
+        bot_configs=[{"symbol": "NVDA", "name": "nvda_bot"}],
+        period="1M",
+        bot_scope="NVDA",
+        mode="all",
+        now=FIXED_NOW,
+        execution_metrics_data=intervals,
+    )
+
+    phase_rows = {m.name: m for m in res.machinery.metrics
+                  if m.name.startswith("Cascade Phase")}
+    # One row per phase that had samples (marks, adaptive, guard) — no more.
+    assert set(phase_rows) == {
+        "Cascade Phase · Option Mark Refresh",
+        "Cascade Phase · Adaptive P&L Agent",
+        "Cascade Phase · Position Guard",
+    }
+    # marks (2.9 s p99) owns the tail; cheap phases are within budget.
+    assert phase_rows["Cascade Phase · Option Mark Refresh"].status == "LAGGING"
+    assert phase_rows["Cascade Phase · Adaptive P&L Agent"].status == "BEATING"
+    assert phase_rows["Cascade Phase · Position Guard"].status == "BEATING"
+    assert all(m.data_basis == "measured" for m in phase_rows.values())
+
+    # A scope with no phased latency series adds zero phase rows.
+    # Clear the module cache first: the call above cached a NVDA/1M response.
+    pe.clear_performance_cache()
+    idle = [{
+        "type": "interval",
+        "ts": "2026-10-13T14:35:00Z",
+        "snapshot": {"symbol": "NVDA", "counters": {"cascade_evaluations": 0},
+                     "latency": {}},
+    }]
+    res_idle = calculate_engine_performance(
+        trades=[],
+        bot_overview_data={},
+        bot_configs=[{"symbol": "NVDA", "name": "nvda_bot"}],
+        period="1M",
+        bot_scope="NVDA",
+        mode="all",
+        now=FIXED_NOW,
+        execution_metrics_data=idle,
+    )
+    assert not [m for m in res_idle.machinery.metrics
+                if m.name.startswith("Cascade Phase")]
+
+
