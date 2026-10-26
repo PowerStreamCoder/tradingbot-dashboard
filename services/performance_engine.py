@@ -907,6 +907,53 @@ def _summarize_execution_metrics(
         description="Exit condition check cascade duration (cascade_ns p90) and evaluation throughput.",
     ))
 
+    # 7b. Cascade phase breakdown (#372 / F5 tail attribution).
+    # The phase clock (`_CascadePhaseClock`) splits every `_check_exit_conditions`
+    # call into consecutive laps; surfacing them here answers *which* phase owns
+    # the F5 tail (e.g. option-mark refresh vs. adaptive agent), not just that the
+    # tail exists. One row per phase that has samples, worst-interval p99 (the
+    # same upper-envelope merge `_get_series` uses — percentiles don't merge
+    # exactly across intervals). Rows only appear once phased data is present, so
+    # pre-#394 scopes render identically.
+    _PHASE_LABELS = [
+        ("marks", "Cascade Phase · Option Mark Refresh", "F1 path: _refresh_option_marks → live option quote (the suspected F5 tail)."),
+        ("adaptive", "Cascade Phase · Adaptive P&L Agent", "Adaptive P&L agent evaluation block inside the cascade."),
+        ("cascade", "Cascade Phase · Priority Cascade", "11-branch exit priority cascade + shadow probes."),
+        ("pnl", "Cascade Phase · P&L + Time-Held", "Combined stock+option P&L and time-held computation."),
+        ("trail", "Cascade Phase · Trailing Stop", "Trailing-stop state update."),
+        ("income", "Cascade Phase · Income Ratchet", "Income deferral / ratchet evaluation."),
+        ("prep", "Cascade Phase · Card/Timestamp Prep", "Position-card, timestamp and bucket resolution."),
+        ("friday", "Cascade Phase · Friday Guard", "Weekend/Friday close guard."),
+        ("guard", "Cascade Phase · Position Guard", "Position-card presence / zero-share guard."),
+    ]
+    for _phase, _name, _desc in _PHASE_LABELS:
+        _info = _get_series(f"cascade_phase_{_phase}_ns")
+        if not _info or not _info.get("count"):
+            continue
+        _p99_us = _info["p99"] / 1000.0 if _info.get("p99") is not None else None
+        _mean_us = _info["mean"] / 1000.0 if _info.get("mean") is not None else None
+        _val_str = (
+            f"{_p99_us:,.1f} µs p99"
+            + (f" | {_mean_us:,.1f} µs mean" if _mean_us is not None else "")
+        ) if _p99_us is not None else "--"
+        # Target mirrors the whole-cascade p99 budget (500 ms); a single phase
+        # above it is, by construction, the one holding the tail.
+        _status = "UNMEASURED"
+        if _p99_us is not None:
+            _status = "LAGGING" if _p99_us > 500_000.0 else "BEATING"
+        metrics_list.append(BenchmarkComparisonMetric(
+            name=_name,
+            category="DECISION_COST",
+            engine_value=_p99_us,
+            engine_formatted=_val_str,
+            benchmark_name="Phase p99 within budget (F5)",
+            benchmark_value=500_000.0,
+            benchmark_formatted="< 500 ms p99",
+            status=_status,
+            data_basis="measured",
+            description=_desc,
+        ))
+
     has_measured = any(m.data_basis == "measured" for m in metrics_list)
     machinery_report = EngineMachineryReport(
         is_available=has_measured,
