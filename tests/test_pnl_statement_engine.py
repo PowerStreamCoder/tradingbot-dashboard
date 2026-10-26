@@ -125,6 +125,16 @@ class TestPnLStatementEngine(unittest.TestCase):
         self.assertEqual(nvda_bot.losing_trades, 1)
         self.assertEqual(nvda_bot.win_rate_pct, 50.0)
 
+        # Cashflow Waterfall consolidation test
+        wf = statement.cashflow_waterfall
+        self.assertEqual(wf.winning_trades_count, 2)
+        self.assertEqual(wf.losing_trades_count, 1)
+        expected_net_cash = round(
+            wf.gross_wins + wf.gross_losses + wf.option_premium_harvested + wf.commissions_and_fees + wf.net_financing,
+            2
+        )
+        self.assertEqual(wf.net_cash_generated, expected_net_cash)
+
     def test_single_bot_scope(self):
         statement = aggregate_portfolio_pnl(
             trades=self.mock_trades,

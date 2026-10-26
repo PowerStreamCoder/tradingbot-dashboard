@@ -66,6 +66,8 @@ class CashFlowWaterfall(BaseModel):
     net_cash_generated: float
     external_deposits: float = 0.0
     external_withdrawals: float = 0.0
+    winning_trades_count: int = 0
+    losing_trades_count: int = 0
 
 
 class BotAttributionRecord(BaseModel):
@@ -489,20 +491,23 @@ def aggregate_portfolio_pnl(
 
         for t in b_trades:
             pnl = float(t.get("profitLoss") or 0.0)
-            stock_p = float(t.get("stock_pnl") if "stock_pnl" in t else pnl)
             op = float(t.get("option_pnl") or 0.0)
+            stock_p = float(t.get("stock_pnl")) if "stock_pnl" in t else (pnl - op)
             comm = estimate_trade_commission(t)
 
             commissions += comm
             realized += pnl
             opt_pnl += op
 
+            if stock_p > 0:
+                gross_wins += stock_p
+            elif stock_p < 0:
+                gross_losses += stock_p
+
             if pnl > 0:
                 wins += 1
-                gross_wins += pnl
             elif pnl < 0:
                 losses += 1
-                gross_losses += pnl
 
         count = len(b_trades)
         win_rate = round((wins / count * 100.0), 2) if count > 0 else 0.0
@@ -532,7 +537,7 @@ def aggregate_portfolio_pnl(
                 win_rate_pct=win_rate,
                 profit_factor=pf,
                 payoff_ratio=payoff,
-                gross_pnl=round(gross_wins + gross_losses, 2),
+                gross_pnl=round(realized, 2),
                 commissions=round(-commissions, 2),
                 realized_pnl=round(realized, 2),
                 unrealized_pnl=round(unrealized, 2),
@@ -568,7 +573,22 @@ def aggregate_portfolio_pnl(
         margin_interest = 0.0
         cash_yield = 0.0
     net_financing = round(cash_yield - margin_interest, 2)
-    net_cash_generated = round(total_realized_pnl, 2)
+
+    # Consolidated Net Cash Generated:
+    # Full reconciliation across all waterfall items:
+    #   + Gross Trading Wins
+    #   + Gross Trading Losses (negative value)
+    #   + Covered Call Option Yield
+    #   - Execution Commissions & Fees (negative value)
+    #   + Net Financing & Interest Carry
+    net_cash_generated = round(
+        total_gross_wins
+        + total_gross_losses
+        + total_option_harvest
+        - total_commissions
+        + net_financing,
+        2
+    )
 
     waterfall = CashFlowWaterfall(
         gross_wins=round(total_gross_wins, 2),
@@ -580,7 +600,9 @@ def aggregate_portfolio_pnl(
         net_financing=net_financing,
         net_cash_generated=net_cash_generated,
         external_deposits=0.0,
-        external_withdrawals=0.0
+        external_withdrawals=0.0,
+        winning_trades_count=total_winning_trades,
+        losing_trades_count=total_losing_trades
     )
 
     # Executive NAV and Cash Telemetry

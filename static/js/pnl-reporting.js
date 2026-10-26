@@ -221,8 +221,18 @@ function renderCashflowWaterfall(wf) {
     const grossWins = document.getElementById('waterfallGrossWins');
     if (grossWins) grossWins.textContent = formatCurrency(wf.gross_wins, true);
 
+    const winsCount = document.getElementById('waterfallWinsCount');
+    if (winsCount && wf.winning_trades_count !== undefined) {
+        winsCount.textContent = `${wf.winning_trades_count} winning trade${wf.winning_trades_count === 1 ? '' : 's'}`;
+    }
+
     const grossLosses = document.getElementById('waterfallGrossLosses');
     if (grossLosses) grossLosses.textContent = formatCurrency(wf.gross_losses);
+
+    const lossesCount = document.getElementById('waterfallLossesCount');
+    if (lossesCount && wf.losing_trades_count !== undefined) {
+        lossesCount.textContent = `${wf.losing_trades_count} losing trade${wf.losing_trades_count === 1 ? '' : 's'}`;
+    }
 
     const optYield = document.getElementById('waterfallOptionYield');
     if (optYield) optYield.textContent = formatCurrency(wf.option_premium_harvested, true);
@@ -234,7 +244,11 @@ function renderCashflowWaterfall(wf) {
     if (financing) financing.textContent = formatCurrency(wf.net_financing, true);
 
     const netCash = document.getElementById('waterfallNetCash');
-    if (netCash) netCash.textContent = formatCurrency(wf.net_cash_generated, true);
+    if (netCash) {
+        netCash.textContent = formatCurrency(wf.net_cash_generated, true);
+        netCash.classList.remove('pos', 'neg');
+        netCash.classList.add(wf.net_cash_generated >= 0 ? 'pos' : 'neg');
+    }
 }
 
 /**
