@@ -542,6 +542,14 @@
     color: #ffffff;
 }
 
+.waterfall-total .waterfall-amount.pos {
+    color: var(--color-positive);
+}
+
+.waterfall-total .waterfall-amount.neg {
+    color: var(--color-negative);
+}
+
 /* Statement Table & Sticky Column */
 .statement-table-responsive {
     overflow-x: auto;
