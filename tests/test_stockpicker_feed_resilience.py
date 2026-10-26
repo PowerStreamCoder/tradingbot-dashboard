@@ -80,8 +80,14 @@ def test_finnhub_earnings_calendar_fallback():
         assert dt.strftime("%Y-%m-%d") == future_date_str
 
 
-def test_finnhub_eps_surprise_fallback_in_fundamental_score():
+def test_finnhub_eps_surprise_fallback_in_fundamental_score(monkeypatch):
     """Verify fundamental scoring uses Finnhub EPS surprise when Alpha Vantage returns empty/rate-limited."""
+    # get_finnhub_earnings_surprise bails out before calling safe_get unless a
+    # FINNHUB_API_KEY is present (env() -> os.getenv), so the mocked safe_get
+    # below is only reached when the key is set. Without this the fallback
+    # returns None and eps_surprise never populates.
+    monkeypatch.setenv("FINNHUB_API_KEY", "test-key")
+
     mock_fh_resp = MagicMock()
     mock_fh_resp.status_code = 200
     mock_fh_resp.json.return_value = [
