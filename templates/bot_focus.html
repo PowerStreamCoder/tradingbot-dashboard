@@ -26,7 +26,8 @@
                             <span class="custom-bot-pill" id="customBotPill">--</span>
                             <div class="custom-bot-meta">
                                 <span class="custom-bot-title" id="customBotTitle">Loading...</span>
-                                <span class="custom-bot-indicator" title="Active"></span>
+                                <span class="custom-bot-mode-pill paper" id="customBotModePill">PAPER</span>
+                                <span class="custom-bot-indicator" id="customBotIndicator" title="Active"></span>
                             </div>
                             <span class="custom-bot-chevron">
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
@@ -63,10 +64,10 @@
                 <div class="mode-indicator">
                     <span id="modeBadge" class="mode-badge paper">📝 PAPER MODE</span>
                 </div>
-                <button id="pauseBotBtn" class="btn btn-danger">
-                    <span>⏸</span> Pause Bot
+                <button id="pauseBotBtn" class="btn btn-danger" title="Pause or resume all trading bots">
+                    <span>⏸</span> Pause All Bots
                 </button>
-                <button id="switchProfileBtn" class="btn btn-profile-switch">
+                <button id="switchProfileBtn" class="btn btn-profile-switch" title="Switch between Paper and Live trading mode">
                     <span>🔄</span> Switch to LIVE
                 </button>
             </div>

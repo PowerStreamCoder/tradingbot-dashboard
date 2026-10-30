@@ -2537,6 +2537,14 @@ async def stop_bots():
             )
             if response.is_success:
                 data = response.json()
+                # Update Firestore bot_status for active bots to mark is_trading: False
+                try:
+                    if dashboard_data and hasattr(dashboard_data, "db") and dashboard_data.db:
+                        status_docs = dashboard_data.db.collection('bot_status').stream()
+                        for sdoc in status_docs:
+                            sdoc.reference.update({'is_trading': False, 'updated_at': datetime.now()})
+                except Exception as fe:
+                    logger.warning(f"Could not update bot_status is_trading to False: {fe}")
                 return {"status": data.get("status", "success"), "message": data.get("message", "Bots stopped")}
             else:
                 try:
