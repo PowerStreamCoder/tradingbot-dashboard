@@ -54,7 +54,7 @@
       "enabled": true,
       "strategy_track": "GROWTH",
       "initial_score": 80.74,
-      "description": "AFRM growth: SMA 5/20 directional trader (provisioned via Stock Picker)"
+      "description": "AFRM growth: SMA 5/20 directional trader with covered calls disabled (GROWTH strategy, moderate risk)"
     }
   ],
   "defaults": {
