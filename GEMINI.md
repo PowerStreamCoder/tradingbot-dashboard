@@ -116,7 +116,7 @@
 - Changelog: `../tradingbot-documentation/CHANGELOG.md`
 
 ## Code Knowledge Graph
-_Auto-updated 2026-10-26. Full graph: `tradingbot-tools/knowledge-graph/output/`_
+_Auto-updated 2026-10-30. Full graph: `tradingbot-tools/knowledge-graph/output/`_
 
 ### Key Classes
 | Class | File | Role |
