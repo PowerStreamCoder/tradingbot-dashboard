@@ -128,8 +128,16 @@ async function loadBotConfig() {
             selectedBot = activeBots[0]; // Default to first bot
         }
 
+        // Fetch current profile early (paper vs live)
+        let currentProfile = 'paper';
+        try {
+            currentProfile = await getCurrentProfile();
+        } catch (e) {
+            Logger.warn('BotFocus', 'Failed to fetch current profile for bot selector', e);
+        }
+
         // Populate bot selector dropdown
-        populateBotSelector(activeBots, data.bots);
+        populateBotSelector(activeBots, data.bots, currentProfile);
 
         // Validate required fields
         const requiredFields = ['client_id', 'symbol', 'name', 'script'];
@@ -151,6 +159,8 @@ async function loadBotConfig() {
             symbol: selectedBot.symbol.toUpperCase(),  // Normalize symbol
             botName: selectedBot.name,
             strategy: selectedBot.strategy || 'unknown',
+            isPaused: selectedBot.paused === true || selectedBot.status === 'paused',
+            tradingProfile: currentProfile,
             updateInterval: UPDATE_INTERVALS.BOT_OVERVIEW,
             chartUpdateInterval: UPDATE_INTERVALS.CHART,
             tablesUpdateInterval: UPDATE_INTERVALS.TABLES,
@@ -198,8 +208,9 @@ async function loadBotConfig() {
  * Populate bot selector dropdown with all bots (both native and custom styled dropdown)
  * @param {Array} activeBots - Enabled bots
  * @param {Array} allBots - All bots (enabled and disabled)
+ * @param {string} [profile] - Current trading mode ('paper' or 'live')
  */
-function populateBotSelector(activeBots, allBots) {
+function populateBotSelector(activeBots, allBots, profile) {
     const selector = document.getElementById('botSelector');
     const customMenu = document.getElementById('customBotMenu');
     const customTrigger = document.getElementById('customBotSelect');
@@ -215,16 +226,24 @@ function populateBotSelector(activeBots, allBots) {
         customMenu.innerHTML = '';
     }
 
+    const currentProfile = profile || _profileCache.value || 'paper';
+    const modeBadgeHtml = `<span class="custom-bot-option-mode ${currentProfile}">${currentProfile.toUpperCase()}</span>`;
+
     const savedBotId = localStorage.getItem('selectedBotId');
     const currentSelectedId = (CONFIG && CONFIG.botId) ? CONFIG.botId : (savedBotId ? parseInt(savedBotId) : (activeBots[0]?.client_id || 1));
 
     // Add enabled bots
+    const isFleetPaused = localStorage.getItem('fleetPaused') === 'true';
     if (activeBots.length > 0) {
         activeBots.forEach(bot => {
             // 1. Native option (for fallback and test compatibility)
+            const isPaused = bot.paused === true || bot.status === 'paused' || isFleetPaused;
             const option = document.createElement('option');
             option.value = bot.client_id;
             option.textContent = `${bot.symbol} - ${bot.name}`;
+            if (isPaused) {
+                option.textContent += ' (paused)';
+            }
             if (bot.capital_override) {
                 option.textContent += ` ($${(bot.capital_override / 1000).toFixed(0)}k)`;
             }
@@ -242,6 +261,9 @@ function populateBotSelector(activeBots, allBots) {
                 const symClass = bot.symbol.toLowerCase();
                 const stratText = bot.strategy === 'sma_crossover' ? 'SMA 5/20 Crossover' : (bot.strategy || 'Trend Strategy');
                 const capText = bot.capital_override ? `$${(bot.capital_override / 1000).toFixed(0)}k` : '';
+                const dotClass = isPaused ? 'custom-bot-option-status-dot paused' : 'custom-bot-option-status-dot';
+                const dotTitle = isPaused ? 'Paused' : 'Active';
+                const pausedBadge = isPaused ? '<span class="custom-bot-option-badge paused">PAUSED</span>' : '';
 
                 optCard.innerHTML = `
                     <div class="custom-bot-option-left">
@@ -253,7 +275,9 @@ function populateBotSelector(activeBots, allBots) {
                     </div>
                     <div class="custom-bot-option-right">
                         ${capText ? `<span class="custom-bot-option-capital">${capText}</span>` : ''}
-                        <span class="custom-bot-option-status-dot" title="Active"></span>
+                        ${pausedBadge}
+                        ${modeBadgeHtml}
+                        <span class="${dotClass}" title="${dotTitle}"></span>
                         <span class="custom-bot-option-check">✓</span>
                     </div>
                 `;
@@ -433,6 +457,20 @@ function closeCustomBotMenu() {
  */
 function selectCustomBot(bot) {
     closeCustomBotMenu();
+    const isPaused = bot.paused === true || bot.status === 'paused';
+    if (CONFIG) {
+        CONFIG.isPaused = isPaused;
+    }
+    const customIndicator = document.getElementById('customBotIndicator') || document.querySelector('#customBotSelect .custom-bot-indicator');
+    if (customIndicator) {
+        if (isPaused) {
+            customIndicator.className = 'custom-bot-indicator paused';
+            customIndicator.title = 'Paused';
+        } else {
+            customIndicator.className = 'custom-bot-indicator';
+            customIndicator.title = 'Active';
+        }
+    }
     const selector = document.getElementById('botSelector');
     if (selector && selector.value !== bot.client_id.toString()) {
         selector.value = bot.client_id;
@@ -888,6 +926,26 @@ function updateSymbolReferences() {
 
     if (botStrategy && CONFIG.strategy) {
         botStrategy.textContent = CONFIG.strategy === 'sma_crossover' ? 'SMA 5/20 Crossover' : CONFIG.strategy;
+    }
+
+    // Update header trigger status dot and mode pill
+    const customIndicator = document.getElementById('customBotIndicator') || document.querySelector('#customBotSelect .custom-bot-indicator');
+    const customModePill = document.getElementById('customBotModePill');
+    const currentProfile = _profileCache.value || CONFIG.tradingProfile || 'paper';
+
+    if (customIndicator) {
+        if (CONFIG.isPaused) {
+            customIndicator.className = 'custom-bot-indicator paused';
+            customIndicator.title = 'Paused';
+        } else {
+            customIndicator.className = 'custom-bot-indicator';
+            customIndicator.title = 'Active';
+        }
+    }
+
+    if (customModePill) {
+        customModePill.className = `custom-bot-mode-pill ${currentProfile}`;
+        customModePill.textContent = currentProfile.toUpperCase();
     }
 
     // Update selected state in custom dropdown menu
@@ -1409,14 +1467,18 @@ async function handlePauseResumeBot() {
     const action = isPaused ? 'restart' : 'stop';
     const actionText = isPaused ? 'Resume' : 'Pause';
 
-    // Confirm action
-    if (!confirm(`Are you sure you want to ${actionText.toLowerCase()} the ${CONFIG.symbol} trading bot?`)) {
+    // Clarify fleet-wide scope in confirmation dialog
+    const confirmMessage = isPaused
+        ? 'Are you sure you want to resume all trading bots?'
+        : 'Are you sure you want to pause all trading bots? This stops active trading execution across the fleet.';
+
+    if (!confirm(confirmMessage)) {
         return;
     }
 
     // Disable button during operation
     btn.disabled = true;
-    btn.innerHTML = `<span>⏳</span> ${actionText}ing...`;
+    btn.innerHTML = `<span>⏳</span> ${actionText}ing all bots...`;
 
     try {
         const response = await fetch(`/api/bot-control/${action}`, {
@@ -1430,31 +1492,32 @@ async function handlePauseResumeBot() {
         const data = await response.json();
 
         if (response.ok && data.status === 'success') {
-            // Toggle button state
+            // Toggle button state and persist fleet-wide pause flag
             if (isPaused) {
-                // Resuming - button becomes Pause
+                // Resuming - button becomes Pause All Bots
                 btn.classList.remove('paused');
                 btn.classList.add('btn-danger');
-                btn.innerHTML = '<span>⏸</span> Pause Bot';
+                btn.innerHTML = '<span>⏸</span> Pause All Bots';
+                localStorage.setItem('fleetPaused', 'false');
+                showNotification('✓ All trading bots resumed successfully', 'success');
             } else {
-                // Pausing - button becomes Resume
+                // Pausing - button becomes Resume All Bots
                 btn.classList.add('paused');
                 btn.classList.remove('btn-danger');
-                btn.innerHTML = '<span>▶</span> Resume Bot';
+                btn.innerHTML = '<span>▶</span> Resume All Bots';
+                localStorage.setItem('fleetPaused', 'true');
+                showNotification('✓ All trading bots paused successfully', 'success');
             }
-
-            // Show success message
-            showNotification(`Bot ${actionText.toLowerCase()}ed successfully`, 'success');
         } else {
-            const errDetail = data.message || data.detail || `Failed to ${action} bot`;
+            const errDetail = data.message || data.detail || `Failed to ${action} bots`;
             throw new Error(errDetail);
         }
     } catch (error) {
-        console.error(`Error ${action}ing bot:`, error);
+        console.error(`Error ${action}ing bots:`, error);
         showNotification(`Error: ${error.message}`, 'error');
 
         // Reset button
-        btn.innerHTML = isPaused ? '<span>▶</span> Resume Bot' : '<span>⏸</span> Pause Bot';
+        btn.innerHTML = isPaused ? '<span>▶</span> Resume All Bots' : '<span>⏸</span> Pause All Bots';
     } finally {
         btn.disabled = false;
     }
@@ -1620,75 +1683,94 @@ async function handleProfileSwitch() {
     if (!btn) return;
 
     try {
-        // Step 1: Check if bots are currently running via bot overview data
-        // Bot overview has real-time status from Firestore heartbeat
-        console.log('[PROFILE-SWITCH] Checking bot status via bot overview...');
-        const overviewResponse = await fetch(CONFIG.apiEndpoints.botOverview);
-        const overviewData = await overviewResponse.json();
-
-        // Check if any bot has recent heartbeat (active within last 2 minutes)
-        const botKey = `bot${CONFIG.botId}`;
-        const botData = overviewData[botKey];
-        let botsRunning = false;
-
-        if (botData && botData.lastHeartbeat) {
-            const heartbeatTime = new Date(botData.lastHeartbeat);
-            const now = new Date();
-            const ageMinutes = (now - heartbeatTime) / 1000 / 60;
-            botsRunning = ageMinutes < 2; // Active if heartbeat within 2 minutes
-            console.log(`[PROFILE-SWITCH] Bot heartbeat age: ${ageMinutes.toFixed(1)} minutes, running: ${botsRunning}`);
-        }
-
-        if (botsRunning) {
-            // Bots are running - show clear message to stop them first
-            console.log('[PROFILE-SWITCH] Bots are running, prompting user to stop them first');
-            alert('⚠️ BOTS ARE STILL RUNNING\n\n' +
-                  'You must STOP the bots before switching profiles.\n\n' +
-                  'Steps:\n' +
-                  '1. Click the "⏸ Pause Bots" button above\n' +
-                  '2. Wait for bots to stop (status shows "Stopped")\n' +
-                  '3. Then try switching profiles again\n\n' +
-                  'This safety check prevents switching profiles during active trading.');
-            return;
-        }
-
-        console.log('[PROFILE-SWITCH] Bots are stopped, proceeding with switch...');
-
-        // Step 2: Get current profile from backend
+        // Step 1: Get current profile from backend
         console.log('[PROFILE-SWITCH] Fetching current profile...');
-        const currentResponse = await fetch('/api/bot-control/current-profile');
-        const currentData = await currentResponse.json();
-        const currentProfile = currentData.profile;
+        let currentProfile = 'paper';
+        try {
+            const currentResponse = await fetch('/api/bot-control/current-profile');
+            const currentData = await currentResponse.json();
+            currentProfile = currentData.profile || 'paper';
+        } catch (e) {
+            console.warn('[PROFILE-SWITCH] Could not fetch current profile, using fallback:', e);
+            currentProfile = _profileCache.value || 'paper';
+        }
         const newProfile = currentProfile === 'paper' ? 'live' : 'paper';
-
+        const targetDesc = newProfile === 'live' ? 'LIVE TRADING (REAL MONEY)' : 'PAPER TRADING (TEST MODE)';
         console.log(`[PROFILE-SWITCH] Current: ${currentProfile}, Target: ${newProfile}`);
 
-        // Step 3: First confirmation dialog
-        const action = newProfile === 'live' ? 'LIVE TRADING (REAL MONEY)' : 'PAPER TRADING (TEST MODE)';
-        console.log(`[PROFILE-SWITCH] Showing first confirmation for: ${action}`);
-
-        if (!confirm(`Switch to ${action}?`)) {
-            console.log('[PROFILE-SWITCH] User cancelled at first confirmation');
-            return;
+        // Step 2: Check if bots are currently running via bot overview data
+        console.log('[PROFILE-SWITCH] Checking bot status via bot overview...');
+        let botsRunning = false;
+        try {
+            const overviewResponse = await fetch(CONFIG.apiEndpoints.botOverview);
+            const overviewData = await overviewResponse.json();
+            const botKey = `bot${CONFIG.botId}`;
+            const botData = overviewData[botKey];
+            if (botData && botData.lastHeartbeat) {
+                const heartbeatTime = new Date(botData.lastHeartbeat);
+                const ageMinutes = (new Date() - heartbeatTime) / 1000 / 60;
+                botsRunning = ageMinutes < 2; // Active if heartbeat within 2 minutes
+            }
+        } catch (e) {
+            console.warn('[PROFILE-SWITCH] Could not check heartbeat age:', e);
         }
 
-        // Step 4: Second confirmation ONLY for live mode (extra safety)
-        if (newProfile === 'live') {
-            console.log('[PROFILE-SWITCH] Showing second "Real Money" warning...');
+        // Step 3: Clear and intuitive confirmation workflow (single-action pause & switch)
+        if (botsRunning) {
+            const confirmMsg = `⚠️ SWITCH TRADING MODE TO ${targetDesc}?\n\n` +
+                `Bots are currently running in ${currentProfile.toUpperCase()} mode.\n\n` +
+                `Proceeding will automatically:\n` +
+                `1. Gracefully pause active bots\n` +
+                `2. Switch broker configuration to ${newProfile.toUpperCase()}\n` +
+                `3. Restart bots in ${newProfile.toUpperCase()} mode\n\n` +
+                `Click OK to Pause & Switch.`;
 
-            if (!confirm('⚠️ ARE YOU SURE?\n\nThis will enable LIVE TRADING with REAL MONEY.\n\nBots will restart automatically.\n\nClick OK to proceed.')) {
-                console.log('[PROFILE-SWITCH] User cancelled at second confirmation');
+            if (!confirm(confirmMsg)) {
+                console.log('[PROFILE-SWITCH] User cancelled at running-bots prompt');
+                return;
+            }
+        } else {
+            if (!confirm(`Switch trading mode to ${targetDesc}?`)) {
+                console.log('[PROFILE-SWITCH] User cancelled at confirmation');
                 return;
             }
         }
 
-        console.log('[PROFILE-SWITCH] User confirmed, proceeding with switch...');
+        // Extra confirmation if entering LIVE mode (real money safety check)
+        if (newProfile === 'live') {
+            if (!confirm('⚠️ FINAL WARNING: REAL MONEY TRADING\n\n' +
+                        'This will execute live orders with REAL CAPITAL on Interactive Brokers.\n\n' +
+                        'Click OK to proceed.')) {
+                console.log('[PROFILE-SWITCH] User cancelled at live confirmation');
+                return;
+            }
+        }
 
-        // Step 5: Disable button and show loading state
+        // Step 4: If bots were running, gracefully pause them first
         btn.disabled = true;
-        btn.innerHTML = '<span>⏳</span> Switching...';
+        if (botsRunning) {
+            btn.innerHTML = '<span>⏳</span> Pausing bots...';
+            console.log('[PROFILE-SWITCH] Gracefully pausing bots before switch...');
+            try {
+                const stopResponse = await fetch('/api/bot-control/stop', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                if (!stopResponse.ok) {
+                    const stopErr = await stopResponse.json().catch(() => ({}));
+                    throw new Error(stopErr.detail || stopErr.message || 'Failed to pause bots');
+                }
+                console.log('[PROFILE-SWITCH] Bots paused. Waiting 3s for state save...');
+                await new Promise(r => setTimeout(r, 3000));
+            } catch (err) {
+                console.error('[PROFILE-SWITCH] Error stopping bots:', err);
+                throw new Error(`Could not safely pause bots before switch: ${err.message}`);
+            }
+        }
 
-        // Step 6: Call backend API to switch profile
+        // Step 5: Call backend API to switch profile
+        btn.innerHTML = `<span>⏳</span> Switching to ${newProfile.toUpperCase()}...`;
         console.log(`[PROFILE-SWITCH] Calling API: POST /api/bot-control/switch-profile (profile=${newProfile})`);
 
         const response = await fetch('/api/bot-control/switch-profile', {
@@ -1700,12 +1782,12 @@ async function handleProfileSwitch() {
 
         const result = await response.json();
 
-        // Step 7: Handle response
+        // Step 6: Handle response
         if (response.ok && result.status === 'success') {
             console.log(`[PROFILE-SWITCH] ✅ SUCCESS: Switched to ${newProfile} mode`);
             showNotification(`✓ Switched to ${newProfile.toUpperCase()} mode. Bots restarting...`, 'success');
 
-            // v5.0.0: Invalidate profile cache to force immediate refresh
+            // Invalidate profile cache to force immediate refresh
             invalidateProfileCache();
 
             // Update mode indicator immediately (optimistic UI update)
@@ -1716,10 +1798,11 @@ async function handleProfileSwitch() {
             if (pauseBtn) {
                 pauseBtn.classList.remove('paused');
                 pauseBtn.classList.add('btn-danger');
-                pauseBtn.innerHTML = '<span>⏸</span> Pause Bot';
+                pauseBtn.innerHTML = '<span>⏸</span> Pause All Bots';
                 pauseBtn.disabled = false;
                 console.log('[PROFILE-SWITCH] Reset pause button to active state (bots restarting)');
             }
+            localStorage.setItem('fleetPaused', 'false');
 
             // Refresh data after 5 seconds to allow bots to restart
             console.log('[PROFILE-SWITCH] Scheduling data refresh in 5 seconds...');
@@ -1728,8 +1811,6 @@ async function handleProfileSwitch() {
                 fetchInitialData();
             }, 5000);
         } else {
-            // Error from backend (e.g., positions are open, invalid profile)
-            // FastAPI returns errors as {"detail": "message"}, but VM API uses {"message": "..."}
             const errorMsg = result.detail || result.message || 'Switch failed';
             console.error(`[PROFILE-SWITCH] Backend error: ${errorMsg}`);
             throw new Error(errorMsg);
@@ -1739,7 +1820,6 @@ async function handleProfileSwitch() {
         console.error(`[PROFILE-SWITCH] ❌ ERROR: ${error.message}`);
         showNotification(`❌ Profile switch failed: ${error.message}`, 'error');
     } finally {
-        // Step 8: Re-enable button and update text
         const btn = document.getElementById('switchProfileBtn');
         if (btn) {
             btn.disabled = false;
@@ -1762,19 +1842,32 @@ async function handleProfileSwitch() {
  */
 function updateModeIndicator(profile) {
     const badge = document.getElementById('modeBadge');
-    if (!badge) return;
+    if (badge) {
+        if (profile === 'live') {
+            // LIVE MODE: Red pulsing badge for high visibility
+            badge.textContent = '⚠️ LIVE MODE';
+            badge.className = 'mode-badge live';
+        } else {
+            // PAPER MODE: Blue static badge
+            badge.textContent = '📝 PAPER MODE';
+            badge.className = 'mode-badge paper';
+        }
+    }
+
+    // Update custom bot header mode pill
+    const customModePill = document.getElementById('customBotModePill');
+    if (customModePill) {
+        customModePill.className = `custom-bot-mode-pill ${profile}`;
+        customModePill.textContent = profile.toUpperCase();
+    }
+
+    // Update all mode badges in the custom bot dropdown menu
+    document.querySelectorAll('.custom-bot-option-mode').forEach(el => {
+        el.className = `custom-bot-option-mode ${profile}`;
+        el.textContent = profile.toUpperCase();
+    });
 
     console.log(`[MODE-INDICATOR] Updating badge to: ${profile}`);
-
-    if (profile === 'live') {
-        // LIVE MODE: Red pulsing badge for high visibility
-        badge.textContent = '⚠️ LIVE MODE';
-        badge.className = 'mode-badge live';
-    } else {
-        // PAPER MODE: Blue static badge
-        badge.textContent = '📝 PAPER MODE';
-        badge.className = 'mode-badge paper';
-    }
 }
 
 /**
@@ -2946,14 +3039,28 @@ async function updateBotStatus() {
         // Sync Pause/Resume button state based on active trading status
         const pauseBotBtn = document.getElementById('pauseBotBtn');
         if (pauseBotBtn && !pauseBotBtn.disabled && data.is_trading !== undefined) {
-            if (data.is_trading) {
+            const isFleetPaused = localStorage.getItem('fleetPaused') === 'true';
+            if (data.is_trading && !isFleetPaused) {
                 pauseBotBtn.classList.remove('paused');
                 pauseBotBtn.classList.add('btn-danger');
-                pauseBotBtn.innerHTML = '<span>⏸</span> Pause Bot';
+                pauseBotBtn.innerHTML = '<span>⏸</span> Pause All Bots';
             } else {
                 pauseBotBtn.classList.add('paused');
                 pauseBotBtn.classList.remove('btn-danger');
-                pauseBotBtn.innerHTML = '<span>▶</span> Resume Bot';
+                pauseBotBtn.innerHTML = '<span>▶</span> Resume All Bots';
+            }
+        }
+
+        // Sync header bot indicator dot with trading status
+        const customIndicator = document.getElementById('customBotIndicator') || document.querySelector('#customBotSelect .custom-bot-indicator');
+        if (customIndicator && data.is_trading !== undefined) {
+            const isBotActive = data.is_trading && !CONFIG.isPaused;
+            if (isBotActive) {
+                customIndicator.className = 'custom-bot-indicator';
+                customIndicator.title = 'Active';
+            } else {
+                customIndicator.className = 'custom-bot-indicator paused';
+                customIndicator.title = 'Paused';
             }
         }
 
