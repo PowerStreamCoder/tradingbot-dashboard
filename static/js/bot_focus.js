@@ -233,20 +233,12 @@ function populateBotSelector(activeBots, allBots, profile) {
     }
 
     const currentProfile = profile || _profileCache.value || 'paper';
-    const portfolioFilter = localStorage.getItem('portfolioFilter') || 'all';
 
     const savedBotId = localStorage.getItem('selectedBotId');
     const currentSelectedId = (CONFIG && CONFIG.botId) ? CONFIG.botId : (savedBotId ? parseInt(savedBotId) : (activeBots[0]?.client_id || 1));
 
-    // Filter bots according to selected portfolio scope
-    const filterBot = (b) => {
-        const mode = (b.profile || b.trading_mode || currentProfile || 'paper').toLowerCase();
-        if (portfolioFilter === 'live') return mode === 'live';
-        if (portfolioFilter === 'paper') return mode !== 'live';
-        return true;
-    };
-
-    const filteredActiveBots = activeBots.filter(filterBot);
+    // The bot selector dropdown remains unchanged and shows all active bots
+    const filteredActiveBots = activeBots;
 
     // Add enabled bots
     const isFleetPaused = localStorage.getItem('fleetPaused') === 'true';
@@ -311,7 +303,7 @@ function populateBotSelector(activeBots, allBots, profile) {
     }
 
     // Add disabled bots if any (grayed out, informational)
-    const disabledBots = allBots.filter(b => !b.enabled).filter(filterBot);
+    const disabledBots = allBots.filter(b => !b.enabled);
     if (disabledBots.length > 0) {
         const disabledGroup = document.createElement('optgroup');
         disabledGroup.label = '── Disabled ──';
@@ -2315,7 +2307,7 @@ async function handleResetOverride() {
 }
 
 /**
- * Portfolio Filter Bar Handler (Phase 5)
+ * Trade History Mode Filter Handler
  */
 function setPortfolioFilter(mode) {
     if (!['live', 'paper', 'all'].includes(mode)) return;
@@ -2329,11 +2321,7 @@ function setPortfolioFilter(mode) {
         }
     });
 
-    // Re-populate bot selector to filter visible bots
-    if (window._lastBotsData) {
-        populateBotSelector(window._lastBotsData.activeBots, window._lastBotsData.allBots);
-    }
-    // Refresh trade history table to reflect filtered mode
+    // Refresh trade history table to reflect filtered mode for selected bot
     updateTradeHistory();
 }
 
@@ -4329,8 +4317,15 @@ async function updateTradeHistory() {
         const trades = Array.isArray(data) ? data : (data.trades || []);
         console.log(`[TRADE HISTORY] Total trades fetched: ${trades.length}`);
 
-        // Filter by portfolio scope (live vs paper vs all) AND current bot's symbol (Phase 5)
+        // Filter by mode (live vs paper vs all) AND current bot's symbol
         const portfolioFilter = localStorage.getItem('portfolioFilter') || 'all';
+        ['live', 'paper', 'all'].forEach(m => {
+            const btn = document.getElementById(`filterBtn${m.charAt(0).toUpperCase() + m.slice(1)}`);
+            if (btn) {
+                if (m === portfolioFilter) btn.classList.add('active');
+                else btn.classList.remove('active');
+            }
+        });
         const filteredTrades = trades.filter(trade => {
             const tradeMode = trade.trading_mode || 'paper';
             const tradeSymbol = (trade.symbol || trade.analysis_metadata?.symbol || '').toUpperCase();
@@ -4352,7 +4347,8 @@ async function updateTradeHistory() {
         // Update count display with filter info
         const countEl = document.getElementById('tradeCount');
         if (countEl) {
-            countEl.textContent = `Last ${allTrades.length} ${currentProfile.toUpperCase()} trades`;
+            const scopeLabel = portfolioFilter === 'all' ? 'All' : (portfolioFilter.charAt(0).toUpperCase() + portfolioFilter.slice(1));
+            countEl.textContent = `Last ${allTrades.length} trades (${scopeLabel})`;
         }
 
         updateTradeHistoryBadges(allTrades);
