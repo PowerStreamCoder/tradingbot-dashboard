@@ -1120,17 +1120,11 @@ class TestBotControlEndpoints:
             assert res.status_code == 200
             assert res.json()["profile"] == "live"
 
-            # Fallback on HTTPError
+            # HTTP 502 on HTTPError (Issue #97 / AC2: no silent fallback)
             mock_get.side_effect = httpx.HTTPError("unreachable")
             res_fb = client.get("/api/bot-control/current-profile")
-            assert res_fb.status_code == 200
-            assert res_fb.json()["profile"] == "paper"
-
-            # Fallback on Exception
-            mock_get.side_effect = Exception("generic error")
-            res_ex = client.get("/api/bot-control/current-profile")
-            assert res_ex.status_code == 200
-            assert res_ex.json()["profile"] == "paper"
+            assert res_fb.status_code == 502
+            assert "unreachable" in res_fb.json()["detail"].lower()
 
     def test_switch_profile_and_audit(self, auth_client):
         client, _ = auth_client
