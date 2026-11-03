@@ -504,7 +504,7 @@ class TestMainDashboardGaps:
              patch("httpx.AsyncClient.get") as mock_get:
             mock_db = MagicMock()
             mock_fs.return_value = mock_db
-            mock_db.collection("bot_overview").document("overview").get.return_value = mock_doc
+            mock_db.collection("bot_overview").document("current").get.return_value = mock_doc
             mock_get.return_value = MagicMock(status_code=200, json=lambda: {"profile": "paper"})
 
             res_block = client.post("/api/bot-control/switch-profile", json={"profile": "live"})
@@ -515,7 +515,7 @@ class TestMainDashboardGaps:
             mock_doc_empty = MagicMock()
             mock_doc_empty.exists = True
             mock_doc_empty.to_dict.return_value = {"bots": []}
-            mock_db.collection("bot_overview").document("overview").get.return_value = mock_doc_empty
+            mock_db.collection("bot_overview").document("current").get.return_value = mock_doc_empty
             mock_db.collection("profile_switch_audit").add.side_effect = Exception("audit write err")
 
             with patch("httpx.AsyncClient.post") as mock_post:

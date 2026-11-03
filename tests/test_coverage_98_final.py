@@ -712,10 +712,18 @@ def test_main_remaining_branches(auth_client):
         mock_post.side_effect = Exception("reset unknown err")
         assert client.post("/api/bot-control/reset/nvda").status_code == 500
 
-    # Line 2305 & 2344-2347: Switch profile branches
+    # Switch profile branches: verify fail-closed on missing doc & success on flat doc
     mock_db_sp = MagicMock()
     mock_no_doc = MagicMock(exists=False)
+    mock_flat_doc = MagicMock(exists=True)
+    mock_flat_doc.to_dict.return_value = {"data": {}}
     mock_db_sp.collection("bot_overview").document.return_value.get.return_value = mock_no_doc
+    with patch("google.cloud.firestore.Client", return_value=mock_db_sp):
+        res_no_doc = client.post("/api/bot-control/switch-profile", json={"profile": "paper"})
+        assert res_no_doc.status_code == 400
+        assert "does not exist" in res_no_doc.json()["detail"].lower()
+
+    mock_db_sp.collection("bot_overview").document.return_value.get.return_value = mock_flat_doc
     with patch("google.cloud.firestore.Client", return_value=mock_db_sp), \
          patch("httpx.AsyncClient.post") as mock_post:
         mock_post.return_value = MagicMock(status_code=200, json=lambda: {"status": "success", "profile_confirmed": True})

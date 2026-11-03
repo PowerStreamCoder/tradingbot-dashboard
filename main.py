@@ -2942,58 +2942,128 @@ async def switch_profile(request: Request):
             raise HTTPException(status_code=400, detail="Invalid profile. Must be 'paper' or 'live'")
 
         # CRITICAL SAFETY CHECK: Query Firestore for open positions
+        # Standardized on canonical 'bot_overview/current' (Issue #112).
         # This prevents switching modes with active positions which could cause:
         # - Confusion about which positions are real vs test
         # - Incorrect P&L calculations
         # - Risk management issues
-        logger.info("[SWITCH-PROFILE] Checking for open positions in Firestore...")
+        logger.info("[SWITCH-PROFILE] Checking for open positions in Firestore (bot_overview/current)...")
 
-        db = firestore.Client()
-        bot_overview = db.collection('bot_overview').document('overview').get()
+        total_positions = 0
+        position_details = []
 
-        if bot_overview.exists:
-            data = bot_overview.to_dict()
-            bots = data.get('bots', [])
+        try:
+            db = firestore.Client()
+            bot_overview = db.collection('bot_overview').document('current').get()
+        except Exception as e:
+            switch_attempt['positions_blocked'] = True
+            switch_attempt['error_message'] = f"Firestore query error: {e}"
+            logger.error(f"[SWITCH-PROFILE] BLOCKED: Firestore query for bot_overview/current failed: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Cannot switch profile: failed to query positions from Firestore ({e}). Fail-closed gate blocked switch."
+            )
 
-            # Count total positions across all bots
-            total_positions = 0
-            position_details = []
+        if not bot_overview.exists:
+            switch_attempt['positions_blocked'] = True
+            switch_attempt['error_message'] = "bot_overview/current document does not exist"
+            logger.warning("[SWITCH-PROFILE] BLOCKED: bot_overview/current document does not exist (fail-closed)")
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot switch profile: bot_overview/current document does not exist. Fail-closed verification gate blocked switch."
+            )
 
-            for bot in bots:
+        data = bot_overview.to_dict() or {}
+
+        # 1. Parse legacy list shape: data['bots'] = [...]
+        bots_list = data.get('bots')
+        if isinstance(bots_list, list):
+            for bot in bots_list:
                 bot_name = bot.get('name', 'Unknown')
                 for bucket in bot.get('buckets', []):
-                    shares = bucket.get('shares', 0)
-                    if shares > 0:
+                    shares = bucket.get('shares', 0) or bucket.get('quantity', 0)
+                    has_option = (
+                        bucket.get('option_sold') is True
+                        or bucket.get('optionSold') is True
+                        or bucket.get('optionState') in ('OPEN', 'CLOSING')
+                        or (bucket.get('optionContracts', 0) or 0) > 0
+                    )
+                    if shares > 0 or has_option:
                         total_positions += 1
                         symbol = bucket.get('symbol', 'Unknown')
                         bucket_type = bucket.get('bucket_type', 'Unknown')
-                        position_details.append(f"{bot_name}/{bucket_type}: {shares} shares of {symbol}")
+                        desc = f"{bot_name}/{bucket_type}: {shares} shares of {symbol}"
+                        if has_option:
+                            desc += f" (open option contract, strike={bucket.get('optionStrike', 'unknown')})"
+                        position_details.append(desc)
 
-            # Update audit trail with position info
-            switch_attempt['position_count'] = total_positions
-            switch_attempt['position_details'] = position_details
+        # 2. Parse canonical dictionary shape written by dashboard.py:
+        # {'data': {'bot4': {'bucket1': {'entryPrice': ..., 'quantity': ..., 'optionSold': ...}}, ...}}
+        # or flat dictionary of bot entries.
+        bot_dict = data.get('data') if isinstance(data.get('data'), dict) else None
+        if bot_dict is None and not isinstance(bots_list, list):
+            bot_dict = {
+                k: v for k, v in data.items()
+                if k not in ('updated_at', 'data') and isinstance(v, dict)
+            }
 
-            # Block profile switch if ANY positions are open
-            if total_positions > 0:
-                switch_attempt['positions_blocked'] = True
-                switch_attempt['error_message'] = f"{total_positions} open position(s)"
+        if isinstance(bot_dict, dict):
+            for bot_key, bot_info in bot_dict.items():
+                if not isinstance(bot_info, dict):
+                    continue
+                bot_symbol = bot_info.get('symbol', bot_key)
+                bot_name = bot_info.get('name', bot_info.get('botName', bot_key))
 
-                logger.warning(f"[SWITCH-PROFILE] BLOCKED: {total_positions} open position(s) found")
-                logger.warning(f"[SWITCH-PROFILE] Positions: {position_details}")
+                # Check top-level bot shares
+                top_shares = bot_info.get('shares', 0) or bot_info.get('quantity', 0)
+                if top_shares > 0:
+                    total_positions += 1
+                    position_details.append(f"{bot_name}: {top_shares} shares of {bot_symbol}")
 
-                # Show first 3 positions in error message
-                positions_str = "; ".join(position_details[:3])
-                if len(position_details) > 3:
-                    positions_str += f" and {len(position_details) - 3} more"
+                # Check per-bucket entries
+                for b_key, b_val in bot_info.items():
+                    if b_key.startswith('bucket') and isinstance(b_val, dict):
+                        shares = b_val.get('shares', 0) or b_val.get('quantity', 0)
+                        # Check active entry price with quantity
+                        entry_price = b_val.get('entryPrice')
+                        has_shares = (shares > 0) or (entry_price is not None and shares > 0)
+                        has_option = (
+                            b_val.get('option_sold') is True
+                            or b_val.get('optionSold') is True
+                            or b_val.get('optionState') in ('OPEN', 'CLOSING')
+                            or (b_val.get('optionContracts', 0) or 0) > 0
+                        )
+                        if has_shares or has_option:
+                            total_positions += 1
+                            sym = b_val.get('symbol', bot_symbol)
+                            desc = f"{bot_name}/{b_key}: {shares} shares of {sym}"
+                            if has_option:
+                                desc += f" (open option contract, strike={b_val.get('optionStrike', 'unknown')})"
+                            position_details.append(desc)
 
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Cannot switch profile: {total_positions} open position(s). Close all positions first. ({positions_str})"
-                )
+        # Update audit trail with position info
+        switch_attempt['position_count'] = total_positions
+        switch_attempt['position_details'] = position_details
 
-            logger.info("[SWITCH-PROFILE] ✓ Position check passed: No open positions")
-        else:
-            logger.info("[SWITCH-PROFILE] ✓ No bot_overview document (no positions)")
+        # Block profile switch if ANY positions are open
+        if total_positions > 0:
+            switch_attempt['positions_blocked'] = True
+            switch_attempt['error_message'] = f"{total_positions} open position(s)"
+
+            logger.warning(f"[SWITCH-PROFILE] BLOCKED: {total_positions} open position(s) found in bot_overview/current")
+            logger.warning(f"[SWITCH-PROFILE] Positions: {position_details}")
+
+            # Show first 3 positions in error message
+            positions_str = "; ".join(position_details[:3])
+            if len(position_details) > 3:
+                positions_str += f" and {len(position_details) - 3} more"
+
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot switch profile: {total_positions} open position(s). Close all positions first. ({positions_str})"
+            )
+
+        logger.info("[SWITCH-PROFILE] ✓ Position check passed: No open positions found in bot_overview/current")
 
         # No positions - safe to proceed with switch
         logger.info(f"[SWITCH-PROFILE] Forwarding switch request to VM API (profile={profile})")
