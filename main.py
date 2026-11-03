@@ -2981,20 +2981,23 @@ async def switch_profile(request: Request):
             for bot in bots_list:
                 bot_name = bot.get('name', 'Unknown')
                 for bucket in bot.get('buckets', []):
-                    shares = bucket.get('shares', 0) or bucket.get('quantity', 0)
+                    shares = float(bucket.get('shares', 0) or bucket.get('quantity', 0) or 0.0)
+                    entry_price = bucket.get('entryPrice') or bucket.get('entry_price')
+                    has_shares = (abs(shares) > 0) or (entry_price is not None and float(entry_price or 0) > 0)
+                    opt_state = str(bucket.get('optionState') or bucket.get('option_state') or '').upper()
                     has_option = (
                         bucket.get('option_sold') is True
                         or bucket.get('optionSold') is True
-                        or bucket.get('optionState') in ('OPEN', 'CLOSING')
-                        or (bucket.get('optionContracts', 0) or 0) > 0
+                        or opt_state in ('OPEN', 'CLOSING', 'RECONCILE_FAILED', 'UNRECOVERABLE')
+                        or float(bucket.get('optionContracts', 0) or bucket.get('option_contracts', 0) or 0.0) > 0
                     )
-                    if shares > 0 or has_option:
+                    if has_shares or has_option:
                         total_positions += 1
                         symbol = bucket.get('symbol', 'Unknown')
                         bucket_type = bucket.get('bucket_type', 'Unknown')
                         desc = f"{bot_name}/{bucket_type}: {shares} shares of {symbol}"
                         if has_option:
-                            desc += f" (open option contract, strike={bucket.get('optionStrike', 'unknown')})"
+                            desc += f" (open option contract, state={opt_state or 'active'}, strike={bucket.get('optionStrike', 'unknown')})"
                         position_details.append(desc)
 
         # 2. Parse canonical dictionary shape written by dashboard.py:
@@ -3015,30 +3018,30 @@ async def switch_profile(request: Request):
                 bot_name = bot_info.get('name', bot_info.get('botName', bot_key))
 
                 # Check top-level bot shares
-                top_shares = bot_info.get('shares', 0) or bot_info.get('quantity', 0)
-                if top_shares > 0:
+                top_shares = float(bot_info.get('shares', 0) or bot_info.get('quantity', 0) or 0.0)
+                if abs(top_shares) > 0:
                     total_positions += 1
                     position_details.append(f"{bot_name}: {top_shares} shares of {bot_symbol}")
 
                 # Check per-bucket entries
                 for b_key, b_val in bot_info.items():
                     if b_key.startswith('bucket') and isinstance(b_val, dict):
-                        shares = b_val.get('shares', 0) or b_val.get('quantity', 0)
-                        # Check active entry price with quantity
-                        entry_price = b_val.get('entryPrice')
-                        has_shares = (shares > 0) or (entry_price is not None and shares > 0)
+                        shares = float(b_val.get('shares', 0) or b_val.get('quantity', 0) or 0.0)
+                        entry_price = b_val.get('entryPrice') or b_val.get('entry_price')
+                        has_shares = (abs(shares) > 0) or (entry_price is not None and float(entry_price or 0) > 0)
+                        opt_state = str(b_val.get('optionState') or b_val.get('option_state') or '').upper()
                         has_option = (
                             b_val.get('option_sold') is True
                             or b_val.get('optionSold') is True
-                            or b_val.get('optionState') in ('OPEN', 'CLOSING')
-                            or (b_val.get('optionContracts', 0) or 0) > 0
+                            or opt_state in ('OPEN', 'CLOSING', 'RECONCILE_FAILED', 'UNRECOVERABLE')
+                            or float(b_val.get('optionContracts', 0) or b_val.get('option_contracts', 0) or 0.0) > 0
                         )
                         if has_shares or has_option:
                             total_positions += 1
                             sym = b_val.get('symbol', bot_symbol)
                             desc = f"{bot_name}/{b_key}: {shares} shares of {sym}"
                             if has_option:
-                                desc += f" (open option contract, strike={b_val.get('optionStrike', 'unknown')})"
+                                desc += f" (open option contract, state={opt_state or 'active'}, strike={b_val.get('optionStrike', 'unknown')})"
                             position_details.append(desc)
 
         # Update audit trail with position info

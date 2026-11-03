@@ -175,3 +175,90 @@ def test_switch_profile_passes_when_flat(auth_client):
         assert res.status_code == 200
         assert res.json()["status"] == "success"
 
+
+def test_switch_profile_blocks_on_negative_short_shares(auth_client):
+    """Blocks switch when bucket has negative shares (short equity position)."""
+    mock_db = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.exists = True
+    mock_doc.to_dict.return_value = {
+        "data": {
+            "bot4": {
+                "symbol": "NVDA",
+                "name": "NVDA Bot",
+                "bucket1": {
+                    "entryPrice": 140.50,
+                    "quantity": -50,
+                    "shares": -50,
+                    "optionSold": False,
+                }
+            }
+        }
+    }
+    mock_db.collection("bot_overview").document("current").get.return_value = mock_doc
+
+    with patch("google.cloud.firestore.Client", return_value=mock_db):
+        res = auth_client.post(
+            "/api/bot-control/switch-profile", json={"profile": "live"}
+        )
+        assert res.status_code == 400
+        assert "1 open position(s)" in res.json()["detail"]
+
+
+def test_switch_profile_blocks_on_reconcile_failed_option(auth_client):
+    """Blocks switch when option state is RECONCILE_FAILED or UNRECOVERABLE."""
+    mock_db = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.exists = True
+    mock_doc.to_dict.return_value = {
+        "data": {
+            "bot5": {
+                "symbol": "MSFT",
+                "name": "MSFT Bot",
+                "bucket1": {
+                    "entryPrice": None,
+                    "shares": 0,
+                    "optionSold": False,
+                    "optionState": "RECONCILE_FAILED",
+                }
+            }
+        }
+    }
+    mock_db.collection("bot_overview").document("current").get.return_value = mock_doc
+
+    with patch("google.cloud.firestore.Client", return_value=mock_db):
+        res = auth_client.post(
+            "/api/bot-control/switch-profile", json={"profile": "live"}
+        )
+        assert res.status_code == 400
+        assert "1 open position(s)" in res.json()["detail"]
+        assert "RECONCILE_FAILED" in res.json()["detail"]
+
+
+def test_switch_profile_blocks_on_active_entry_price(auth_client):
+    """Blocks switch when entryPrice is active even if shares is 0."""
+    mock_db = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.exists = True
+    mock_doc.to_dict.return_value = {
+        "data": {
+            "bot4": {
+                "symbol": "NVDA",
+                "name": "NVDA Bot",
+                "bucket1": {
+                    "entryPrice": 145.0,
+                    "shares": 0,
+                }
+            }
+        }
+    }
+    mock_db.collection("bot_overview").document("current").get.return_value = mock_doc
+
+    with patch("google.cloud.firestore.Client", return_value=mock_db):
+        res = auth_client.post(
+            "/api/bot-control/switch-profile", json={"profile": "live"}
+        )
+        assert res.status_code == 400
+        assert "1 open position(s)" in res.json()["detail"]
+
+
