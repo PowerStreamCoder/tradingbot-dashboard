@@ -155,10 +155,50 @@ jobs:
       - name: Wait for service to stabilize
         run: sleep 10
 
+      - name: Verify Cloud Run Environment Variables (Issue #97 / #113)
+        run: |
+          echo "🔍 Checking deployed Cloud Run environment variables..."
+          ENV_VARS=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+            --platform managed \
+            --region ${{ env.REGION }} \
+            --format 'json(spec.template.spec.containers[0].env)')
+          
+          REQUIRED_VARS=("BOT_CONTROL_API_KEY" "BOT_CONTROL_API_URL" "DASHBOARD_ACCESS_SECRET" "NEWSAPI_KEY" "FINNHUB_API_KEY" "ALPHAVANTAGE_API_KEY" "SEC_USER_AGENT")
+          MISSING=0
+          for VAR in "${REQUIRED_VARS[@]}"; do
+            if echo "$ENV_VARS" | grep -q "\"name\": \"$VAR\""; then
+              echo "  ✅ $VAR configured"
+            else
+              echo "  ❌ MISSING: $VAR"
+              MISSING=$((MISSING + 1))
+            fi
+          done
+
+          if [ $MISSING -gt 0 ]; then
+            echo "❌ $MISSING required environment variable(s) missing on Cloud Run service!"
+            exit 1
+          fi
+          echo "✅ All required environment variables verified."
+
       - name: Smoke test - Homepage
         run: |
           curl -f -s ${{ steps.service_url.outputs.url }}/ | grep -q "Trading Dashboard"
           echo "✅ Homepage OK"
+
+      - name: Smoke test - Bot Control Profile Proxy (Issue #97 / #113)
+        run: |
+          echo "Testing bot-control proxy at ${{ steps.service_url.outputs.url }}/api/bot-control/current-profile..."
+          RES=$(curl -s ${{ steps.service_url.outputs.url }}/api/bot-control/current-profile || true)
+          echo "Response: $RES"
+          if echo "$RES" | grep -q "vm_unreachable"; then
+            echo "❌ Bot control returned silent fallback vm_unreachable!"
+            exit 1
+          fi
+          if echo "$RES" | grep -q "\"fallback\""; then
+            echo "❌ Bot control returned silent fallback profile!"
+            exit 1
+          fi
+          echo "✅ Bot control profile response verified (no silent fallback)."
 
       - name: Check response time
         run: |

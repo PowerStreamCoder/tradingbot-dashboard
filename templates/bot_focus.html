@@ -64,10 +64,19 @@
                 <div class="mode-indicator">
                     <span id="modeBadge" class="mode-badge paper">📝 PAPER MODE</span>
                 </div>
+                <button id="botEnableToggleBtn" class="btn btn-action" title="Toggle active bot runtime state">
+                    <span id="botEnableToggleIcon">▶️</span> <span id="botEnableToggleText">Enable Bot</span>
+                </button>
+                <button id="btnGraduateLive" class="btn btn-profile-switch switch-to-live" title="Graduate bot to Live trading">
+                    <span id="btnGraduateLiveIcon">🚀</span> <span id="btnGraduateLiveText">Graduate to Live</span>
+                </button>
+                <button id="btnResetOverride" class="btn btn-outline" title="Reset dynamic override to config baseline" style="display: none;">
+                    <span>↺</span> Reset to Config
+                </button>
                 <button id="pauseBotBtn" class="btn btn-danger" title="Pause or resume all trading bots">
                     <span>⏸</span> Pause All Bots
                 </button>
-                <button id="switchProfileBtn" class="btn btn-profile-switch" title="Switch between Paper and Live trading mode">
+                <button id="switchProfileBtn" class="btn btn-profile-switch" style="display: none;" title="Legacy fleet switch">
                     <span>🔄</span> Switch to LIVE
                 </button>
             </div>
@@ -133,6 +142,22 @@
                 📊 Stock Picker
             </a>
         </nav>
+
+        <!-- Portfolio Filter Bar (Phase 5) -->
+        <div class="portfolio-filter-bar" id="portfolioFilterBar">
+            <span class="portfolio-filter-label">Portfolio View:</span>
+            <div class="portfolio-filter-group" role="radiogroup" aria-label="Portfolio View">
+                <button type="button" class="portfolio-filter-btn" data-filter="live" id="filterBtnLive" onclick="setPortfolioFilter('live')">
+                    <span class="filter-dot live"></span> Live Portfolio (Real Money)
+                </button>
+                <button type="button" class="portfolio-filter-btn" data-filter="paper" id="filterBtnPaper" onclick="setPortfolioFilter('paper')">
+                    <span class="filter-dot paper"></span> Paper Incubator
+                </button>
+                <button type="button" class="portfolio-filter-btn active" data-filter="all" id="filterBtnAll" onclick="setPortfolioFilter('all')">
+                    <span class="filter-dot all"></span> All Bots
+                </button>
+            </div>
+        </div>
 
         <!-- Market Session Clock & Risk Controls Bar -->
         <div class="market-clock">
@@ -909,6 +934,123 @@
                         </button>
                         <button type="button" id="modal-confirm-reject-btn" class="sp-btn-modal-danger" onclick="confirmRejectLead()">
                             Confirm Rejection
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Graduate to Live Modal (Phase 5 / Issue #113) -->
+            <div id="graduateLiveModal" class="sp-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-graduate-title" style="display: none;">
+                <div class="sp-modal-container">
+                    <div class="sp-modal-header">
+                        <div>
+                            <h3 class="sp-modal-title" id="modal-graduate-title">
+                                🚀 Graduate <span id="modal-graduate-symbol" class="sp-symbol-highlight">-</span> to LIVE Trading
+                            </h3>
+                            <p class="sp-modal-subtitle">
+                                Switch bot to Interactive Brokers Live Gateway (Port 4001, Real Money).
+                            </p>
+                        </div>
+                        <button type="button" class="sp-modal-close-btn" onclick="closeGraduateModal()" aria-label="Close modal" title="Close (Esc)">✕</button>
+                    </div>
+
+                    <!-- Pre-flight Gates Checklist -->
+                    <div class="preflight-checklist" id="preflightChecklist">
+                        <h4 style="font-size: 0.85em; text-transform: uppercase; color: #94a3b8; margin: 0 0 8px 0; letter-spacing: 0.05em;">Mandatory Pre-Flight Gates:</h4>
+                        <div class="gate-item" id="gateFlatness">
+                            <span class="gate-status-icon" id="gateFlatnessIcon">⏳</span>
+                            <div class="gate-desc">
+                                <strong>Gate 1: 4-Layer Flatness Gate</strong>
+                                <div class="gate-detail" id="gateFlatnessDetail">Zero shares, zero options, flat on paper &amp; live gateways</div>
+                            </div>
+                        </div>
+                        <div class="gate-item" id="gateOrders">
+                            <span class="gate-status-icon" id="gateOrdersIcon">⏳</span>
+                            <div class="gate-desc">
+                                <strong>Gate 2: Pending Orders Gate</strong>
+                                <div class="gate-detail" id="gateOrdersDetail">Zero active orders in live IBKR openTrades()</div>
+                            </div>
+                        </div>
+                        <div class="gate-item" id="gateQuiescence">
+                            <span class="gate-status-icon" id="gateQuiescenceIcon">⏳</span>
+                            <div class="gate-desc">
+                                <strong>Gate 3: Execution Quiescence Gate</strong>
+                                <div class="gate-detail" id="gateQuiescenceDetail">Outside 15s bar boundary, no active crossover calculation</div>
+                            </div>
+                        </div>
+                        <div class="gate-item" id="gatePort">
+                            <span class="gate-status-icon" id="gatePortIcon">⏳</span>
+                            <div class="gate-desc">
+                                <strong>Gate 4: Client ID &amp; Port Verification</strong>
+                                <div class="gate-detail" id="gatePortDetail">Target port 4001 Client ID available without collision</div>
+                            </div>
+                        </div>
+                        <div class="gate-item" id="gateArchival">
+                            <span class="gate-status-icon" id="gateArchivalIcon">⏳</span>
+                            <div class="gate-desc">
+                                <strong>Gate 5: State Archival Gate</strong>
+                                <div class="gate-detail" id="gateArchivalDetail">Atomic archival of paper state before live activation</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="modal-graduate-alert" class="sp-modal-alert" style="display: none; margin-top: 12px; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); border-radius: 8px; padding: 10px 14px;">
+                        <div id="modal-graduate-alert-text" style="color: #fca5a5; font-size: 0.85em; line-height: 1.4;"></div>
+                    </div>
+
+                    <!-- Confirmation Controls -->
+                    <div class="sp-form-group" style="margin-top: 16px;">
+                        <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer; color: #f8fafc; font-size: 0.88em;">
+                            <input type="checkbox" id="modalConfirmLiveCheck" onchange="validateGraduateConfirmation()" style="margin-top: 3px;" />
+                            <span>I confirm that I want to switch this bot to <strong>REAL MONEY LIVE TRADING</strong> on Interactive Brokers port 4001.</span>
+                        </label>
+                    </div>
+                    <div class="sp-form-group" style="margin-top: 10px;">
+                        <label class="sp-form-label" style="font-size: 0.82em; color: #94a3b8;">Type <strong id="modalEchoSymbol" style="color: #38bdf8;">SYMBOL</strong> to confirm promotion:</label>
+                        <input type="text" id="modalEchoSymbolInput" class="sp-input" placeholder="Type symbol here..." oninput="validateGraduateConfirmation()" autocomplete="off" />
+                    </div>
+
+                    <div class="sp-modal-footer" style="margin-top: 20px;">
+                        <button type="button" class="sp-btn-modal-cancel" onclick="closeGraduateModal()">Cancel</button>
+                        <button type="button" id="modalConfirmGraduateBtn" class="sp-btn-modal-confirm" disabled onclick="executeGraduateLive()">
+                            🚀 Confirm Promotion to LIVE
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Emergency Flatten Confirmation Modal (Phase 5 / Issue #113) -->
+            <div id="emergencyFlattenModal" class="sp-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-flatten-title" style="display: none;">
+                <div class="sp-modal-container sp-modal-reject-container">
+                    <div class="sp-modal-header">
+                        <div>
+                            <h3 class="sp-modal-title danger" id="modal-flatten-title">
+                                🚨 Emergency Flatten &amp; Demote
+                            </h3>
+                            <p class="sp-modal-subtitle">
+                                Liquidate open positions for <strong id="modal-flatten-symbol" class="sp-symbol-highlight">-</strong> and demote to Paper mode.
+                            </p>
+                        </div>
+                        <button type="button" class="sp-modal-close-btn" onclick="closeEmergencyFlattenModal()" aria-label="Close modal" title="Close (Esc)">✕</button>
+                    </div>
+
+                    <div class="sp-modal-alert" style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); padding: 12px; border-radius: 8px; margin-bottom: 14px;">
+                        <div style="color: #fca5a5; font-size: 0.88em; line-height: 1.45;">
+                            <strong>WARNING:</strong> Open live positions detected! This will immediately place a MARKET LIQUIDATION ORDER on IBKR Live Gateway (Port 4001), await fills, verify flatness, archive live state, and restart on Paper Gateway (Port 4002).
+                        </div>
+                    </div>
+
+                    <div class="sp-form-group">
+                        <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer; color: #f8fafc; font-size: 0.88em;">
+                            <input type="checkbox" id="modalConfirmFlattenCheck" onchange="validateFlattenConfirmation()" style="margin-top: 3px;" />
+                            <span>I authorize immediate market liquidation of all live positions for this bot.</span>
+                        </label>
+                    </div>
+
+                    <div class="sp-modal-footer">
+                        <button type="button" class="sp-btn-modal-cancel" onclick="closeEmergencyFlattenModal()">Cancel</button>
+                        <button type="button" id="modalConfirmFlattenBtn" class="sp-btn-modal-danger" disabled onclick="executeEmergencyFlatten()">
+                            🚨 Liquidate &amp; Demote Now
                         </button>
                     </div>
                 </div>
@@ -2213,6 +2355,130 @@
             opacity: 1;
             transform: translateY(0) scale(1);
         }
+    }
+    /* Portfolio Filter Bar (Phase 5) */
+    .portfolio-filter-bar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 8px 16px;
+        background: rgba(15, 23, 42, 0.6);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 8px;
+        margin: 10px 0 16px 0;
+    }
+    .portfolio-filter-label {
+        font-size: 0.8rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        color: #94a3b8;
+        letter-spacing: 0.05em;
+    }
+    .portfolio-filter-group {
+        display: flex;
+        gap: 6px;
+    }
+    .portfolio-filter-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        font-size: 0.82rem;
+        font-weight: 500;
+        border-radius: 6px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(30, 41, 59, 0.5);
+        color: #cbd5e1;
+        cursor: pointer;
+        transition: all 0.15s ease;
+    }
+    .portfolio-filter-btn:hover {
+        background: rgba(51, 65, 85, 0.7);
+        color: #fff;
+    }
+    .portfolio-filter-btn.active {
+        background: #0284c7;
+        border-color: #38bdf8;
+        color: #fff;
+        font-weight: 600;
+        box-shadow: 0 0 10px rgba(56, 189, 248, 0.3);
+    }
+    .filter-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        display: inline-block;
+    }
+    .filter-dot.live { background: #10b981; }
+    .filter-dot.paper { background: #38bdf8; }
+    .filter-dot.all { background: #a855f7; }
+
+    /* Preflight Checklist (Phase 5) */
+    .preflight-checklist {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        background: rgba(15, 23, 42, 0.8);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 8px;
+        padding: 12px 14px;
+        margin-top: 10px;
+    }
+    .gate-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 6px 8px;
+        border-radius: 6px;
+        background: rgba(30, 41, 59, 0.4);
+        border-left: 3px solid #64748b;
+        transition: all 0.2s ease;
+    }
+    .gate-item.pass {
+        border-left-color: #10b981;
+        background: rgba(16, 185, 129, 0.08);
+    }
+    .gate-item.blocked {
+        border-left-color: #ef4444;
+        background: rgba(239, 68, 68, 0.12);
+    }
+    .gate-status-icon {
+        font-size: 1.1rem;
+        line-height: 1.2;
+    }
+    .gate-desc {
+        flex: 1;
+        font-size: 0.82rem;
+    }
+    .gate-detail {
+        font-size: 0.76rem;
+        color: #94a3b8;
+        margin-top: 2px;
+    }
+
+    /* Mode Badge Variations */
+    .mode-badge.live {
+        background: rgba(16, 185, 129, 0.18);
+        border-color: #10b981;
+        color: #34d399;
+    }
+    .mode-badge.offline {
+        background: rgba(239, 68, 68, 0.18);
+        border-color: #ef4444;
+        color: #f87171;
+    }
+    .btn-outline {
+        background: transparent;
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        color: #94a3b8;
+        padding: 6px 12px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.82rem;
+    }
+    .btn-outline:hover {
+        background: rgba(148, 163, 184, 0.1);
+        color: #fff;
     }
     </style>
 </body>

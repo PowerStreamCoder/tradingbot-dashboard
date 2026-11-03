@@ -153,14 +153,18 @@ async function loadBotConfig() {
             return false;
         }
 
-        // Build configuration
+        // Build configuration (Phase 5 / Issue #113)
         CONFIG = {
             botId: selectedBot.client_id,  // Use client_id as bot_id for Firestore queries
             symbol: selectedBot.symbol.toUpperCase(),  // Normalize symbol
             botName: selectedBot.name,
             strategy: selectedBot.strategy || 'unknown',
+            enabled: selectedBot.enabled !== false,
+            profile: selectedBot.profile || selectedBot.trading_mode || currentProfile || 'paper',
+            trading_mode: selectedBot.trading_mode || selectedBot.profile || currentProfile || 'paper',
+            is_overridden: !!selectedBot.is_overridden,
             isPaused: selectedBot.paused === true || selectedBot.status === 'paused',
-            tradingProfile: currentProfile,
+            tradingProfile: selectedBot.profile || selectedBot.trading_mode || currentProfile || 'paper',
             updateInterval: UPDATE_INTERVALS.BOT_OVERVIEW,
             chartUpdateInterval: UPDATE_INTERVALS.CHART,
             tablesUpdateInterval: UPDATE_INTERVALS.TABLES,
@@ -188,6 +192,7 @@ async function loadBotConfig() {
 
         // Update page title and symbol references
         updateSymbolReferences();
+        updatePerBotControls(selectedBot);
 
         return true;
 
@@ -211,6 +216,7 @@ async function loadBotConfig() {
  * @param {string} [profile] - Current trading mode ('paper' or 'live')
  */
 function populateBotSelector(activeBots, allBots, profile) {
+    window._lastBotsData = { activeBots, allBots };
     const selector = document.getElementById('botSelector');
     const customMenu = document.getElementById('customBotMenu');
     const customTrigger = document.getElementById('customBotSelect');
@@ -227,20 +233,32 @@ function populateBotSelector(activeBots, allBots, profile) {
     }
 
     const currentProfile = profile || _profileCache.value || 'paper';
-    const modeBadgeHtml = `<span class="custom-bot-option-mode ${currentProfile}">${currentProfile.toUpperCase()}</span>`;
+    const portfolioFilter = localStorage.getItem('portfolioFilter') || 'all';
 
     const savedBotId = localStorage.getItem('selectedBotId');
     const currentSelectedId = (CONFIG && CONFIG.botId) ? CONFIG.botId : (savedBotId ? parseInt(savedBotId) : (activeBots[0]?.client_id || 1));
 
+    // Filter bots according to selected portfolio scope
+    const filterBot = (b) => {
+        const mode = (b.profile || b.trading_mode || currentProfile || 'paper').toLowerCase();
+        if (portfolioFilter === 'live') return mode === 'live';
+        if (portfolioFilter === 'paper') return mode !== 'live';
+        return true;
+    };
+
+    const filteredActiveBots = activeBots.filter(filterBot);
+
     // Add enabled bots
     const isFleetPaused = localStorage.getItem('fleetPaused') === 'true';
-    if (activeBots.length > 0) {
-        activeBots.forEach(bot => {
+    if (filteredActiveBots.length > 0) {
+        filteredActiveBots.forEach(bot => {
+            const botMode = (bot.profile || bot.trading_mode || currentProfile || 'paper').toLowerCase();
+            const modeBadgeHtml = `<span class="custom-bot-option-mode ${botMode}">${botMode.toUpperCase()}</span>`;
             // 1. Native option (for fallback and test compatibility)
             const isPaused = bot.paused === true || bot.status === 'paused' || isFleetPaused;
             const option = document.createElement('option');
             option.value = bot.client_id;
-            option.textContent = `${bot.symbol} - ${bot.name}`;
+            option.textContent = `${bot.symbol} - ${bot.name} [${botMode.toUpperCase()}]`;
             if (isPaused) {
                 option.textContent += ' (paused)';
             }
@@ -293,11 +311,12 @@ function populateBotSelector(activeBots, allBots, profile) {
     }
 
     // Add disabled bots if any (grayed out, informational)
-    const disabledBots = allBots.filter(b => !b.enabled);
+    const disabledBots = allBots.filter(b => !b.enabled).filter(filterBot);
     if (disabledBots.length > 0) {
         const disabledGroup = document.createElement('optgroup');
         disabledGroup.label = '── Disabled ──';
         disabledBots.forEach(bot => {
+            const botMode = (bot.profile || bot.trading_mode || currentProfile || 'paper').toLowerCase();
             const option = document.createElement('option');
             option.value = bot.client_id;
             option.textContent = `${bot.symbol} - ${bot.name} (disabled)`;
@@ -320,6 +339,7 @@ function populateBotSelector(activeBots, allBots, profile) {
                         </div>
                     </div>
                     <div class="custom-bot-option-right">
+                        <span class="custom-bot-option-mode ${botMode}">${botMode.toUpperCase()}</span>
                         <span class="custom-bot-option-status-dot disabled"></span>
                     </div>
                 `;
@@ -471,6 +491,7 @@ function selectCustomBot(bot) {
             customIndicator.title = 'Active';
         }
     }
+    updatePerBotControls(bot);
     const selector = document.getElementById('botSelector');
     if (selector && selector.value !== bot.client_id.toString()) {
         selector.value = bot.client_id;
@@ -1398,6 +1419,24 @@ function attachEventListeners() {
         pauseBotBtn.addEventListener('click', handlePauseResumeBot);
     }
 
+    // Per-bot toggle enable/disable (Phase 5)
+    const botEnableToggleBtn = document.getElementById('botEnableToggleBtn');
+    if (botEnableToggleBtn) {
+        botEnableToggleBtn.addEventListener('click', handleToggleEnableBot);
+    }
+
+    // Per-bot Graduate / Demote (Phase 5)
+    const btnGraduateLive = document.getElementById('btnGraduateLive');
+    if (btnGraduateLive) {
+        btnGraduateLive.addEventListener('click', handleGraduateOrDemoteClick);
+    }
+
+    // Per-bot reset override (Phase 5)
+    const btnResetOverride = document.getElementById('btnResetOverride');
+    if (btnResetOverride) {
+        btnResetOverride.addEventListener('click', handleResetOverride);
+    }
+
     // Create Position button
     const createPositionBtn = document.getElementById('createPositionBtn');
     if (createPositionBtn) {
@@ -1651,16 +1690,19 @@ async function getCurrentProfile(forceRefresh = false) {
         if (response.ok) {
             const data = await response.json();
             _profileCache.value = data.profile || 'paper';
+            _profileCache.isOffline = false;
             _profileCache.timestamp = now;
             console.log(`[PROFILE] Fetched: ${_profileCache.value.toUpperCase()}`);
         } else {
-            console.warn(`[PROFILE] API returned ${response.status}, defaulting to PAPER`);
-            _profileCache.value = 'paper';
+            console.warn(`[PROFILE] API returned ${response.status} (VM unreachable/error)`);
+            _profileCache.value = 'offline';
+            _profileCache.isOffline = true;
             _profileCache.timestamp = now;
         }
     } catch (error) {
-        console.error('[PROFILE] Fetch failed, defaulting to PAPER:', error);
-        _profileCache.value = 'paper';
+        console.error('[PROFILE] Fetch failed (VM unreachable):', error);
+        _profileCache.value = 'offline';
+        _profileCache.isOffline = true;
         _profileCache.timestamp = now;
     }
 
@@ -1843,9 +1885,12 @@ async function handleProfileSwitch() {
 function updateModeIndicator(profile) {
     const badge = document.getElementById('modeBadge');
     if (badge) {
-        if (profile === 'live') {
-            // LIVE MODE: Red pulsing badge for high visibility
-            badge.textContent = '⚠️ LIVE MODE';
+        if (profile === 'offline' || _profileCache.isOffline) {
+            badge.textContent = '⚠️ VM OFFLINE / UNREACHABLE';
+            badge.className = 'mode-badge offline';
+        } else if (profile === 'live') {
+            // LIVE MODE: Green/Red pulsing badge for high visibility
+            badge.textContent = '🟢 LIVE TRADING (REAL MONEY)';
             badge.className = 'mode-badge live';
         } else {
             // PAPER MODE: Blue static badge
@@ -1858,16 +1903,438 @@ function updateModeIndicator(profile) {
     const customModePill = document.getElementById('customBotModePill');
     if (customModePill) {
         customModePill.className = `custom-bot-mode-pill ${profile}`;
-        customModePill.textContent = profile.toUpperCase();
+        customModePill.textContent = (profile || 'paper').toUpperCase();
     }
 
     // Update all mode badges in the custom bot dropdown menu
     document.querySelectorAll('.custom-bot-option-mode').forEach(el => {
         el.className = `custom-bot-option-mode ${profile}`;
-        el.textContent = profile.toUpperCase();
+        el.textContent = (profile || 'paper').toUpperCase();
     });
 
     console.log(`[MODE-INDICATOR] Updating badge to: ${profile}`);
+}
+
+/**
+ * Update per-bot controls (Phase 5 / Issue #113)
+ * Updates Enable/Disable button, Graduate/Demote button, and Reset Override button
+ */
+function updatePerBotControls(selectedBot) {
+    if (!selectedBot && CONFIG) {
+        selectedBot = {
+            name: CONFIG.botName,
+            symbol: CONFIG.symbol,
+            enabled: CONFIG.enabled !== false,
+            profile: CONFIG.profile || CONFIG.tradingProfile || 'paper',
+            is_overridden: !!CONFIG.is_overridden
+        };
+    }
+    if (!selectedBot) return;
+
+    const botName = selectedBot.name;
+    const botSymbol = (selectedBot.symbol || '').toUpperCase();
+    const isLive = (selectedBot.profile === 'live' || selectedBot.trading_mode === 'live');
+    const isEnabled = selectedBot.enabled !== false;
+    const isOverridden = !!selectedBot.is_overridden;
+
+    // 1. Update Mode Badge
+    updateModeIndicator(_profileCache.isOffline ? 'offline' : (isLive ? 'live' : 'paper'));
+
+    // 2. Update Enable / Disable Button
+    const enableBtn = document.getElementById('botEnableToggleBtn');
+    const enableIcon = document.getElementById('botEnableToggleIcon');
+    const enableText = document.getElementById('botEnableToggleText');
+    if (enableBtn) {
+        if (isEnabled) {
+            if (enableIcon) enableIcon.textContent = '⏸';
+            if (enableText) enableText.textContent = 'Disable Bot';
+            enableBtn.className = 'btn btn-action btn-warning';
+            enableBtn.title = `Disable ${botSymbol} bot at runtime`;
+        } else {
+            if (enableIcon) enableIcon.textContent = '▶️';
+            if (enableText) enableText.textContent = 'Enable Bot';
+            enableBtn.className = 'btn btn-action btn-success';
+            enableBtn.title = `Enable ${botSymbol} bot at runtime`;
+        }
+    }
+
+    // 3. Update Graduate / Demote Button
+    const gradBtn = document.getElementById('btnGraduateLive');
+    const gradIcon = document.getElementById('btnGraduateLiveIcon');
+    const gradText = document.getElementById('btnGraduateLiveText');
+    if (gradBtn) {
+        if (isLive) {
+            if (gradIcon) gradIcon.textContent = '🧪';
+            if (gradText) gradText.textContent = 'Demote to Paper';
+            gradBtn.className = 'btn btn-profile-switch switch-to-paper';
+            gradBtn.title = `Demote ${botSymbol} to paper trading`;
+        } else {
+            if (gradIcon) gradIcon.textContent = '🚀';
+            if (gradText) gradText.textContent = 'Graduate to Live';
+            gradBtn.className = 'btn btn-profile-switch switch-to-live';
+            gradBtn.title = `Graduate ${botSymbol} to Live real-money trading`;
+        }
+    }
+
+    // 4. Update Reset Override Button
+    const resetBtn = document.getElementById('btnResetOverride');
+    if (resetBtn) {
+        if (isOverridden) {
+            resetBtn.style.display = 'inline-flex';
+            resetBtn.title = `Reset ${botSymbol} runtime override to bots.json config baseline`;
+        } else {
+            resetBtn.style.display = 'none';
+        }
+    }
+}
+
+/**
+ * Toggle active bot enable/disable state at runtime (Phase 5 / Issue #113)
+ */
+async function handleToggleEnableBot() {
+    if (!CONFIG || !CONFIG.botName) {
+        showNotification('No active bot selected', 'error');
+        return;
+    }
+    const botName = CONFIG.botName;
+    const isCurrentlyEnabled = CONFIG.enabled !== false;
+    const action = isCurrentlyEnabled ? 'disable' : 'enable';
+    const actionDesc = isCurrentlyEnabled ? 'disabling' : 'enabling';
+
+    showNotification(`Requesting ${actionDesc} ${CONFIG.symbol}...`, 'info');
+
+    try {
+        const response = await fetch(`/api/bot-control/bots/${botName}/${action}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bot_name: botName })
+        });
+        const data = await response.json();
+        if (response.ok && data.status === 'success') {
+            showNotification(`✓ Bot ${CONFIG.symbol} ${action}d successfully`, 'success');
+            // Clear cache and reload
+            document.querySelectorAll('[data-last-content]').forEach(el => { delete el.dataset.lastContent; });
+            await loadBotConfig();
+            fetchData();
+        } else {
+            showNotification(`❌ Failed to ${action} bot: ${data.message || data.detail || 'Unknown error'}`, 'error');
+        }
+    } catch (err) {
+        showNotification(`❌ Error contacting bot control API: ${err.message}`, 'error');
+    }
+}
+
+/**
+ * Handle Graduate / Demote button click
+ */
+function handleGraduateOrDemoteClick() {
+    if (!CONFIG || !CONFIG.botName) return;
+    const isLive = (CONFIG.profile === 'live' || CONFIG.trading_mode === 'live');
+    if (isLive) {
+        handleDemoteBot();
+    } else {
+        openGraduateModal();
+    }
+}
+
+/**
+ * Open Graduate to Live modal with pre-flight check
+ */
+async function openGraduateModal() {
+    if (!CONFIG) return;
+    const modal = document.getElementById('graduateLiveModal');
+    const symEl = document.getElementById('modal-graduate-symbol');
+    const echoSymEl = document.getElementById('modalEchoSymbol');
+    const inputEl = document.getElementById('modalEchoSymbolInput');
+    const checkEl = document.getElementById('modalConfirmLiveCheck');
+    const alertEl = document.getElementById('modal-graduate-alert');
+    const confirmBtn = document.getElementById('modalConfirmGraduateBtn');
+
+    if (symEl) symEl.textContent = CONFIG.symbol;
+    if (echoSymEl) echoSymEl.textContent = CONFIG.symbol;
+    if (inputEl) inputEl.value = '';
+    if (checkEl) checkEl.checked = false;
+    if (confirmBtn) confirmBtn.disabled = true;
+    if (alertEl) alertEl.style.display = 'none';
+
+    // Reset gate indicators to pending
+    ['gateFlatness', 'gateOrders', 'gateQuiescence', 'gatePort', 'gateArchival'].forEach(id => {
+        const el = document.getElementById(id);
+        const icon = document.getElementById(id + 'Icon');
+        if (el) {
+            el.className = 'gate-item';
+        }
+        if (icon) icon.textContent = '⏳';
+    });
+
+    if (modal) modal.style.display = 'flex';
+
+    // Run preview preflight check on Gate 1 (flatness)
+    try {
+        const res = await fetch(`/api/bot-control/verify-flatness/${CONFIG.symbol}`);
+        const flatness = await res.json();
+        const gate1 = document.getElementById('gateFlatness');
+        const gate1Icon = document.getElementById('gateFlatnessIcon');
+        const gate1Detail = document.getElementById('gateFlatnessDetail');
+        if (res.ok && flatness.is_flat) {
+            if (gate1) gate1.className = 'gate-item pass';
+            if (gate1Icon) gate1Icon.textContent = '✅';
+            if (gate1Detail) gate1Detail.textContent = 'Flatness verified: 0 shares, 0 options across all layers';
+        } else {
+            if (gate1) gate1.className = 'gate-item blocked';
+            if (gate1Icon) gate1Icon.textContent = '❌';
+            if (gate1Detail) gate1Detail.textContent = flatness.blocking_reasons?.join(', ') || 'Position open or check failed';
+        }
+    } catch (e) {
+        console.warn('Pre-flight flatness check error:', e);
+    }
+}
+
+function closeGraduateModal() {
+    const modal = document.getElementById('graduateLiveModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function validateGraduateConfirmation() {
+    const checkEl = document.getElementById('modalConfirmLiveCheck');
+    const inputEl = document.getElementById('modalEchoSymbolInput');
+    const confirmBtn = document.getElementById('modalConfirmGraduateBtn');
+    if (!checkEl || !inputEl || !confirmBtn || !CONFIG) return;
+
+    const isChecked = checkEl.checked;
+    const isSymbolMatch = inputEl.value.trim().toUpperCase() === CONFIG.symbol.toUpperCase();
+    confirmBtn.disabled = !(isChecked && isSymbolMatch);
+}
+
+/**
+ * Execute promotion to Live with 5 pre-flight gates
+ */
+async function executeGraduateLive() {
+    if (!CONFIG || !CONFIG.botName) return;
+    const confirmBtn = document.getElementById('modalConfirmGraduateBtn');
+    const alertEl = document.getElementById('modal-graduate-alert');
+    const alertText = document.getElementById('modal-graduate-alert-text');
+    if (confirmBtn) {
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = 'Verifying Gates & Promoting...';
+    }
+    if (alertEl) alertEl.style.display = 'none';
+
+    try {
+        const response = await fetch(`/api/bot-control/bots/${CONFIG.botName}/promote`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                confirm_live: true,
+                symbol: CONFIG.symbol
+            })
+        });
+
+        const data = await response.json();
+        if (response.ok && data.status === 'success') {
+            showNotification(`🎉 ${CONFIG.symbol} successfully graduated to LIVE trading!`, 'success');
+            closeGraduateModal();
+            document.querySelectorAll('[data-last-content]').forEach(el => { delete el.dataset.lastContent; });
+            await loadBotConfig();
+            fetchData();
+        } else {
+            // Blocked by pre-flight gate or error
+            let errMsg = data.message || 'Promotion blocked by pre-flight gates.';
+            if (data.blocking_reasons && Array.isArray(data.blocking_reasons)) {
+                errMsg = '<strong>Promotion Blocked:</strong><ul style="margin: 6px 0 0 16px; padding: 0;">' +
+                    data.blocking_reasons.map(r => `<li>${r}</li>`).join('') + '</ul>';
+            }
+            if (alertText) alertText.innerHTML = errMsg;
+            if (alertEl) alertEl.style.display = 'block';
+
+            // Update gate item UI if gate failures are present
+            if (data.blocking_reasons) {
+                data.blocking_reasons.forEach(r => {
+                    if (r.includes('flatness') || r.includes('Gate 1')) {
+                        const g = document.getElementById('gateFlatness');
+                        if (g) g.className = 'gate-item blocked';
+                        const i = document.getElementById('gateFlatnessIcon');
+                        if (i) i.textContent = '❌';
+                    }
+                    if (r.includes('order') || r.includes('Gate 2')) {
+                        const g = document.getElementById('gateOrders');
+                        if (g) g.className = 'gate-item blocked';
+                        const i = document.getElementById('gateOrdersIcon');
+                        if (i) i.textContent = '❌';
+                    }
+                    if (r.includes('window') || r.includes('quiescence') || r.includes('Gate 3')) {
+                        const g = document.getElementById('gateQuiescence');
+                        if (g) g.className = 'gate-item blocked';
+                        const i = document.getElementById('gateQuiescenceIcon');
+                        if (i) i.textContent = '❌';
+                    }
+                    if (r.includes('collision') || r.includes('Client ID') || r.includes('Gate 4')) {
+                        const g = document.getElementById('gatePort');
+                        if (g) g.className = 'gate-item blocked';
+                        const i = document.getElementById('gatePortIcon');
+                        if (i) i.textContent = '❌';
+                    }
+                });
+            }
+        }
+    } catch (err) {
+        if (alertText) alertText.textContent = `Communication error: ${err.message}`;
+        if (alertEl) alertEl.style.display = 'block';
+    } finally {
+        if (confirmBtn) {
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = '🚀 Confirm Promotion to LIVE';
+        }
+    }
+}
+
+/**
+ * Handle Demote to Paper (Path A or prompts Path B on conflict)
+ */
+async function handleDemoteBot() {
+    if (!CONFIG || !CONFIG.botName) return;
+    showNotification(`Verifying flatness and demoting ${CONFIG.symbol}...`, 'info');
+
+    try {
+        const response = await fetch(`/api/bot-control/bots/${CONFIG.botName}/demote`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bot_name: CONFIG.botName })
+        });
+
+        const data = await response.json();
+        if (response.ok && data.status === 'success') {
+            showNotification(`✓ ${CONFIG.symbol} successfully demoted to Paper trading`, 'success');
+            document.querySelectorAll('[data-last-content]').forEach(el => { delete el.dataset.lastContent; });
+            await loadBotConfig();
+            fetchData();
+        } else if (response.status === 409) {
+            // Open positions exist - prompt for Emergency Flatten & Demote
+            openEmergencyFlattenModal();
+        } else {
+            showNotification(`❌ Demotion failed: ${data.message || data.detail || 'Unknown error'}`, 'error');
+        }
+    } catch (err) {
+        showNotification(`❌ Error contacting bot control API: ${err.message}`, 'error');
+    }
+}
+
+function openEmergencyFlattenModal() {
+    if (!CONFIG) return;
+    const modal = document.getElementById('emergencyFlattenModal');
+    const symEl = document.getElementById('modal-flatten-symbol');
+    const checkEl = document.getElementById('modalConfirmFlattenCheck');
+    const confirmBtn = document.getElementById('modalConfirmFlattenBtn');
+
+    if (symEl) symEl.textContent = CONFIG.symbol;
+    if (checkEl) checkEl.checked = false;
+    if (confirmBtn) confirmBtn.disabled = true;
+    if (modal) modal.style.display = 'flex';
+}
+
+function closeEmergencyFlattenModal() {
+    const modal = document.getElementById('emergencyFlattenModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function validateFlattenConfirmation() {
+    const checkEl = document.getElementById('modalConfirmFlattenCheck');
+    const confirmBtn = document.getElementById('modalConfirmFlattenBtn');
+    if (checkEl && confirmBtn) {
+        confirmBtn.disabled = !checkEl.checked;
+    }
+}
+
+/**
+ * Execute Emergency Flatten & Demote (Path B)
+ */
+async function executeEmergencyFlatten() {
+    if (!CONFIG || !CONFIG.botName) return;
+    const confirmBtn = document.getElementById('modalConfirmFlattenBtn');
+    if (confirmBtn) {
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = 'Liquidating on Port 4001 & Demoting...';
+    }
+
+    try {
+        const response = await fetch(`/api/bot-control/bots/${CONFIG.botName}/emergency-flatten-and-demote`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                confirm_emergency_flatten: true,
+                symbol: CONFIG.symbol
+            })
+        });
+
+        const data = await response.json();
+        if (response.ok && data.status === 'success') {
+            showNotification(`🚨 Emergency flatten completed. ${CONFIG.symbol} demoted to Paper.`, 'success');
+            closeEmergencyFlattenModal();
+            document.querySelectorAll('[data-last-content]').forEach(el => { delete el.dataset.lastContent; });
+            await loadBotConfig();
+            fetchData();
+        } else {
+            showNotification(`❌ Emergency flatten failed: ${data.message || 'Check IBKR gateway logs'}`, 'error');
+        }
+    } catch (err) {
+        showNotification(`❌ Communication error: ${err.message}`, 'error');
+    } finally {
+        if (confirmBtn) {
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = '🚨 Liquidate & Demote Now';
+        }
+    }
+}
+
+/**
+ * Reset bot runtime override to config baseline (M8)
+ */
+async function handleResetOverride() {
+    if (!CONFIG || !CONFIG.botName) return;
+    if (!confirm(`Reset ${CONFIG.symbol} runtime override to bots.json configuration baseline?`)) return;
+
+    showNotification(`Resetting override for ${CONFIG.symbol}...`, 'info');
+    try {
+        const response = await fetch(`/api/bot-control/bots/${CONFIG.botName}/reset-override`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bot_name: CONFIG.botName })
+        });
+        const data = await response.json();
+        if (response.ok && data.status === 'success') {
+            showNotification(`✓ ${CONFIG.symbol} override reset to config baseline`, 'success');
+            document.querySelectorAll('[data-last-content]').forEach(el => { delete el.dataset.lastContent; });
+            await loadBotConfig();
+            fetchData();
+        } else {
+            showNotification(`❌ Reset failed: ${data.message || data.detail}`, 'error');
+        }
+    } catch (err) {
+        showNotification(`❌ Communication error: ${err.message}`, 'error');
+    }
+}
+
+/**
+ * Portfolio Filter Bar Handler (Phase 5)
+ */
+function setPortfolioFilter(mode) {
+    if (!['live', 'paper', 'all'].includes(mode)) return;
+    localStorage.setItem('portfolioFilter', mode);
+
+    ['live', 'paper', 'all'].forEach(m => {
+        const btn = document.getElementById(`filterBtn${m.charAt(0).toUpperCase() + m.slice(1)}`);
+        if (btn) {
+            if (m === mode) btn.classList.add('active');
+            else btn.classList.remove('active');
+        }
+    });
+
+    // Re-populate bot selector to filter visible bots
+    if (window._lastBotsData) {
+        populateBotSelector(window._lastBotsData.activeBots, window._lastBotsData.allBots);
+    }
+    // Refresh trade history table to reflect filtered mode
+    updateTradeHistory();
 }
 
 /**
@@ -3862,13 +4329,17 @@ async function updateTradeHistory() {
         const trades = Array.isArray(data) ? data : (data.trades || []);
         console.log(`[TRADE HISTORY] Total trades fetched: ${trades.length}`);
 
-        // Filter by current profile mode AND current bot's symbol
+        // Filter by portfolio scope (live vs paper vs all) AND current bot's symbol (Phase 5)
+        const portfolioFilter = localStorage.getItem('portfolioFilter') || 'all';
         const filteredTrades = trades.filter(trade => {
             const tradeMode = trade.trading_mode || 'paper';
             const tradeSymbol = (trade.symbol || trade.analysis_metadata?.symbol || '').toUpperCase();
-            return tradeMode === currentProfile && tradeSymbol === CONFIG.symbol;
+            if (CONFIG && CONFIG.symbol && tradeSymbol !== CONFIG.symbol) return false;
+            if (portfolioFilter === 'live') return tradeMode === 'live';
+            if (portfolioFilter === 'paper') return tradeMode === 'paper';
+            return true;
         });
-        console.log(`[TRADE HISTORY] Filtered to ${filteredTrades.length} ${currentProfile.toUpperCase()} trades for ${CONFIG.symbol}`);
+        console.log(`[TRADE HISTORY] Filtered to ${filteredTrades.length} trades (${portfolioFilter.toUpperCase()} scope) for ${CONFIG.symbol}`);
 
         // Display filtered trades (last 25)
         const allTrades = filteredTrades.slice(0, 25);

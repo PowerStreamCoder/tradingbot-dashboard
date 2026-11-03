@@ -29,6 +29,7 @@ import os
 import re
 import json
 import time
+import hmac
 
 try:
     from dotenv import load_dotenv
@@ -724,9 +725,16 @@ async def check_access_code(request: Request, call_next):
         request.url.path == "/api/learning-candidates/stats" or  # Allow learning stats (GET)
         request.url.path.startswith("/api/option-events/") or  # Allow option events API for modal
         request.url.path == "/api/bot-control/current-profile" or  # Allow read-only profile inspection
+        request.url.path.startswith("/api/bot-control/verify-flatness/") or  # Allow read-only flatness inspection
+        request.url.path.startswith("/api/verify-flatness/") or  # Allow read-only flatness inspection
         request.url.path in MACHINE_WRITE_PATHS or  # Allow bot-internal writes (see MACHINE_WRITE_PATHS)
         (request.method in ("OPTIONS",))):  # Allow CORS preflight
         # Allow bot POST requests, health checks, logs, learning endpoints, option events, and bot control without authentication
+        return await call_next(request)
+
+    # Machine / API client authorization via BOT_CONTROL_API_KEY
+    api_key = request.headers.get("X-API-Key")
+    if api_key and BOT_CONTROL_API_KEY and hmac.compare_digest(api_key.strip(), BOT_CONTROL_API_KEY.strip()):
         return await call_next(request)
 
     # Check if session cookie exists
@@ -1450,10 +1458,30 @@ async def get_bot_configs():
     try:
         # Use cached loader with version tracking
         config = load_bot_configs()
+        bots = [dict(b) for b in config.get("bots", [])]
+
+        # Merge with runtime state overrides from Firestore mirror if available (Issue #113)
+        if dashboard_data and hasattr(dashboard_data, "db") and dashboard_data.db:
+            try:
+                runtime_docs = dashboard_data.db.collection('bot_runtime_controls').stream()
+                overrides = {doc.id: doc.to_dict() for doc in runtime_docs}
+                for b in bots:
+                    b_name = b.get("name")
+                    if b_name and b_name in overrides:
+                        ov = overrides[b_name]
+                        if "enabled" in ov:
+                            b["enabled"] = ov["enabled"]
+                        if "profile" in ov:
+                            b["profile"] = ov["profile"]
+                        if "trading_mode" in ov:
+                            b["trading_mode"] = ov["trading_mode"]
+                        b["is_overridden"] = True
+            except Exception as e:
+                logger.debug(f"Could not merge bot_runtime_controls: {e}")
 
         # Return bots list with version info
         return {
-            "bots": config.get("bots", []),
+            "bots": bots,
             "version": config.get("version", 0),
             "updated_at": config.get("updated_at", datetime.now().isoformat())
         }
@@ -2850,13 +2878,17 @@ async def get_current_profile():
             return data
 
     except httpx.HTTPError as e:
-        logger.warning(f"[PROFILE] VM API unreachable: {str(e)} - Defaulting to 'paper' mode")
-        # Fallback to paper mode (safer default when VM is unreachable)
-        return {"profile": "paper", "source": "fallback", "vm_unreachable": True}
+        logger.error(f"[PROFILE] VM Bot Control API unreachable: {e}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"VM Bot Control API unreachable: {e}"
+        )
     except Exception as e:
-        logger.warning(f"[PROFILE] Unexpected error: {str(e)} - Defaulting to 'paper' mode")
-        # Fallback to paper mode
-        return {"profile": "paper", "source": "fallback", "error": str(e)}
+        logger.error(f"[PROFILE] Unexpected error communicating with VM: {e}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"VM Bot Control API unreachable: {e}"
+        )
 
 @app.post("/api/bot-control/switch-profile")
 async def switch_profile(request: Request):
@@ -3191,6 +3223,139 @@ async def get_profile_audit(limit: int = 50):
 # This endpoint checked Firestore heartbeats for old nvda-bot/msft-bot services
 # Now using bot overview data directly in frontend (nvda_focus.js)
 # for real-time bot status checks
+
+# ============================================================================
+#  Per-Bot Runtime Control & Promotion/Demotion Proxy Endpoints (Phase 5 / Issue #113)
+# ============================================================================
+
+def _validate_bot_name(bot_name: str) -> str:
+    """Ensure bot_name contains only alphanumeric characters, underscores, and dashes."""
+    if not bot_name or not re.match(r'^[a-zA-Z0-9_\-]+$', bot_name):
+        raise HTTPException(status_code=400, detail=f"Invalid bot name format: {bot_name}")
+    return bot_name
+
+
+async def _proxy_to_bot_control(
+    method: str,
+    path: str,
+    json_data: Optional[Dict[str, Any]] = None,
+    timeout: float = 30.0,
+) -> Any:
+    """Forward a request to the VM Bot Control API with authentication headers.
+
+    Raises HTTPException(502) if VM is unreachable (Issue #97 / AC2) or forwards
+    the VM's status code and error details.
+    """
+    base_url = BOT_CONTROL_API_URL.rstrip('/')
+    target_url = f"{base_url}{path}"
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.request(
+                method=method,
+                url=target_url,
+                headers=_bot_control_headers(),
+                json=json_data,
+            )
+            # Pass through non-2xx status codes with their JSON payload intact
+            if response.is_error:
+                try:
+                    payload = response.json()
+                    return JSONResponse(status_code=response.status_code, content=payload)
+                except Exception:
+                    return JSONResponse(status_code=response.status_code, content={"detail": response.text})
+            return response.json()
+    except httpx.HTTPError as exc:
+        logger.error(f"[BOT-CONTROL-PROXY] VM unreachable at {target_url}: {exc}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"VM Bot Control API unreachable: {exc}"
+        )
+    except Exception as exc:
+        logger.error(f"[BOT-CONTROL-PROXY] Unexpected error contacting VM: {exc}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"VM Bot Control API error: {exc}"
+        )
+
+
+@app.post("/api/bot-control/bots/{bot_name}/enable")
+async def proxy_enable_bot(bot_name: str, request: Request):
+    """Proxy enable request to VM bot control API."""
+    _validate_bot_name(bot_name)
+    data = None
+    try:
+        data = await request.json()
+    except Exception:
+        pass
+    return await _proxy_to_bot_control("POST", f"/api/bot-control/bots/{bot_name}/enable", json_data=data)
+
+
+@app.post("/api/bot-control/bots/{bot_name}/disable")
+async def proxy_disable_bot(bot_name: str, request: Request):
+    """Proxy disable request to VM bot control API."""
+    _validate_bot_name(bot_name)
+    data = None
+    try:
+        data = await request.json()
+    except Exception:
+        pass
+    return await _proxy_to_bot_control("POST", f"/api/bot-control/bots/{bot_name}/disable", json_data=data)
+
+
+@app.post("/api/bot-control/bots/{bot_name}/reset-override")
+async def proxy_reset_bot_override(bot_name: str, request: Request):
+    """Proxy reset-override request to VM bot control API."""
+    _validate_bot_name(bot_name)
+    data = None
+    try:
+        data = await request.json()
+    except Exception:
+        pass
+    return await _proxy_to_bot_control("POST", f"/api/bot-control/bots/{bot_name}/reset-override", json_data=data)
+
+
+@app.post("/api/bot-control/bots/{bot_name}/promote")
+async def proxy_promote_bot(bot_name: str, request: Request):
+    """Proxy promote request with 5 pre-flight gates to VM bot control API."""
+    _validate_bot_name(bot_name)
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Missing JSON body for promote")
+    return await _proxy_to_bot_control("POST", f"/api/bot-control/bots/{bot_name}/promote", json_data=data, timeout=30.0)
+
+
+@app.post("/api/bot-control/bots/{bot_name}/demote")
+async def proxy_demote_bot(bot_name: str, request: Request):
+    """Proxy demote request (Path A: flat demotion) to VM bot control API."""
+    _validate_bot_name(bot_name)
+    data = None
+    try:
+        data = await request.json()
+    except Exception:
+        pass
+    return await _proxy_to_bot_control("POST", f"/api/bot-control/bots/{bot_name}/demote", json_data=data, timeout=30.0)
+
+
+@app.post("/api/bot-control/bots/{bot_name}/emergency-flatten-and-demote")
+async def proxy_emergency_flatten_bot(bot_name: str, request: Request):
+    """Proxy emergency flatten & demote request (Path B) to VM bot control API."""
+    _validate_bot_name(bot_name)
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Missing JSON body for emergency flatten")
+    return await _proxy_to_bot_control("POST", f"/api/bot-control/bots/{bot_name}/emergency-flatten-and-demote", json_data=data, timeout=60.0)
+
+
+@app.get("/api/bot-control/verify-flatness/{symbol}")
+@app.get("/api/verify-flatness/{symbol}")
+async def proxy_verify_flatness(symbol: str):
+    """Proxy flatness verification check to VM bot control API."""
+    clean_sym = symbol.strip().upper()
+    if not clean_sym.isalnum():
+        raise HTTPException(status_code=400, detail=f"Invalid symbol: {symbol}")
+    return await _proxy_to_bot_control("GET", f"/api/verify-flatness/{clean_sym}", timeout=15.0)
 
 
 # ============================================================================
