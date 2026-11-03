@@ -33,11 +33,12 @@ def auth_client():
 @pytest.fixture
 def api_key_client(monkeypatch):
     """Client authenticated via BOT_CONTROL_API_KEY header."""
-    monkeypatch.setenv("BOT_CONTROL_API_KEY", "phase5-test-secret-key-999")
+    mock_token = "dummy-test-token"
+    monkeypatch.setenv("BOT_CONTROL_API_KEY", mock_token)
     import main
-    main.BOT_CONTROL_API_KEY = "phase5-test-secret-key-999"
+    main.BOT_CONTROL_API_KEY = mock_token
     client = TestClient(app)
-    client.headers.update({"X-API-Key": "phase5-test-secret-key-999"})
+    client.headers.update({"X-API-Key": mock_token})
     yield client
 
 
