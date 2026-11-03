@@ -143,22 +143,6 @@
             </a>
         </nav>
 
-        <!-- Portfolio Filter Bar (Phase 5) -->
-        <div class="portfolio-filter-bar" id="portfolioFilterBar">
-            <span class="portfolio-filter-label">Portfolio View:</span>
-            <div class="portfolio-filter-group" role="radiogroup" aria-label="Portfolio View">
-                <button type="button" class="portfolio-filter-btn" data-filter="live" id="filterBtnLive" onclick="setPortfolioFilter('live')">
-                    <span class="filter-dot live"></span> Live Portfolio (Real Money)
-                </button>
-                <button type="button" class="portfolio-filter-btn" data-filter="paper" id="filterBtnPaper" onclick="setPortfolioFilter('paper')">
-                    <span class="filter-dot paper"></span> Paper Incubator
-                </button>
-                <button type="button" class="portfolio-filter-btn active" data-filter="all" id="filterBtnAll" onclick="setPortfolioFilter('all')">
-                    <span class="filter-dot all"></span> All Bots
-                </button>
-            </div>
-        </div>
-
         <!-- Market Session Clock & Risk Controls Bar -->
         <div class="market-clock">
             <!-- Risk Controls (Left Side) - 2x3 Grid -->
@@ -545,6 +529,20 @@
                 <div class="tile-title-group">
                     <h2>Trade History</h2>
                     <span class="section-switch-badge" id="switchBadge-tradeHistory" style="display: none;"></span>
+                </div>
+                <div class="trade-history-mode-filter" id="tradeHistoryModeFilter">
+                    <span class="trade-history-filter-label">Mode:</span>
+                    <div class="portfolio-filter-group" role="radiogroup" aria-label="Trade History Mode">
+                        <button type="button" class="portfolio-filter-btn" data-filter="live" id="filterBtnLive" onclick="setPortfolioFilter('live')">
+                            <span class="filter-dot live"></span> Live
+                        </button>
+                        <button type="button" class="portfolio-filter-btn" data-filter="paper" id="filterBtnPaper" onclick="setPortfolioFilter('paper')">
+                            <span class="filter-dot paper"></span> Paper
+                        </button>
+                        <button type="button" class="portfolio-filter-btn active" data-filter="all" id="filterBtnAll" onclick="setPortfolioFilter('all')">
+                            <span class="filter-dot all"></span> All
+                        </button>
+                    </div>
                 </div>
                 <span class="trade-count" id="tradeCount">Last 25 trades</span>
             </div>
@@ -2357,6 +2355,18 @@
         }
     }
     /* Portfolio Filter Bar (Phase 5) */
+    .trade-history-mode-filter {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .trade-history-filter-label {
+        font-size: 0.8rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        color: #94a3b8;
+        letter-spacing: 0.05em;
+    }
     .portfolio-filter-bar {
         display: flex;
         align-items: center;
