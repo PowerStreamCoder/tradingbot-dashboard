@@ -205,6 +205,7 @@ def test_stockpicker_core_issue95_branches(monkeypatch):
     monkeypatch.setenv("FINNHUB_API_KEY", "mock_key")
 
     # 4. fetch_alphavantage_news branches
+    monkeypatch.setenv("ALPHAVANTAGE_API_KEY", "av_mock_key")
     # Rate limit Information note
     with patch("stockpicker.core.safe_get", return_value={"Information": "Rate limit exceeded"}):
         assert core.fetch_alphavantage_news("2026-11-01T00:00:00Z") == []
