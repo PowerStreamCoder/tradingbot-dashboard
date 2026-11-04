@@ -338,6 +338,16 @@ def test_stockpicker_core_issue95_branches(monkeypatch):
     )
     assert "Earnings Calendar" in dossier_stock["missing_sources"]
 
+    # 10. get_finnhub_insider_trades moderate buy and sell branches
+    monkeypatch.setenv("FINNHUB_API_KEY", "mock_key")
+    with patch("stockpicker.core.safe_get", return_value={"data": [{"change": 15000, "transactionPrice": 1.0, "transactionCode": "P", "name": "Buyer"}]}):
+        r_buy = core.get_finnhub_insider_trades("NVDA")
+        assert "insider_buying" in r_buy["reason"]
+
+    with patch("stockpicker.core.safe_get", return_value={"data": [{"change": -150000, "transactionPrice": 1.0, "transactionCode": "S", "name": "Seller"}]}):
+        r_sell = core.get_finnhub_insider_trades("NVDA")
+        assert "insider_selling" in r_sell["reason"]
+
 
 # ============================================================================
 # 6. STOCKPICKER/RUNNER.PY
@@ -611,8 +621,14 @@ def test_main_bot_parameters_and_execution_metrics():
         metrics = dashboard_data._load_execution_metrics(limit=10)
         assert len(metrics) == 1
 
-    # execution_metrics_ref is None
+    # execution_metrics_ref is None or error
     with patch.object(dashboard_data, "execution_metrics_ref", None):
+        assert dashboard_data._load_execution_metrics(limit=10) == []
+
+    mock_err_ref = MagicMock()
+    mock_err_ref.order_by.side_effect = Exception("err")
+    mock_err_ref.limit.side_effect = Exception("err")
+    with patch.object(dashboard_data, "execution_metrics_ref", mock_err_ref):
         assert dashboard_data._load_execution_metrics(limit=10) == []
 
 
@@ -752,3 +768,35 @@ def test_main_stockpicker_concurrency_and_provision_branches(auth_client):
          patch("stockpicker.sentinel.is_sentinel_enabled", return_value=True):
         res_toggle = client.post("/api/stock-picks/sentinel/toggle", json={"enabled": True})
         assert res_toggle.status_code == 200
+
+
+def test_main_dashboard_data_initialization_branches():
+    # 1. Success path
+    mock_client = MagicMock()
+    mock_doc = MagicMock(exists=True)
+    mock_doc.id = "trade_doc_1"
+    mock_doc.to_dict.return_value = {
+        "analysis_metadata": {"trade_id": "T123"},
+        "timestamp": "2026-11-04T10:00:00Z",
+        "symbol": "AAPL",
+        "profitLoss": 50.0,
+    }
+    mock_client.collection.return_value.document.return_value.get.return_value = MagicMock(
+        exists=True, to_dict=lambda: {"data": {"bot1": {}}}
+    )
+    mock_client.collection.return_value.order_by.return_value.limit.return_value.stream.return_value = [mock_doc]
+    mock_client.collection.return_value.stream.return_value = []
+
+    with patch("main.firestore.Client", return_value=mock_client):
+        dd = main.DashboardData()
+        assert "bot1" in dd.bot_data
+        assert len(dd.trades) == 1
+        assert dd.trades[0]["id"] == "trade_doc_1"
+        assert dd.trades[0]["trade_id"] == "T123"
+
+    # 2. Failure path (offline / CI environment)
+    with patch("main.firestore.Client", side_effect=Exception("fs offline")):
+        dd_fail = main.DashboardData()
+        assert dd_fail.bot_data == {}
+        assert dd_fail.db is not None
+
