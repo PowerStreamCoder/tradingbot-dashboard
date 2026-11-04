@@ -424,7 +424,9 @@ def test_load_bot_configs_merges_provisioned_bots_from_firestore(tmp_path):
         _bot_config_cache['config'] = None
         _bot_config_cache['mtime'] = None
 
+    mock_stat = MagicMock(st_mtime=12345.0)
     with patch("os.path.exists", return_value=True), \
+         patch("os.stat", return_value=mock_stat), \
          patch("builtins.open", mock_open(read_data=json.dumps(fake_config))), \
          patch.object(dashboard_data, "stock_picks_ref", mock_stock_ref):
         cfg = load_bot_configs()

@@ -182,6 +182,7 @@ def test_stockpicker_core_issue95_branches(monkeypatch):
     assert "internal.local" in hdrs["User-Agent"]
 
     # 2. fetch_finnhub_news error branches
+    monkeypatch.setenv("FINNHUB_API_KEY", "mock_key")
     mock_resp = MagicMock(status_code=200)
     mock_resp.json.return_value = [
         # invalid pub_unix string
@@ -201,6 +202,7 @@ def test_stockpicker_core_issue95_branches(monkeypatch):
     monkeypatch.delenv("FINNHUB_API_KEY", raising=False)
     insider = core.get_finnhub_insider_trades("AAPL")
     assert insider["insider_score"] == 0.0
+    monkeypatch.setenv("FINNHUB_API_KEY", "mock_key")
 
     # 4. fetch_alphavantage_news branches
     # Rate limit Information note

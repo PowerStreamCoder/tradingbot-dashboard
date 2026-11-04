@@ -324,11 +324,14 @@ def load_bot_configs():
 
     with _bot_config_cache['lock']:
         try:
-            stat = os.stat(bots_config_path)
-            current_mtime = stat.st_mtime
+            try:
+                stat = os.stat(bots_config_path)
+                current_mtime = stat.st_mtime
+            except OSError:
+                current_mtime = datetime.now().timestamp()
 
             # Return cached config if file hasn't changed
-            if _bot_config_cache['config'] is not None and _bot_config_cache['mtime'] == current_mtime:
+            if _bot_config_cache['config'] is not None and current_mtime and _bot_config_cache['mtime'] == current_mtime:
                 return _bot_config_cache['config']
 
             # Load fresh config
