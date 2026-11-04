@@ -90,7 +90,8 @@ class TestDashboardConfigAndData:
             _bot_config_cache['config'] = None
             _bot_config_cache['mtime'] = None
 
-        with patch("os.path.exists", return_value=True), patch("builtins.open", mock_open(read_data="{broken json")):
+        mock_stat = MagicMock(st_mtime=12345.0)
+        with patch("os.path.exists", return_value=True), patch("os.stat", return_value=mock_stat), patch("builtins.open", mock_open(read_data="{broken json")):
             with pytest.raises(json.JSONDecodeError):
                 load_bot_configs()
 
