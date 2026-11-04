@@ -42,7 +42,7 @@ jobs:
 
       - name: Run unit tests
         run: |
-          pytest tests/ -n auto -v --cov --cov-report=term-missing || echo "⚠️  No tests found - skipping"
+          pytest tests/ -n auto -v --cov --cov-report=term-missing
 
       - name: Lint code
         run: |

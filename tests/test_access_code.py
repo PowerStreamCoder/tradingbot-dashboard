@@ -338,6 +338,45 @@ class TestGoogleAuthenticatorTOTP:
             == f"otpauth://totp/TradingDashboard:operator?secret={test_key}&issuer=TradingDashboard"
         )
 
+    def test_edge_cases_and_fallbacks(self):
+        # Empty secrets in get_totp_secret and totp_code
+        assert ac.get_totp_secret(None, None) == ""
+        assert ac.totp_code("") == ""
+
+        # for_time as naive datetime
+        naive_dt = datetime(2026, 1, 1, 12, 0, 0)
+        secret_b32 = ac.get_totp_secret("test-secret")
+        code_naive = ac.totp_code(secret_b32, for_time=naive_dt)
+        assert len(code_naive) == 6
+
+        # for_time as invalid type (falls back to time.time())
+        code_invalid_time = ac.totp_code(secret_b32, for_time=["not", "a", "time"])
+        assert len(code_invalid_time) == 6
+
+        # Base32 padding with key length % 8 != 0
+        pad_secret = "MZXW6YTBOI"  # length 10 % 8 = 2
+        code_pad = ac.totp_code(pad_secret, for_time=1700000000)
+        assert len(code_pad) == 6
+
+        # verify_totp edge cases
+        assert ac.verify_totp(None, secret_b32) is False
+        assert ac.verify_totp("123", secret_b32) is False
+        assert ac.verify_totp("ABCDEF", secret_b32) is False
+        assert ac.verify_totp("123456", "") is False
+
+        # verify_totp now as int/float
+        valid_code = ac.totp_code(secret_b32, for_time=1700000000)
+        assert ac.verify_totp(valid_code, secret_b32, now=1700000000) is True
+
+        # verify_totp now as naive datetime
+        valid_code_dt = ac.totp_code(secret_b32, for_time=naive_dt)
+        assert ac.verify_totp(valid_code_dt, secret_b32, now=naive_dt) is True
+
+        # verify_totp now as invalid type (falls back to time.time())
+        curr_code = ac.totp_code(secret_b32)
+        assert ac.verify_totp(curr_code, secret_b32, now=object()) is True
+
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

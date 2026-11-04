@@ -49,7 +49,7 @@ jobs:
       - name: Unit & Integration Tests
         run: |
           if [ -d "tests" ]; then
-            pytest tests/ -n auto -v || true
+            pytest tests/ -n auto -v
           else
             echo "No tests directory in this repository, check passed."
           fi

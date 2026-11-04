@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 try:
     from dotenv import load_dotenv
     load_dotenv()
-except ImportError:
+except ImportError:  # pragma: no cover
     pass
 
 UTC = timezone.utc
