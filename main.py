@@ -1489,6 +1489,26 @@ async def get_bot_configs():
             except Exception as e:
                 logger.debug(f"Could not merge bot_runtime_controls: {e}")
 
+            # Merge with live trading / paused status from Firestore bot_status
+            try:
+                status_docs = dashboard_data.db.collection('bot_status').stream()
+                statuses = {}
+                for doc in status_docs:
+                    data = doc.to_dict() if hasattr(doc, "to_dict") else {}
+                    if isinstance(data, dict):
+                        statuses[doc.id.lower()] = data
+                for b in bots:
+                    sym = (b.get("symbol") or "").lower()
+                    name = (b.get("name") or "").lower()
+                    st = statuses.get(sym) or statuses.get(name)
+                    if st and "is_trading" in st:
+                        is_trading = bool(st.get("is_trading"))
+                        b["is_trading"] = is_trading
+                        b["paused"] = not is_trading
+                        b["status"] = "active" if is_trading else "paused"
+            except Exception as e:
+                logger.debug(f"Could not merge bot_status: {e}")
+
         # Return bots list with version info
         return {
             "bots": bots,
@@ -2615,6 +2635,14 @@ async def restart_bots():
             )
             if response.is_success:
                 data = response.json()
+                # Update Firestore bot_status for active bots to mark is_trading: True
+                try:
+                    if dashboard_data and hasattr(dashboard_data, "db") and dashboard_data.db:
+                        status_docs = dashboard_data.db.collection('bot_status').stream()
+                        for sdoc in status_docs:
+                            sdoc.reference.update({'is_trading': True, 'updated_at': datetime.now()})
+                except Exception as fe:
+                    logger.warning(f"Could not update bot_status is_trading to True on restart: {fe}")
                 return {"status": data.get("status", "success"), "message": data.get("message", "Bots restarted")}
             else:
                 try:

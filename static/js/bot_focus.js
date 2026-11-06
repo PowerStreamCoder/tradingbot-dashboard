@@ -163,7 +163,7 @@ async function loadBotConfig() {
             profile: selectedBot.profile || selectedBot.trading_mode || currentProfile || 'paper',
             trading_mode: selectedBot.trading_mode || selectedBot.profile || currentProfile || 'paper',
             is_overridden: !!selectedBot.is_overridden,
-            isPaused: selectedBot.paused === true || selectedBot.status === 'paused',
+            isPaused: selectedBot.paused === true || selectedBot.status === 'paused' || (selectedBot.is_trading === false) || (localStorage.getItem('fleetPaused') === 'true'),
             tradingProfile: selectedBot.profile || selectedBot.trading_mode || currentProfile || 'paper',
             updateInterval: UPDATE_INTERVALS.BOT_OVERVIEW,
             chartUpdateInterval: UPDATE_INTERVALS.CHART,
@@ -247,7 +247,7 @@ function populateBotSelector(activeBots, allBots, profile) {
             const botMode = (bot.profile || bot.trading_mode || currentProfile || 'paper').toLowerCase();
             const modeBadgeHtml = `<span class="custom-bot-option-mode ${botMode}">${botMode.toUpperCase()}</span>`;
             // 1. Native option (for fallback and test compatibility)
-            const isPaused = bot.paused === true || bot.status === 'paused' || isFleetPaused;
+            const isPaused = bot.paused === true || bot.status === 'paused' || (bot.is_trading === false) || isFleetPaused;
             const option = document.createElement('option');
             option.value = bot.client_id;
             option.textContent = `${bot.symbol} - ${bot.name} [${botMode.toUpperCase()}]`;
@@ -271,9 +271,11 @@ function populateBotSelector(activeBots, allBots, profile) {
                 const symClass = bot.symbol.toLowerCase();
                 const stratText = bot.strategy === 'sma_crossover' ? 'SMA 5/20 Crossover' : (bot.strategy || 'Trend Strategy');
                 const capText = bot.capital_override ? `$${(bot.capital_override / 1000).toFixed(0)}k` : '';
-                const dotClass = isPaused ? 'custom-bot-option-status-dot paused' : 'custom-bot-option-status-dot';
-                const dotTitle = isPaused ? 'Paused' : 'Active';
-                const pausedBadge = isPaused ? '<span class="custom-bot-option-badge paused">PAUSED</span>' : '';
+                const dotClass = isPaused ? 'custom-bot-option-status-dot paused' : 'custom-bot-option-status-dot active';
+                const statusClass = isPaused ? 'paused' : 'active';
+                const statusText = isPaused ? 'PAUSED' : 'ACTIVE';
+                const statusTitle = isPaused ? 'Bot is paused (trading suspended)' : 'Bot is active and trading';
+                const pausedBadge = isPaused ? '<span class="custom-bot-option-badge paused" style="display:none;">PAUSED</span>' : '';
 
                 optCard.innerHTML = `
                     <div class="custom-bot-option-left">
@@ -285,9 +287,12 @@ function populateBotSelector(activeBots, allBots, profile) {
                     </div>
                     <div class="custom-bot-option-right">
                         ${capText ? `<span class="custom-bot-option-capital">${capText}</span>` : ''}
-                        ${pausedBadge}
                         ${modeBadgeHtml}
-                        <span class="${dotClass}" title="${dotTitle}"></span>
+                        <span class="custom-bot-status-pill ${statusClass}" title="${statusTitle}">
+                            <span class="${dotClass}" title="${statusTitle}"></span>
+                            <span class="custom-bot-status-label">${statusText}</span>
+                        </span>
+                        ${pausedBadge}
                         <span class="custom-bot-option-check">✓</span>
                     </div>
                 `;
@@ -332,7 +337,10 @@ function populateBotSelector(activeBots, allBots, profile) {
                     </div>
                     <div class="custom-bot-option-right">
                         <span class="custom-bot-option-mode ${botMode}">${botMode.toUpperCase()}</span>
-                        <span class="custom-bot-option-status-dot disabled"></span>
+                        <span class="custom-bot-status-pill disabled" title="Bot is disabled">
+                            <span class="custom-bot-option-status-dot disabled" title="Disabled"></span>
+                            <span class="custom-bot-status-label">DISABLED</span>
+                        </span>
                     </div>
                 `;
                 customMenu.appendChild(optCard);
@@ -344,6 +352,13 @@ function populateBotSelector(activeBots, allBots, profile) {
     // Set selected value if active bot or saved preference exists
     if (currentSelectedId) {
         selector.value = currentSelectedId.toString();
+    }
+
+    // Synchronize header trigger status with selected bot
+    const selectedBot = activeBots.find(b => b.client_id === currentSelectedId) || activeBots[0];
+    if (selectedBot) {
+        const selectedIsPaused = selectedBot.paused === true || selectedBot.status === 'paused' || (selectedBot.is_trading === false) || isFleetPaused;
+        syncBotStatusUI(selectedBot.client_id, !selectedIsPaused, isFleetPaused);
     }
 
     // Setup custom trigger click listener (once)
@@ -464,25 +479,89 @@ function closeCustomBotMenu() {
 }
 
 /**
+ * Synchronize bot status visualization across the header trigger and all dropdown options
+ * Ensures header indicator/pill and dropdown items are always in 100% agreement.
+ * @param {number|string} [botId] - Client ID of currently selected or updated bot
+ * @param {boolean} [isActive] - Whether the bot is actively trading
+ * @param {boolean} [fleetPaused] - Whether the entire fleet is paused
+ */
+function syncBotStatusUI(botId, isActive, fleetPaused) {
+    const isFleetPaused = fleetPaused !== undefined ? !!fleetPaused : (localStorage.getItem('fleetPaused') === 'true');
+    const isPaused = (isActive === false) || isFleetPaused;
+
+    // 1. Update header trigger status pill, label, and indicator
+    const customIndicator = document.getElementById('customBotIndicator') || document.querySelector('#customBotSelect .custom-bot-indicator');
+    const customStatusPill = document.getElementById('customBotStatusPill');
+    const customStatusLabel = document.getElementById('customBotStatusLabel');
+
+    const statusClass = isPaused ? 'paused' : 'active';
+    const statusText = isPaused ? 'PAUSED' : 'ACTIVE';
+    const statusTitle = isPaused ? 'Bot is paused (trading suspended)' : 'Bot is active and trading';
+
+    if (customIndicator) {
+        customIndicator.className = `custom-bot-indicator ${statusClass}`;
+        customIndicator.title = statusTitle;
+    }
+    if (customStatusPill) {
+        customStatusPill.className = `custom-bot-status-pill ${statusClass}`;
+        customStatusPill.title = `Bot status: ${statusText}`;
+    }
+    if (customStatusLabel) {
+        customStatusLabel.textContent = statusText;
+    }
+
+    // 2. Synchronize all dropdown option cards in #customBotMenu
+    const customMenu = document.getElementById('customBotMenu');
+    if (customMenu) {
+        const activeBotId = (botId !== undefined && botId !== null)
+            ? botId.toString()
+            : ((CONFIG && CONFIG.botId) ? CONFIG.botId.toString() : null);
+
+        customMenu.querySelectorAll('.custom-bot-option').forEach(opt => {
+            if (opt.classList.contains('disabled')) return; // Leave permanently disabled bots intact
+
+            const optId = opt.getAttribute('data-client-id');
+            const isThisBotSelected = activeBotId !== null && optId === activeBotId;
+
+            // If fleet is paused, every active bot is paused.
+            // If this is the currently selected bot, sync with its known state.
+            const optIsPaused = isFleetPaused || (isThisBotSelected ? isPaused : false);
+
+            const optDot = opt.querySelector('.custom-bot-option-status-dot');
+            const optPill = opt.querySelector('.custom-bot-status-pill');
+            const optLabel = opt.querySelector('.custom-bot-status-label');
+
+            const optClass = optIsPaused ? 'paused' : 'active';
+            const optText = optIsPaused ? 'PAUSED' : 'ACTIVE';
+            const optTitle = optIsPaused ? 'Bot is paused (trading suspended)' : 'Bot is active and trading';
+
+            if (optDot) {
+                optDot.className = `custom-bot-option-status-dot ${optClass}`;
+                optDot.title = optTitle;
+            }
+            if (optPill) {
+                optPill.className = `custom-bot-status-pill ${optClass}`;
+                optPill.title = optTitle;
+            }
+            if (optLabel) {
+                optLabel.textContent = optText;
+            }
+        });
+    }
+}
+
+/**
  * Switch bot selection from custom dropdown
  * @param {Object} bot - Bot configuration object
  */
 function selectCustomBot(bot) {
     closeCustomBotMenu();
-    const isPaused = bot.paused === true || bot.status === 'paused';
+    const isFleetPaused = localStorage.getItem('fleetPaused') === 'true';
+    const isPaused = bot.paused === true || bot.status === 'paused' || (bot.is_trading === false) || isFleetPaused;
     if (CONFIG) {
         CONFIG.isPaused = isPaused;
     }
-    const customIndicator = document.getElementById('customBotIndicator') || document.querySelector('#customBotSelect .custom-bot-indicator');
-    if (customIndicator) {
-        if (isPaused) {
-            customIndicator.className = 'custom-bot-indicator paused';
-            customIndicator.title = 'Paused';
-        } else {
-            customIndicator.className = 'custom-bot-indicator';
-            customIndicator.title = 'Active';
-        }
-    }
+    syncBotStatusUI(bot.client_id, !isPaused, isFleetPaused);
     updatePerBotControls(bot);
     const selector = document.getElementById('botSelector');
     if (selector && selector.value !== bot.client_id.toString()) {
@@ -942,19 +1021,12 @@ function updateSymbolReferences() {
     }
 
     // Update header trigger status dot and mode pill
-    const customIndicator = document.getElementById('customBotIndicator') || document.querySelector('#customBotSelect .custom-bot-indicator');
     const customModePill = document.getElementById('customBotModePill');
     const currentProfile = _profileCache.value || CONFIG.tradingProfile || 'paper';
 
-    if (customIndicator) {
-        if (CONFIG.isPaused) {
-            customIndicator.className = 'custom-bot-indicator paused';
-            customIndicator.title = 'Paused';
-        } else {
-            customIndicator.className = 'custom-bot-indicator';
-            customIndicator.title = 'Active';
-        }
-    }
+    const isFleetPaused = localStorage.getItem('fleetPaused') === 'true';
+    const isBotActive = !CONFIG.isPaused && !isFleetPaused;
+    syncBotStatusUI(CONFIG.botId, isBotActive, isFleetPaused);
 
     if (customModePill) {
         customModePill.className = `custom-bot-mode-pill ${currentProfile}`;
@@ -1082,15 +1154,21 @@ function renderBotParameters(params) {
             category: 'capital',
             icon: '💰',
             title: 'Capital & Position Sizing',
-            desc: 'Portfolio bucket sizing, risk per trade, and position capital limits',
+            desc: 'Portfolio bucket sizing, risk allocation, and derived capital invariants',
             rows: [
                 { key: 'Long Bucket Capital', val: `<span class="param-val number highlight-green">${fmtParamCurrency(params.capital?.capital_per_bucket_long ?? 30000)}</span>` },
                 { key: 'Short Bucket Capital', val: `<span class="param-val number">${fmtParamCurrency(params.capital?.capital_per_bucket_short ?? 1000)}</span>` },
                 { key: 'Buckets per Group', val: `<span class="param-val number">${params.capital?.buckets_per_group ?? 1} bucket(s)</span>` },
-                { key: 'Max Position Capital', val: `<span class="param-val number highlight-blue">${fmtParamCurrency(params.atr_parameters?.position_max_capital ?? 25000)}</span>` },
-                { key: 'Min Position Shares', val: `<span class="param-val number">${params.atr_parameters?.position_min_shares ?? 100} shares</span>` },
-                { key: 'Risk Per Trade', val: `<span class="param-val number">${fmtParamPercent(params.atr_parameters?.position_risk_per_trade_pct ?? 0.005)}</span>` },
-                { key: 'ATR Position Sizing', val: fmtParamPill(params.atr_parameters?.use_atr_position_sizing) }
+                { key: 'Max Position Capital', val: (() => {
+                    const cap = params.atr_parameters?.position_max_capital ?? params.capital?.capital_per_bucket_long ?? 30000;
+                    return `<span class="param-val number highlight-blue">${fmtParamCurrency(cap)} <small style="font-size:10px;opacity:.7;">(auto-clamped)</small></span>`;
+                })() },
+                { key: 'Min Position Shares', val: (() => {
+                    const shares = params.atr_parameters?.position_min_shares ?? (params.covered_calls?.use_covered_calls ? 100 : 1);
+                    return `<span class="param-val number">${shares} shares <small style="font-size:10px;opacity:.7;">(auto-derived)</small></span>`;
+                })() },
+                { key: 'Sizing Method', val: '<span class="param-pill tag highlight-green">Fixed Bucket Capital</span>' },
+                { key: 'Risk Scale Multiplier', val: `<span class="param-val number highlight-blue">${Number(params.risk_scale ?? 1.0).toFixed(2)}x</span>` }
             ]
         },
         // 2. Risk Management & Stops
@@ -1102,7 +1180,7 @@ function renderBotParameters(params) {
             rows: [
                 { key: 'Hard Stop Loss Floor', val: `<span class="param-val number highlight-purple">${fmtParamPercent(1 - (params.risk_management?.stop_loss_threshold ?? 0.95), false)} (${params.risk_management?.stop_loss_threshold ?? 0.95}x)</span>` },
                 { key: 'Net Profit Target', val: `<span class="param-val number highlight-green">${fmtParamPercent(params.risk_management?.profit_target_net ?? 0.015, true)}</span>` },
-                { key: 'ATR Stop Multiplier', val: `<span class="param-val number">${params.exit_logic?.atr_stop_multiplier ?? 2.0}x ATR</span>` },
+                { key: 'ATR Stop Multiplier', val: `<span class="param-val number">${params.exit_logic?.atr_stop_multiplier ?? params.atr_parameters?.atr_stop_multiplier ?? 2.0}x ATR (L0 Invariant Base)</span>` },
                 { key: 'Trailing Stop %', val: `<span class="param-val number">${fmtParamPercent(params.atr_parameters?.trailing_stop_pct ?? 0.03)}</span>` },
                 { key: 'Activation Floor %', val: `<span class="param-val number">${fmtParamPercent(params.atr_parameters?.activation_floor_pct ?? 0.012)}</span>` },
                 { key: 'Trailing Stop ATR', val: `<span class="param-val number">${params.atr_parameters?.trailing_stop_atr_multiplier ?? 2.0}x ATR</span>` },
@@ -1117,14 +1195,14 @@ function renderBotParameters(params) {
             title: 'Entry Filters & Timing',
             desc: 'Multi-timeframe trend alignment, tick confirmation, and price floors',
             rows: [
-                { key: 'MTF Lookback Bars', val: `<span class="param-val number">${params.entry_filters?.mtf_lookback_bars ?? 2} bars</span>` },
+                { key: 'MTF Lookback Bars', val: `<span class="param-val number highlight-blue">${params.entry_filters?.mtf_lookback_bars ?? 4} bars (L0 Invariant)</span>` },
                 { key: 'MTF Bullish Threshold', val: `<span class="param-val number highlight-blue">${Number(params.entry_filters?.mtf_bullish_threshold ?? 0.5).toFixed(2)}</span>` },
-                { key: 'Confirmation Ticks', val: `<span class="param-val number">${params.entry_filters?.confirmation_ticks_required ?? 10} ticks</span>` },
+                { key: 'Confirmation Ticks', val: `<span class="param-val number">${params.entry_filters?.confirmation_ticks_required ?? 8} ticks</span>` },
                 { key: 'Min Confirmation Time', val: `<span class="param-val number">${params.entry_filters?.confirmation_min_seconds ?? 15} sec</span>` },
                 { key: 'Confirmation Mode', val: `<span class="param-pill tag">${params.entry_filters?.confirmation_mode ?? 'atr_max_floor'}</span>` },
                 { key: 'Min % Price Floor', val: `<span class="param-val number">${fmtParamPercent(params.entry_filters?.confirmation_min_pct_floor ?? 0.0008)}</span>` },
                 { key: 'Confirmation ATR Mult', val: `<span class="param-val number">${params.entry_filters?.confirmation_atr_multiplier ?? 0.2}x ATR</span>` },
-                { key: 'Breakout Lookback', val: `<span class="param-val number">${params.adaptive_entry?.lookback_bars_breakout ?? 2} bars (Normal ${params.adaptive_entry?.lookback_bars_normal ?? 4})</span>` }
+                { key: 'Breakout Lookback', val: `<span class="param-val number">${params.adaptive_entry?.lookback_bars_breakout ?? 4} bars (L0 Invariant)</span>` }
             ]
         },
         // 4. Covered Calls Overlay
@@ -1132,7 +1210,7 @@ function renderBotParameters(params) {
             category: 'calls',
             icon: '📜',
             title: 'Covered Calls Overlay',
-            desc: 'Options income overlay rules, dual-mode governance, delta filter, and expiration cadence',
+            desc: 'Options income overlay rules, dual-mode governance, strike offsets, and expiry cadence',
             rows: [
                 { key: 'Covered Calls Strategy', val: fmtParamPill(params.covered_calls?.use_covered_calls) },
                 // --- Dual-Mode Governance (cc_mode, #199 visibility) ---
@@ -1149,15 +1227,20 @@ function renderBotParameters(params) {
                         : `<span class="param-val number" style="opacity:.5">${hrs} hrs (TOTAL_RETURN)</span>`;
                 })() },
                 { key: 'Profit Target Buyback', val: `<span class="param-val number highlight-purple">${fmtParamPercent(params.covered_calls?.cc_option_profit_target_pct ?? 0.50)} retained</span>` },
-                { key: 'DTE Gamma Guard', val: `<span class="param-val number">&le;${params.covered_calls?.cc_close_at_dte_threshold ?? 3} DTE</span>` },
-                { key: 'Roll Up &amp; Out', val: fmtParamPill(params.covered_calls?.cc_enable_roll_up_and_out, `&ge;${params.covered_calls?.cc_roll_min_net_credit ?? 0.05}/sh net credit`, 'DISABLED') },
-                { key: 'UNRECOVERABLE Block', val: fmtParamPill(params.covered_calls?.cc_unrecoverable_block_portfolio, 'PORTFOLIO-WIDE', 'PER-BUCKET') },
+                { key: 'DTE Gamma Guard', val: `<span class="param-pill tag highlight-green">Holds to Expiry (Policy)</span>` },
+                { key: 'Roll Up &amp; Out', val: (() => {
+                    const mode = params.covered_calls?.cc_mode ?? 'TOTAL_RETURN';
+                    return mode === 'TOTAL_RETURN'
+                        ? `<span class="param-pill tag highlight-blue">Active (TOTAL_RETURN)</span>`
+                        : `<span class="param-pill tag" style="opacity:.5">Disabled (INCOME)</span>`;
+                })() },
                 // --- Entry & Strike Settings ---
                 { key: 'Eligible Regimes', val: fmtParamTags(params.covered_calls?.call_enabled_regimes || ['BULL', 'NEUTRAL']) },
                 { key: 'Target Expiration', val: `<span class="param-val number highlight-blue">${params.covered_calls?.call_expiration_days ?? 14} days</span>` },
                 { key: 'Min Option Premium', val: `<span class="param-val number highlight-green">${fmtParamPercent(params.covered_calls?.call_min_premium_pct ?? 0.006)}</span>` },
                 { key: 'Call Confirm Bars', val: `<span class="param-val number">${params.covered_calls?.call_confirmation_bars ?? 1} bar(s)</span>` },
-                { key: 'Delta Filter', val: fmtParamPill(params.covered_calls?.use_delta_filter, `${params.covered_calls?.min_delta ?? 0.25} - ${params.covered_calls?.max_delta ?? 0.35}`, 'DISABLED') },
+                { key: 'Strike Offset (Normal)', val: `<span class="param-val number">${fmtParamPercent(params.covered_calls?.call_strike_offset_normal ?? 0.018)} OTM</span>` },
+                { key: 'Strike Offset (Low Vol)', val: `<span class="param-val number">${fmtParamPercent(params.covered_calls?.call_strike_offset_low_vol ?? 0.015)} OTM</span>` },
                 { key: 'Profit Cushion ATR', val: `<span class="param-val number">${params.adaptive_covered_call?.base_profit_cushion_atr ?? 1.0}x ATR</span>` },
                 { key: 'Breakout Freeze Thresh', val: `<span class="param-val number">ADX ${params.adaptive_covered_call?.adx_trend_breakout_threshold ?? 25.0}</span>` }
             ]
@@ -1530,6 +1613,8 @@ async function handlePauseResumeBot() {
                 btn.classList.add('btn-danger');
                 btn.innerHTML = '<span>⏸</span> Pause All Bots';
                 localStorage.setItem('fleetPaused', 'false');
+                if (CONFIG) CONFIG.isPaused = false;
+                syncBotStatusUI(CONFIG ? CONFIG.botId : null, true, false);
                 showNotification('✓ All trading bots resumed successfully', 'success');
             } else {
                 // Pausing - button becomes Resume All Bots
@@ -1537,6 +1622,8 @@ async function handlePauseResumeBot() {
                 btn.classList.remove('btn-danger');
                 btn.innerHTML = '<span>▶</span> Resume All Bots';
                 localStorage.setItem('fleetPaused', 'true');
+                if (CONFIG) CONFIG.isPaused = true;
+                syncBotStatusUI(CONFIG ? CONFIG.botId : null, false, true);
                 showNotification('✓ All trading bots paused successfully', 'success');
             }
         } else {
@@ -3493,9 +3580,12 @@ async function updateBotStatus() {
 
         // Sync Pause/Resume button state based on active trading status
         const pauseBotBtn = document.getElementById('pauseBotBtn');
+        const isFleetPaused = localStorage.getItem('fleetPaused') === 'true';
+        const isTrading = data.is_trading === true;
+        const isBotActive = isTrading && !isFleetPaused && !(CONFIG && CONFIG.isPaused);
+
         if (pauseBotBtn && !pauseBotBtn.disabled && data.is_trading !== undefined) {
-            const isFleetPaused = localStorage.getItem('fleetPaused') === 'true';
-            if (data.is_trading && !isFleetPaused) {
+            if (isTrading && !isFleetPaused) {
                 pauseBotBtn.classList.remove('paused');
                 pauseBotBtn.classList.add('btn-danger');
                 pauseBotBtn.innerHTML = '<span>⏸</span> Pause All Bots';
@@ -3506,17 +3596,9 @@ async function updateBotStatus() {
             }
         }
 
-        // Sync header bot indicator dot with trading status
-        const customIndicator = document.getElementById('customBotIndicator') || document.querySelector('#customBotSelect .custom-bot-indicator');
-        if (customIndicator && data.is_trading !== undefined) {
-            const isBotActive = data.is_trading && !CONFIG.isPaused;
-            if (isBotActive) {
-                customIndicator.className = 'custom-bot-indicator';
-                customIndicator.title = 'Active';
-            } else {
-                customIndicator.className = 'custom-bot-indicator paused';
-                customIndicator.title = 'Paused';
-            }
+        // Sync header bot indicator dot, pill, and dropdown options with trading status
+        if (data.is_trading !== undefined) {
+            syncBotStatusUI(CONFIG ? CONFIG.botId : null, isBotActive, isFleetPaused || !isTrading);
         }
 
         // Update Macro State & VIX Level
