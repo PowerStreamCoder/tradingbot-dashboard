@@ -115,7 +115,7 @@
 - Changelog: `../tradingbot-documentation/CHANGELOG.md`
 
 ## Code Knowledge Graph
-_Auto-updated 2026-11-03. Full graph: `tradingbot-tools/knowledge-graph/output/`_
+_Auto-updated 2026-11-06. Full graph: `tradingbot-tools/knowledge-graph/output/`_
 
 ### Key Classes
 | Class | File | Role |
@@ -133,8 +133,8 @@ _Auto-updated 2026-11-03. Full graph: `tradingbot-tools/knowledge-graph/output/`
 | `AssetArchetype` | `security_profile_provider.py` |  |
 | `AsyncFillMonitor` | `execution_manager.py` | Tracks orders that timed out but may fill asynchronously. |
 | `BadBar` | `tests/test_coverage_98_bots.py` |  |
+| `BadBucket` | `tests/test_coverage_98_bots.py` |  |
 | `Bare` | `tests/test_option_notifications.py` |  |
-| `BasePaperTrader` | `base.py` | Base class for IBKR paper trading bots. |
 
 ### Trade Entry Lifecycle
 SMACrossoverTrader detects SMA5/SMA20 crossover on 1-hour bar → EntryFilterChain validates: RegimeFilter, MultiTimeframeFilter, volatility guards → UnifiedEntryHandler.execute_entry() → ExecutionManager.execute() → BasePaperTrader.on_entry_fill()
