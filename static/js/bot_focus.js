@@ -163,7 +163,7 @@ async function loadBotConfig() {
             profile: selectedBot.profile || selectedBot.trading_mode || currentProfile || 'paper',
             trading_mode: selectedBot.trading_mode || selectedBot.profile || currentProfile || 'paper',
             is_overridden: !!selectedBot.is_overridden,
-            isPaused: selectedBot.paused === true || selectedBot.status === 'paused',
+            isPaused: selectedBot.paused === true || selectedBot.status === 'paused' || (selectedBot.is_trading === false) || (localStorage.getItem('fleetPaused') === 'true'),
             tradingProfile: selectedBot.profile || selectedBot.trading_mode || currentProfile || 'paper',
             updateInterval: UPDATE_INTERVALS.BOT_OVERVIEW,
             chartUpdateInterval: UPDATE_INTERVALS.CHART,
@@ -247,7 +247,7 @@ function populateBotSelector(activeBots, allBots, profile) {
             const botMode = (bot.profile || bot.trading_mode || currentProfile || 'paper').toLowerCase();
             const modeBadgeHtml = `<span class="custom-bot-option-mode ${botMode}">${botMode.toUpperCase()}</span>`;
             // 1. Native option (for fallback and test compatibility)
-            const isPaused = bot.paused === true || bot.status === 'paused' || isFleetPaused;
+            const isPaused = bot.paused === true || bot.status === 'paused' || (bot.is_trading === false) || isFleetPaused;
             const option = document.createElement('option');
             option.value = bot.client_id;
             option.textContent = `${bot.symbol} - ${bot.name} [${botMode.toUpperCase()}]`;
@@ -271,9 +271,11 @@ function populateBotSelector(activeBots, allBots, profile) {
                 const symClass = bot.symbol.toLowerCase();
                 const stratText = bot.strategy === 'sma_crossover' ? 'SMA 5/20 Crossover' : (bot.strategy || 'Trend Strategy');
                 const capText = bot.capital_override ? `$${(bot.capital_override / 1000).toFixed(0)}k` : '';
-                const dotClass = isPaused ? 'custom-bot-option-status-dot paused' : 'custom-bot-option-status-dot';
-                const dotTitle = isPaused ? 'Paused' : 'Active';
-                const pausedBadge = isPaused ? '<span class="custom-bot-option-badge paused">PAUSED</span>' : '';
+                const dotClass = isPaused ? 'custom-bot-option-status-dot paused' : 'custom-bot-option-status-dot active';
+                const statusClass = isPaused ? 'paused' : 'active';
+                const statusText = isPaused ? 'PAUSED' : 'ACTIVE';
+                const statusTitle = isPaused ? 'Bot is paused (trading suspended)' : 'Bot is active and trading';
+                const pausedBadge = isPaused ? '<span class="custom-bot-option-badge paused" style="display:none;">PAUSED</span>' : '';
 
                 optCard.innerHTML = `
                     <div class="custom-bot-option-left">
@@ -285,9 +287,12 @@ function populateBotSelector(activeBots, allBots, profile) {
                     </div>
                     <div class="custom-bot-option-right">
                         ${capText ? `<span class="custom-bot-option-capital">${capText}</span>` : ''}
-                        ${pausedBadge}
                         ${modeBadgeHtml}
-                        <span class="${dotClass}" title="${dotTitle}"></span>
+                        <span class="custom-bot-status-pill ${statusClass}" title="${statusTitle}">
+                            <span class="${dotClass}" title="${statusTitle}"></span>
+                            <span class="custom-bot-status-label">${statusText}</span>
+                        </span>
+                        ${pausedBadge}
                         <span class="custom-bot-option-check">✓</span>
                     </div>
                 `;
@@ -332,7 +337,10 @@ function populateBotSelector(activeBots, allBots, profile) {
                     </div>
                     <div class="custom-bot-option-right">
                         <span class="custom-bot-option-mode ${botMode}">${botMode.toUpperCase()}</span>
-                        <span class="custom-bot-option-status-dot disabled"></span>
+                        <span class="custom-bot-status-pill disabled" title="Bot is disabled">
+                            <span class="custom-bot-option-status-dot disabled" title="Disabled"></span>
+                            <span class="custom-bot-status-label">DISABLED</span>
+                        </span>
                     </div>
                 `;
                 customMenu.appendChild(optCard);
@@ -344,6 +352,13 @@ function populateBotSelector(activeBots, allBots, profile) {
     // Set selected value if active bot or saved preference exists
     if (currentSelectedId) {
         selector.value = currentSelectedId.toString();
+    }
+
+    // Synchronize header trigger status with selected bot
+    const selectedBot = activeBots.find(b => b.client_id === currentSelectedId) || activeBots[0];
+    if (selectedBot) {
+        const selectedIsPaused = selectedBot.paused === true || selectedBot.status === 'paused' || (selectedBot.is_trading === false) || isFleetPaused;
+        syncBotStatusUI(selectedBot.client_id, !selectedIsPaused, isFleetPaused);
     }
 
     // Setup custom trigger click listener (once)
@@ -464,25 +479,89 @@ function closeCustomBotMenu() {
 }
 
 /**
+ * Synchronize bot status visualization across the header trigger and all dropdown options
+ * Ensures header indicator/pill and dropdown items are always in 100% agreement.
+ * @param {number|string} [botId] - Client ID of currently selected or updated bot
+ * @param {boolean} [isActive] - Whether the bot is actively trading
+ * @param {boolean} [fleetPaused] - Whether the entire fleet is paused
+ */
+function syncBotStatusUI(botId, isActive, fleetPaused) {
+    const isFleetPaused = fleetPaused !== undefined ? !!fleetPaused : (localStorage.getItem('fleetPaused') === 'true');
+    const isPaused = (isActive === false) || isFleetPaused;
+
+    // 1. Update header trigger status pill, label, and indicator
+    const customIndicator = document.getElementById('customBotIndicator') || document.querySelector('#customBotSelect .custom-bot-indicator');
+    const customStatusPill = document.getElementById('customBotStatusPill');
+    const customStatusLabel = document.getElementById('customBotStatusLabel');
+
+    const statusClass = isPaused ? 'paused' : 'active';
+    const statusText = isPaused ? 'PAUSED' : 'ACTIVE';
+    const statusTitle = isPaused ? 'Bot is paused (trading suspended)' : 'Bot is active and trading';
+
+    if (customIndicator) {
+        customIndicator.className = `custom-bot-indicator ${statusClass}`;
+        customIndicator.title = statusTitle;
+    }
+    if (customStatusPill) {
+        customStatusPill.className = `custom-bot-status-pill ${statusClass}`;
+        customStatusPill.title = `Bot status: ${statusText}`;
+    }
+    if (customStatusLabel) {
+        customStatusLabel.textContent = statusText;
+    }
+
+    // 2. Synchronize all dropdown option cards in #customBotMenu
+    const customMenu = document.getElementById('customBotMenu');
+    if (customMenu) {
+        const activeBotId = (botId !== undefined && botId !== null)
+            ? botId.toString()
+            : ((CONFIG && CONFIG.botId) ? CONFIG.botId.toString() : null);
+
+        customMenu.querySelectorAll('.custom-bot-option').forEach(opt => {
+            if (opt.classList.contains('disabled')) return; // Leave permanently disabled bots intact
+
+            const optId = opt.getAttribute('data-client-id');
+            const isThisBotSelected = activeBotId !== null && optId === activeBotId;
+
+            // If fleet is paused, every active bot is paused.
+            // If this is the currently selected bot, sync with its known state.
+            const optIsPaused = isFleetPaused || (isThisBotSelected ? isPaused : false);
+
+            const optDot = opt.querySelector('.custom-bot-option-status-dot');
+            const optPill = opt.querySelector('.custom-bot-status-pill');
+            const optLabel = opt.querySelector('.custom-bot-status-label');
+
+            const optClass = optIsPaused ? 'paused' : 'active';
+            const optText = optIsPaused ? 'PAUSED' : 'ACTIVE';
+            const optTitle = optIsPaused ? 'Bot is paused (trading suspended)' : 'Bot is active and trading';
+
+            if (optDot) {
+                optDot.className = `custom-bot-option-status-dot ${optClass}`;
+                optDot.title = optTitle;
+            }
+            if (optPill) {
+                optPill.className = `custom-bot-status-pill ${optClass}`;
+                optPill.title = optTitle;
+            }
+            if (optLabel) {
+                optLabel.textContent = optText;
+            }
+        });
+    }
+}
+
+/**
  * Switch bot selection from custom dropdown
  * @param {Object} bot - Bot configuration object
  */
 function selectCustomBot(bot) {
     closeCustomBotMenu();
-    const isPaused = bot.paused === true || bot.status === 'paused';
+    const isFleetPaused = localStorage.getItem('fleetPaused') === 'true';
+    const isPaused = bot.paused === true || bot.status === 'paused' || (bot.is_trading === false) || isFleetPaused;
     if (CONFIG) {
         CONFIG.isPaused = isPaused;
     }
-    const customIndicator = document.getElementById('customBotIndicator') || document.querySelector('#customBotSelect .custom-bot-indicator');
-    if (customIndicator) {
-        if (isPaused) {
-            customIndicator.className = 'custom-bot-indicator paused';
-            customIndicator.title = 'Paused';
-        } else {
-            customIndicator.className = 'custom-bot-indicator';
-            customIndicator.title = 'Active';
-        }
-    }
+    syncBotStatusUI(bot.client_id, !isPaused, isFleetPaused);
     updatePerBotControls(bot);
     const selector = document.getElementById('botSelector');
     if (selector && selector.value !== bot.client_id.toString()) {
@@ -942,19 +1021,12 @@ function updateSymbolReferences() {
     }
 
     // Update header trigger status dot and mode pill
-    const customIndicator = document.getElementById('customBotIndicator') || document.querySelector('#customBotSelect .custom-bot-indicator');
     const customModePill = document.getElementById('customBotModePill');
     const currentProfile = _profileCache.value || CONFIG.tradingProfile || 'paper';
 
-    if (customIndicator) {
-        if (CONFIG.isPaused) {
-            customIndicator.className = 'custom-bot-indicator paused';
-            customIndicator.title = 'Paused';
-        } else {
-            customIndicator.className = 'custom-bot-indicator';
-            customIndicator.title = 'Active';
-        }
-    }
+    const isFleetPaused = localStorage.getItem('fleetPaused') === 'true';
+    const isBotActive = !CONFIG.isPaused && !isFleetPaused;
+    syncBotStatusUI(CONFIG.botId, isBotActive, isFleetPaused);
 
     if (customModePill) {
         customModePill.className = `custom-bot-mode-pill ${currentProfile}`;
@@ -1541,6 +1613,8 @@ async function handlePauseResumeBot() {
                 btn.classList.add('btn-danger');
                 btn.innerHTML = '<span>⏸</span> Pause All Bots';
                 localStorage.setItem('fleetPaused', 'false');
+                if (CONFIG) CONFIG.isPaused = false;
+                syncBotStatusUI(CONFIG ? CONFIG.botId : null, true, false);
                 showNotification('✓ All trading bots resumed successfully', 'success');
             } else {
                 // Pausing - button becomes Resume All Bots
@@ -1548,6 +1622,8 @@ async function handlePauseResumeBot() {
                 btn.classList.remove('btn-danger');
                 btn.innerHTML = '<span>▶</span> Resume All Bots';
                 localStorage.setItem('fleetPaused', 'true');
+                if (CONFIG) CONFIG.isPaused = true;
+                syncBotStatusUI(CONFIG ? CONFIG.botId : null, false, true);
                 showNotification('✓ All trading bots paused successfully', 'success');
             }
         } else {
@@ -3504,9 +3580,12 @@ async function updateBotStatus() {
 
         // Sync Pause/Resume button state based on active trading status
         const pauseBotBtn = document.getElementById('pauseBotBtn');
+        const isFleetPaused = localStorage.getItem('fleetPaused') === 'true';
+        const isTrading = data.is_trading === true;
+        const isBotActive = isTrading && !isFleetPaused && !(CONFIG && CONFIG.isPaused);
+
         if (pauseBotBtn && !pauseBotBtn.disabled && data.is_trading !== undefined) {
-            const isFleetPaused = localStorage.getItem('fleetPaused') === 'true';
-            if (data.is_trading && !isFleetPaused) {
+            if (isTrading && !isFleetPaused) {
                 pauseBotBtn.classList.remove('paused');
                 pauseBotBtn.classList.add('btn-danger');
                 pauseBotBtn.innerHTML = '<span>⏸</span> Pause All Bots';
@@ -3517,17 +3596,9 @@ async function updateBotStatus() {
             }
         }
 
-        // Sync header bot indicator dot with trading status
-        const customIndicator = document.getElementById('customBotIndicator') || document.querySelector('#customBotSelect .custom-bot-indicator');
-        if (customIndicator && data.is_trading !== undefined) {
-            const isBotActive = data.is_trading && !CONFIG.isPaused;
-            if (isBotActive) {
-                customIndicator.className = 'custom-bot-indicator';
-                customIndicator.title = 'Active';
-            } else {
-                customIndicator.className = 'custom-bot-indicator paused';
-                customIndicator.title = 'Paused';
-            }
+        // Sync header bot indicator dot, pill, and dropdown options with trading status
+        if (data.is_trading !== undefined) {
+            syncBotStatusUI(CONFIG ? CONFIG.botId : null, isBotActive, isFleetPaused || !isTrading);
         }
 
         // Update Macro State & VIX Level

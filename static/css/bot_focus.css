@@ -211,13 +211,55 @@ body {
     line-height: 1;
 }
 
+.custom-bot-status-pill {
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4.5px;
+    line-height: 1.2;
+    text-transform: uppercase;
+    transition: all 0.2s ease;
+    user-select: none;
+}
+
+.custom-bot-status-pill.active {
+    color: #48bb78;
+    background: rgba(72, 187, 120, 0.15);
+    border: 1px solid rgba(72, 187, 120, 0.4);
+}
+
+.custom-bot-status-pill.paused {
+    color: #fbbf24;
+    background: rgba(245, 158, 11, 0.18);
+    border: 1px solid rgba(245, 158, 11, 0.5);
+    box-shadow: 0 0 8px rgba(245, 158, 11, 0.2);
+}
+
+.custom-bot-status-pill.disabled {
+    color: var(--text-muted);
+    background: rgba(148, 163, 184, 0.12);
+    border: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.custom-bot-status-label {
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    line-height: 1;
+}
+
 .custom-bot-indicator {
-    width: 7px;
-    height: 7px;
+    width: 6.5px;
+    height: 6.5px;
     border-radius: 50%;
     background: var(--color-positive);
-    box-shadow: 0 0 6px rgba(72, 187, 120, 0.8);
+    box-shadow: 0 0 6px rgba(72, 187, 120, 0.85);
     display: inline-block;
+    flex-shrink: 0;
 }
 
 .custom-bot-indicator.disabled {
@@ -227,7 +269,23 @@ body {
 
 .custom-bot-indicator.paused {
     background: #f59e0b;
-    box-shadow: 0 0 6px rgba(245, 158, 11, 0.75);
+    box-shadow: 0 0 6px rgba(245, 158, 11, 0.85);
+}
+
+.custom-bot-status-pill.paused .custom-bot-indicator,
+.custom-bot-status-pill.paused .custom-bot-option-status-dot {
+    animation: pausePulse 2.4s infinite ease-in-out;
+}
+
+@keyframes pausePulse {
+    0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.5;
+        transform: scale(0.85);
+    }
 }
 
 .custom-bot-mode-pill {
@@ -271,7 +329,7 @@ body {
     position: absolute;
     top: calc(100% + 6px);
     left: 0;
-    min-width: 340px;
+    min-width: 380px;
     background: #0d1527;
     background: linear-gradient(145deg, #162035 0%, #0b1120 100%);
     backdrop-filter: blur(16px);
@@ -439,6 +497,13 @@ body {
     width: 6px;
     height: 6px;
     border-radius: 50%;
+    background: var(--color-positive);
+    box-shadow: 0 0 5px rgba(72, 187, 120, 0.7);
+    display: inline-block;
+    flex-shrink: 0;
+}
+
+.custom-bot-option-status-dot.active {
     background: var(--color-positive);
     box-shadow: 0 0 5px rgba(72, 187, 120, 0.7);
 }
