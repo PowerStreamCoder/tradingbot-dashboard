@@ -160,6 +160,7 @@ async function loadBotConfig() {
             botName: selectedBot.name,
             strategy: selectedBot.strategy || 'unknown',
             enabled: selectedBot.enabled !== false,
+            status: selectedBot.status || (selectedBot.enabled === false ? 'disabled' : (selectedBot.is_trading === false ? 'paused' : 'active')),
             profile: selectedBot.profile || selectedBot.trading_mode || currentProfile || 'paper',
             trading_mode: selectedBot.trading_mode || selectedBot.profile || currentProfile || 'paper',
             is_overridden: !!selectedBot.is_overridden,
@@ -271,10 +272,11 @@ function populateBotSelector(activeBots, allBots, profile) {
                 const symClass = bot.symbol.toLowerCase();
                 const stratText = bot.strategy === 'sma_crossover' ? 'SMA 5/20 Crossover' : (bot.strategy || 'Trend Strategy');
                 const capText = bot.capital_override ? `$${(bot.capital_override / 1000).toFixed(0)}k` : '';
-                const dotClass = isPaused ? 'custom-bot-option-status-dot paused' : 'custom-bot-option-status-dot active';
-                const statusClass = isPaused ? 'paused' : 'active';
-                const statusText = isPaused ? 'PAUSED' : 'ACTIVE';
-                const statusTitle = isPaused ? 'Bot is paused (trading suspended)' : 'Bot is active and trading';
+                const rawStatus = bot.enabled === false ? 'disabled' : (bot.status || (isPaused ? 'paused' : 'active')).toLowerCase();
+                const dotClass = (rawStatus === 'disabled' || rawStatus === 'offline') ? 'custom-bot-option-status-dot disabled' : (isPaused ? 'custom-bot-option-status-dot paused' : 'custom-bot-option-status-dot active');
+                const statusClass = (rawStatus === 'disabled' || rawStatus === 'offline') ? rawStatus : (isPaused ? 'paused' : 'active');
+                const statusText = rawStatus === 'disabled' ? 'DISABLED' : (rawStatus === 'offline' ? 'OFFLINE' : (isPaused ? 'PAUSED' : 'ACTIVE'));
+                const statusTitle = rawStatus === 'disabled' ? 'Bot is disabled' : (rawStatus === 'offline' ? 'Bot is offline (no recent heartbeat)' : (isPaused ? 'Bot is paused (trading suspended)' : 'Bot is active and trading'));
                 const pausedBadge = isPaused ? '<span class="custom-bot-option-badge paused" style="display:none;">PAUSED</span>' : '';
 
                 optCard.innerHTML = `
@@ -358,7 +360,7 @@ function populateBotSelector(activeBots, allBots, profile) {
     const selectedBot = activeBots.find(b => b.client_id === currentSelectedId) || activeBots[0];
     if (selectedBot) {
         const selectedIsPaused = selectedBot.paused === true || selectedBot.status === 'paused' || (selectedBot.is_trading === false) || isFleetPaused;
-        syncBotStatusUI(selectedBot.client_id, !selectedIsPaused, isFleetPaused);
+        syncBotStatusUI(selectedBot.client_id, !selectedIsPaused, isFleetPaused, selectedBot.status);
     }
 
     // Setup custom trigger click listener (once)
@@ -484,19 +486,34 @@ function closeCustomBotMenu() {
  * @param {number|string} [botId] - Client ID of currently selected or updated bot
  * @param {boolean} [isActive] - Whether the bot is actively trading
  * @param {boolean} [fleetPaused] - Whether the entire fleet is paused
+ * @param {string} [statusOverride] - Optional explicit status string ('active', 'paused', 'offline', 'disabled')
  */
-function syncBotStatusUI(botId, isActive, fleetPaused) {
+function syncBotStatusUI(botId, isActive, fleetPaused, statusOverride) {
     const isFleetPaused = fleetPaused !== undefined ? !!fleetPaused : (localStorage.getItem('fleetPaused') === 'true');
-    const isPaused = (isActive === false) || isFleetPaused;
+    
+    let resolvedStatus = 'active';
+    if (statusOverride) {
+        resolvedStatus = statusOverride.toLowerCase();
+    } else if (CONFIG && CONFIG.enabled === false) {
+        resolvedStatus = 'disabled';
+    } else if (CONFIG && CONFIG.status === 'offline') {
+        resolvedStatus = 'offline';
+    } else if (isFleetPaused || (isActive === false)) {
+        resolvedStatus = 'paused';
+    } else {
+        resolvedStatus = 'active';
+    }
+
+    const isPaused = resolvedStatus === 'paused' || isFleetPaused;
+    const isMuted = resolvedStatus === 'disabled' || resolvedStatus === 'offline';
+    const statusClass = isMuted ? 'disabled' : (isPaused ? 'paused' : 'active');
+    const statusText = resolvedStatus.toUpperCase();
+    const statusTitle = resolvedStatus === 'disabled' ? 'Bot is disabled' : (resolvedStatus === 'offline' ? 'Bot is offline (no recent heartbeat)' : (isPaused ? 'Bot is paused (trading suspended)' : 'Bot is active and trading'));
 
     // 1. Update header trigger status pill, label, and indicator
     const customIndicator = document.getElementById('customBotIndicator') || document.querySelector('#customBotSelect .custom-bot-indicator');
     const customStatusPill = document.getElementById('customBotStatusPill');
     const customStatusLabel = document.getElementById('customBotStatusLabel');
-
-    const statusClass = isPaused ? 'paused' : 'active';
-    const statusText = isPaused ? 'PAUSED' : 'ACTIVE';
-    const statusTitle = isPaused ? 'Bot is paused (trading suspended)' : 'Bot is active and trading';
 
     if (customIndicator) {
         customIndicator.className = `custom-bot-indicator ${statusClass}`;
@@ -531,9 +548,9 @@ function syncBotStatusUI(botId, isActive, fleetPaused) {
             const optPill = opt.querySelector('.custom-bot-status-pill');
             const optLabel = opt.querySelector('.custom-bot-status-label');
 
-            const optClass = optIsPaused ? 'paused' : 'active';
-            const optText = optIsPaused ? 'PAUSED' : 'ACTIVE';
-            const optTitle = optIsPaused ? 'Bot is paused (trading suspended)' : 'Bot is active and trading';
+            const optClass = (isThisBotSelected && isMuted) ? 'disabled' : (optIsPaused ? 'paused' : 'active');
+            const optText = isThisBotSelected ? statusText : (optIsPaused ? 'PAUSED' : 'ACTIVE');
+            const optTitle = isThisBotSelected ? statusTitle : (optIsPaused ? 'Bot is paused (trading suspended)' : 'Bot is active and trading');
 
             if (optDot) {
                 optDot.className = `custom-bot-option-status-dot ${optClass}`;
@@ -561,7 +578,7 @@ function selectCustomBot(bot) {
     if (CONFIG) {
         CONFIG.isPaused = isPaused;
     }
-    syncBotStatusUI(bot.client_id, !isPaused, isFleetPaused);
+    syncBotStatusUI(bot.client_id, !isPaused, isFleetPaused, bot.status);
     updatePerBotControls(bot);
     const selector = document.getElementById('botSelector');
     if (selector && selector.value !== bot.client_id.toString()) {
@@ -1026,7 +1043,7 @@ function updateSymbolReferences() {
 
     const isFleetPaused = localStorage.getItem('fleetPaused') === 'true';
     const isBotActive = !CONFIG.isPaused && !isFleetPaused;
-    syncBotStatusUI(CONFIG.botId, isBotActive, isFleetPaused);
+    syncBotStatusUI(CONFIG.botId, isBotActive, isFleetPaused, CONFIG.status);
 
     if (customModePill) {
         customModePill.className = `custom-bot-mode-pill ${currentProfile}`;
@@ -3597,8 +3614,21 @@ async function updateBotStatus() {
         }
 
         // Sync header bot indicator dot, pill, and dropdown options with trading status
-        if (data.is_trading !== undefined) {
-            syncBotStatusUI(CONFIG ? CONFIG.botId : null, isBotActive, isFleetPaused || !isTrading);
+        if (data.is_trading !== undefined || data.error) {
+            let derivedStatus = 'active';
+            if (CONFIG && CONFIG.enabled === false) {
+                derivedStatus = 'disabled';
+            } else if (data.heartbeat_age_seconds !== null && data.heartbeat_age_seconds > 300) {
+                derivedStatus = 'offline';
+            } else if (data.broker_connected === false && !data.is_trading) {
+                derivedStatus = 'offline';
+            } else if (!isTrading || isFleetPaused) {
+                derivedStatus = 'paused';
+            }
+            if (CONFIG) {
+                CONFIG.status = derivedStatus;
+            }
+            syncBotStatusUI(CONFIG ? CONFIG.botId : null, isBotActive, isFleetPaused || !isTrading, derivedStatus);
         }
 
         // Update Macro State & VIX Level
