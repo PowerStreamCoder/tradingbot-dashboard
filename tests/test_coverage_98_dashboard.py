@@ -14,7 +14,11 @@ import sys
 import json
 import time
 import re
-from datetime import datetime, date, timedelta, timezone, UTC
+from datetime import datetime, date, timedelta, timezone
+try:
+    from datetime import UTC
+except ImportError:
+    UTC = timezone.utc
 from io import BytesIO
 from unittest.mock import Mock, MagicMock, patch, mock_open
 import pytest
