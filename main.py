@@ -1501,11 +1501,39 @@ async def get_bot_configs():
                     sym = (b.get("symbol") or "").lower()
                     name = (b.get("name") or "").lower()
                     st = statuses.get(sym) or statuses.get(name)
-                    if st and "is_trading" in st:
-                        is_trading = bool(st.get("is_trading"))
-                        b["is_trading"] = is_trading
-                        b["paused"] = not is_trading
-                        b["status"] = "active" if is_trading else "paused"
+                    if not b.get("enabled", True):
+                        b["is_trading"] = False
+                        b["paused"] = True
+                        b["status"] = "disabled"
+                    elif st and "is_trading" in st:
+                        last_hb = st.get("last_heartbeat")
+                        is_stale = False
+                        if last_hb:
+                            try:
+                                if isinstance(last_hb, datetime):
+                                    hb_time = last_hb.replace(tzinfo=None)
+                                elif isinstance(last_hb, str):
+                                    clean_hb = last_hb.replace("Z", "+00:00")
+                                    hb_dt = datetime.fromisoformat(clean_hb)
+                                    hb_time = hb_dt.replace(tzinfo=None)
+                                else:
+                                    hb_time = None
+
+                                if hb_time:
+                                    age = (datetime.now() - hb_time).total_seconds()
+                                    is_stale = age > 300
+                            except Exception:
+                                is_stale = False
+
+                        if is_stale:
+                            b["is_trading"] = False
+                            b["paused"] = True
+                            b["status"] = "offline"
+                        else:
+                            is_trading = bool(st.get("is_trading"))
+                            b["is_trading"] = is_trading
+                            b["paused"] = not is_trading
+                            b["status"] = "active" if is_trading else "paused"
             except Exception as e:
                 logger.debug(f"Could not merge bot_status: {e}")
 
@@ -2638,9 +2666,27 @@ async def restart_bots():
                 # Update Firestore bot_status for active bots to mark is_trading: True
                 try:
                     if dashboard_data and hasattr(dashboard_data, "db") and dashboard_data.db:
+                        # Collect explicitly disabled bots from config + runtime overrides
+                        disabled_keys = set()
+                        try:
+                            cfg = load_bot_configs()
+                            rt_docs = dashboard_data.db.collection('bot_runtime_controls').stream()
+                            rt_overrides = {rd.id: rd.to_dict() for rd in rt_docs}
+                            for bot_item in cfg.get("bots", []):
+                                bname = bot_item.get("name")
+                                ov = rt_overrides.get(bname, {})
+                                is_en = ov.get("enabled", bot_item.get("enabled", True))
+                                if is_en is False:
+                                    disabled_keys.add(str(bot_item.get("symbol", "")).lower())
+                                    disabled_keys.add(str(bname or "").lower())
+                        except Exception as ce:
+                            logger.debug(f"Could not compute disabled keys on restart: {ce}")
+
                         status_docs = dashboard_data.db.collection('bot_status').stream()
                         for sdoc in status_docs:
-                            sdoc.reference.update({'is_trading': True, 'updated_at': datetime.now()})
+                            doc_id = str(sdoc.id).lower() if hasattr(sdoc, "id") and isinstance(sdoc.id, str) else ""
+                            if not doc_id or doc_id not in disabled_keys:
+                                sdoc.reference.update({'is_trading': True, 'updated_at': datetime.now()})
                 except Exception as fe:
                     logger.warning(f"Could not update bot_status is_trading to True on restart: {fe}")
                 return {"status": data.get("status", "success"), "message": data.get("message", "Bots restarted")}

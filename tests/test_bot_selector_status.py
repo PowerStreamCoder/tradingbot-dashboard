@@ -110,6 +110,86 @@ def test_bot_configs_merges_live_bot_status_active():
         assert nvda["status"] == "active"
 
 
+def test_bot_configs_stale_heartbeat_marks_offline():
+    """Verify that /api/bot-configs marks a bot with stale heartbeat (> 300s) as offline."""
+    client = TestClient(app)
+
+    mock_doc = MagicMock()
+    mock_doc.id = "nvda"
+    mock_doc.to_dict.return_value = {
+        "symbol": "NVDA",
+        "is_trading": True,
+        "last_heartbeat": (datetime.now() - timedelta(minutes=10)).isoformat(),
+        "market_status": "open"
+    }
+
+    mock_db = MagicMock()
+    def mock_collection(name):
+        col_mock = MagicMock()
+        if name == "bot_status":
+            col_mock.stream.return_value = [mock_doc]
+        else:
+            col_mock.stream.return_value = []
+        return col_mock
+
+    mock_db.collection.side_effect = mock_collection
+
+    with patch("main.dashboard_data.db", mock_db):
+        res = client.get("/api/bot-configs")
+        assert res.status_code == 200
+        data = res.json()
+        nvda = next((b for b in data["bots"] if b.get("symbol") == "NVDA"), None)
+        assert nvda is not None
+        assert nvda["is_trading"] is False
+        assert nvda["paused"] is True
+        assert nvda["status"] == "offline"
+
+
+def test_bot_configs_disabled_override_marks_disabled():
+    """Verify that /api/bot-configs marks a bot with enabled=False as disabled."""
+    client = TestClient(app)
+
+    mock_rt_doc = MagicMock()
+    mock_rt_doc.id = "afrm_sma"
+    mock_rt_doc.to_dict.return_value = {
+        "enabled": False,
+        "profile": "paper"
+    }
+
+    mock_status_doc = MagicMock()
+    mock_status_doc.id = "afrm"
+    mock_status_doc.to_dict.return_value = {
+        "symbol": "AFRM",
+        "is_trading": True,
+        "last_heartbeat": datetime.now().isoformat(),
+        "market_status": "open"
+    }
+
+    mock_db = MagicMock()
+    def mock_collection(name):
+        col_mock = MagicMock()
+        if name == "bot_runtime_controls":
+            col_mock.stream.return_value = [mock_rt_doc]
+        elif name == "bot_status":
+            col_mock.stream.return_value = [mock_status_doc]
+        else:
+            col_mock.stream.return_value = []
+        return col_mock
+
+    mock_db.collection.side_effect = mock_collection
+
+    with patch("main.dashboard_data.db", mock_db):
+        res = client.get("/api/bot-configs")
+        assert res.status_code == 200
+        data = res.json()
+        afrm = next((b for b in data["bots"] if b.get("name") == "afrm_sma"), None)
+        assert afrm is not None
+        assert afrm["enabled"] is False
+        assert afrm["is_trading"] is False
+        assert afrm["paused"] is True
+        assert afrm["status"] == "disabled"
+
+
 def test_bot_configs_firestore_exceptions_handled():
     """Verify that /api/bot-configs handles exceptions during Firestore queries gracefully."""
     client = TestClient(app)
