@@ -165,7 +165,7 @@ def generate_expert_parameter_advice(
                 "use_covered_calls": use_covered_calls,
                 "cc_mode": resolved_cc_mode,
                 "call_expiration_days": call_expiration_days,
-                "strike_offset_pct": strike_offset_pct,
+                "call_strike_offset_normal": round(strike_offset_pct / 100.0, 3) if strike_offset_pct else 0.018,
             },
             "trading_behavior": {
                 "allow_short_entries": (track == "GROWTH" and short_bucket_capital > 0),

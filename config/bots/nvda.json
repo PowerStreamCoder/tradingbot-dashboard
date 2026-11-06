@@ -13,11 +13,10 @@
     "max_atr_ratio_for_trailing": 2.0,
     "trailing_stop_pct": 0.055,
     "activation_floor_pct": 0.01,
-    "use_atr_position_sizing": false,
     "position_risk_per_trade_pct": 0.01,
     "position_stop_loss_atr_multiplier": 2.5,
     "position_min_shares": 100,
-    "position_max_capital": 28000
+    "position_max_capital": 25000.0
   },
   "covered_calls": {
     "use_covered_calls": true,
@@ -28,27 +27,21 @@
     "call_expiration_days": 7,
     "call_min_premium_pct": 0.004,
     "call_confirmation_bars": 0,
-    "use_cc_suitability_screen": false,
-    "cc_suitability_max_atr_pct": 0.035,
-    "cc_suitability_min_atr_pct": 0.004,
-    "cc_suitability_min_iv_hv_ratio": 0.9,
     "cc_mode": "TOTAL_RETURN",
     "cc_income_mode_min_hold_hours": 96.0,
-    "cc_option_profit_target_pct": 0.5,
-    "cc_close_at_dte_threshold": 3,
-    "cc_unrecoverable_block_portfolio": false,
-    "use_delta_filter": false,
-    "min_delta": 0.25,
-    "max_delta": 0.35
+    "cc_option_profit_target_pct": 0.5
   },
   "exit_logic": {
     "use_atr_targets": false,
     "use_atr_stop": true,
     "atr_stop_multiplier": 2.0,
     "atr_stop_replaces_hard_stop": true,
+    "atr_stop_use_hourly_atr": true,
+    "atr_stop_min_pct": 0.015,
     "use_sma_slope_exit": false,
     "sma_slope_threshold": -0.001,
-    "_comment_backstop": "atr_stop_replaces_hard_stop=true: the ~k*ATR stop is the real risk floor; stop_loss_threshold (-10%) is a catastrophe backstop that effectively never fires behind the fast-exit stack. Behavior-neutral flag that makes the intent explicit and silences the inert-stop warning (bots #231)."
+    "_comment_backstop": "atr_stop_replaces_hard_stop=true: the ~k*ATR stop is the real risk floor; stop_loss_threshold (-10%) is a catastrophe backstop that effectively never fires behind the fast-exit stack. Behavior-neutral flag that makes the intent explicit and silences the inert-stop warning (bots #231).",
+    "_comment_283": "#283: atr_stop_use_hourly_atr sizes the stop from the 1-hour ATR (14 bars ~ 3.5 trading days) instead of the 5-min ATR (~70 min). The old sizing produced a 0.77% stop on NVDA that intraday noise fired and the 2026-09-14 Monday gap walked through for -$902. atr_stop_min_pct floors the stop width at 1.5% as a backstop against implausibly small ATR readings."
   },
   "regime": {
     "use_regime_filter": true,
@@ -65,9 +58,9 @@
     "stop_loss_threshold": 0.9
   },
   "entry_filters": {
-    "mtf_lookback_bars": 2,
+    "mtf_lookback_bars": 4,
     "mtf_bullish_threshold": 0.65,
-    "confirmation_ticks_required": 15,
+    "confirmation_ticks_required": 8,
     "confirmation_min_seconds": 45,
     "confirmation_mode": "atr_max_floor",
     "confirmation_min_pct_floor": 0.001,
@@ -81,7 +74,7 @@
   },
   "neutral_regime": {
     "use_neutral_regime_entries": true,
-    "neutral_entry_mode": "conservative"
+    "neutral_entry_mode": "moderate"
   },
   "threshold_coordination": {
     "min_move_for_call_atr": 1.0,
@@ -110,7 +103,10 @@
     "peak_giveback_protect_pct": 0.75,
     "peak_giveback_min_r": 2.0,
     "re_entry_suppression_enabled": true,
-    "re_entry_cooldown_bars": 4
+    "re_entry_cooldown_bars": 4,
+    "gap_fade_shield_regime_gated": true,
+    "_comment_gap_fade_shield_regime_gated": "Shipped 2026-10-15 (v2 rule, tier1 exit-lever validation section 9). A blanket gap_fade_shield_enabled=false is pro-cyclical - it lifts bull return but costs return AND adds drawdown in bear/sideways. This regime-gated form relaxes the ORB/gap-fade shields only in non-downtrends (macro BULL/NEUTRAL and technical regime != BEAR) and stays armed in a downturn. Validated: it dominates the blanket flag on all 5 names x 3 windows, with a clear win on MSFT/QQQ/NVDA; CAT is excluded (max DD 10.2% -> 17.4%, walk-forward OOS P&L down). IWM keeps the blanket flag instead.",
+    "cascade_throttle_enabled": true
   },
   "adaptive_entry": {
     "enable_adaptive_entry": true,
@@ -118,7 +114,7 @@
     "min_neutral_mtf_threshold": 0.45,
     "max_neutral_mtf_threshold": 0.65,
     "lookback_bars_normal": 4,
-    "lookback_bars_breakout": 2,
+    "lookback_bars_breakout": 4,
     "adx_breakout_threshold": 25.0,
     "atr_expansion_ratio": 1.25
   },
@@ -141,7 +137,7 @@
     "enable_orchestrator": true,
     "strategy_intent": "SURFACE_ALL",
     "income_mode_mtf_relaxation": 0.15,
-    "_comment": "Valid postures: SURFACE_ALL, AUTO, TREND_MOMENTUM_GROWTH, VOLATILITY_DEFENSIVE, NEUTRAL_RANGE_HARVEST. Covered-call mode comes ONLY from cc_mode (#202) — COVERED_CALL_INCOME is no longer a valid strategy_intent."
+    "_comment": "Valid postures: SURFACE_ALL, AUTO, TREND_MOMENTUM_GROWTH, VOLATILITY_DEFENSIVE, NEUTRAL_RANGE_HARVEST. Covered-call mode comes ONLY from cc_mode (#202) \u2014 COVERED_CALL_INCOME is no longer a valid strategy_intent."
   },
   "macro_signals": {
     "enable_macro_signals": true,

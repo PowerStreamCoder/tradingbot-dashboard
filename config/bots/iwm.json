@@ -4,7 +4,7 @@
   "capital": {
     "capital_per_bucket_long": 32500.0,
     "capital_per_bucket_short": 1000.0,
-    "buckets_per_group": 1
+    "buckets_per_group": 2
   },
   "atr_parameters": {
     "atr_period": 20,
@@ -13,11 +13,10 @@
     "max_atr_ratio_for_trailing": 2.0,
     "trailing_stop_pct": 0.03,
     "activation_floor_pct": 0.012,
-    "use_atr_position_sizing": false,
     "position_risk_per_trade_pct": 0.005,
     "position_stop_loss_atr_multiplier": 2.0,
     "position_min_shares": 100,
-    "position_max_capital": 39000
+    "position_max_capital": 32500.0
   },
   "covered_calls": {
     "use_covered_calls": true,
@@ -28,18 +27,9 @@
     "call_expiration_days": 14,
     "call_min_premium_pct": 0.006,
     "call_confirmation_bars": 1,
-    "use_cc_suitability_screen": false,
-    "cc_suitability_max_atr_pct": 0.035,
-    "cc_suitability_min_atr_pct": 0.004,
-    "cc_suitability_min_iv_hv_ratio": 0.9,
     "cc_mode": "INCOME",
     "cc_income_mode_min_hold_hours": 96.0,
     "cc_option_profit_target_pct": 0.5,
-    "cc_close_at_dte_threshold": 3,
-    "cc_unrecoverable_block_portfolio": false,
-    "use_delta_filter": false,
-    "min_delta": 0.25,
-    "max_delta": 0.35,
     "_comment_expiration": "14 DTE = 336h term. Retained after measurement: shortening to 4 DTE was tested and is materially WORSE - call median hold collapsed 24.0h -> 1.0h and return fell 37.74% -> 21.90%, because a near-dated call is bought straight back (approaching_strike fires almost immediately and the thin premium fails the call_min_premium_pct gate). A longer tenor is what makes the premium worth collecting at all."
   },
   "exit_logic": {
@@ -66,9 +56,9 @@
     "stop_loss_threshold": 0.95
   },
   "entry_filters": {
-    "mtf_lookback_bars": 2,
+    "mtf_lookback_bars": 4,
     "mtf_bullish_threshold": 0.5,
-    "confirmation_ticks_required": 10,
+    "confirmation_ticks_required": 8,
     "confirmation_min_seconds": 15,
     "confirmation_mode": "atr_max_floor",
     "confirmation_min_pct_floor": 0.0005,
@@ -116,8 +106,11 @@
     "peak_giveback_shield_enabled": true,
     "peak_giveback_protect_pct": 0.75,
     "peak_giveback_min_r": 2.0,
+    "gap_fade_shield_enabled": false,
+    "_comment_gap_fade_shield": "Shipped 2026-10-15 (all-weather only name). Disabling the ORB breakdown / gap-fade shields is pro-cyclical in general - it lifts bull return but costs return AND adds drawdown in bear/sideways windows. IWM is the one name where the relaxation is positive in EVERY window tested (full-period +2.1pp, bearA 2024-10..2025-04 +0.9pp, bearB 2025-10..2026-04 +4.1pp, max DD 6.22%->6.68% flat), so it ships here only. Revert if a future regime replay turns this negative.",
     "re_entry_suppression_enabled": true,
-    "re_entry_cooldown_bars": 4
+    "re_entry_cooldown_bars": 4,
+    "cascade_throttle_enabled": true
   },
   "adaptive_entry": {
     "enable_adaptive_entry": true,
@@ -125,7 +118,7 @@
     "min_neutral_mtf_threshold": 0.45,
     "max_neutral_mtf_threshold": 0.65,
     "lookback_bars_normal": 4,
-    "lookback_bars_breakout": 2,
+    "lookback_bars_breakout": 4,
     "adx_breakout_threshold": 25.0,
     "atr_expansion_ratio": 1.25
   },
@@ -149,7 +142,7 @@
     "strategy_intent": "SURFACE_ALL",
     "income_mode_mtf_relaxation": 0.15,
     "_comment_cc_min_hold": "Churn-exit deferral floor. 96h, NOT 24h: measured, a 24h floor lets churn exits back in almost immediately and 30/37 calls close in under 6h, which destroys the overlay. At 96h the median call hold is 24h with only 8/36 under 6h. Defers profit_target / trailing_stop / intraday_peak_giveback_shield / break_even_lock_exit / partial_scale_out while a call is open. Hard risk controls (emergency, stop_loss, atr_stop, overnight_gap, regime_flip, sma_slope) and the terminal time exits are never deferred. Effect: PF 0.96 -> 1.07, max drawdown 18.85% -> 8.65%.",
-    "_comment": "Valid postures: SURFACE_ALL, AUTO, TREND_MOMENTUM_GROWTH, VOLATILITY_DEFENSIVE, NEUTRAL_RANGE_HARVEST. Covered-call mode comes ONLY from cc_mode (#202) — COVERED_CALL_INCOME is no longer a valid strategy_intent."
+    "_comment": "Valid postures: SURFACE_ALL, AUTO, TREND_MOMENTUM_GROWTH, VOLATILITY_DEFENSIVE, NEUTRAL_RANGE_HARVEST. Covered-call mode comes ONLY from cc_mode (#202) \u2014 COVERED_CALL_INCOME is no longer a valid strategy_intent."
   },
   "macro_signals": {
     "enable_macro_signals": true,

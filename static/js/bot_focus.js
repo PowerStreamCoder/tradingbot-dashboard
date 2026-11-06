@@ -1082,15 +1082,21 @@ function renderBotParameters(params) {
             category: 'capital',
             icon: '💰',
             title: 'Capital & Position Sizing',
-            desc: 'Portfolio bucket sizing, risk per trade, and position capital limits',
+            desc: 'Portfolio bucket sizing, risk allocation, and derived capital invariants',
             rows: [
                 { key: 'Long Bucket Capital', val: `<span class="param-val number highlight-green">${fmtParamCurrency(params.capital?.capital_per_bucket_long ?? 30000)}</span>` },
                 { key: 'Short Bucket Capital', val: `<span class="param-val number">${fmtParamCurrency(params.capital?.capital_per_bucket_short ?? 1000)}</span>` },
                 { key: 'Buckets per Group', val: `<span class="param-val number">${params.capital?.buckets_per_group ?? 1} bucket(s)</span>` },
-                { key: 'Max Position Capital', val: `<span class="param-val number highlight-blue">${fmtParamCurrency(params.atr_parameters?.position_max_capital ?? 25000)}</span>` },
-                { key: 'Min Position Shares', val: `<span class="param-val number">${params.atr_parameters?.position_min_shares ?? 100} shares</span>` },
-                { key: 'Risk Per Trade', val: `<span class="param-val number">${fmtParamPercent(params.atr_parameters?.position_risk_per_trade_pct ?? 0.005)}</span>` },
-                { key: 'ATR Position Sizing', val: fmtParamPill(params.atr_parameters?.use_atr_position_sizing) }
+                { key: 'Max Position Capital', val: (() => {
+                    const cap = params.atr_parameters?.position_max_capital ?? params.capital?.capital_per_bucket_long ?? 30000;
+                    return `<span class="param-val number highlight-blue">${fmtParamCurrency(cap)} <small style="font-size:10px;opacity:.7;">(auto-clamped)</small></span>`;
+                })() },
+                { key: 'Min Position Shares', val: (() => {
+                    const shares = params.atr_parameters?.position_min_shares ?? (params.covered_calls?.use_covered_calls ? 100 : 1);
+                    return `<span class="param-val number">${shares} shares <small style="font-size:10px;opacity:.7;">(auto-derived)</small></span>`;
+                })() },
+                { key: 'Sizing Method', val: '<span class="param-pill tag highlight-green">Fixed Bucket Capital</span>' },
+                { key: 'Risk Scale Multiplier', val: `<span class="param-val number highlight-blue">${Number(params.risk_scale ?? 1.0).toFixed(2)}x</span>` }
             ]
         },
         // 2. Risk Management & Stops
@@ -1102,7 +1108,7 @@ function renderBotParameters(params) {
             rows: [
                 { key: 'Hard Stop Loss Floor', val: `<span class="param-val number highlight-purple">${fmtParamPercent(1 - (params.risk_management?.stop_loss_threshold ?? 0.95), false)} (${params.risk_management?.stop_loss_threshold ?? 0.95}x)</span>` },
                 { key: 'Net Profit Target', val: `<span class="param-val number highlight-green">${fmtParamPercent(params.risk_management?.profit_target_net ?? 0.015, true)}</span>` },
-                { key: 'ATR Stop Multiplier', val: `<span class="param-val number">${params.exit_logic?.atr_stop_multiplier ?? 2.0}x ATR</span>` },
+                { key: 'ATR Stop Multiplier', val: `<span class="param-val number">${params.exit_logic?.atr_stop_multiplier ?? params.atr_parameters?.atr_stop_multiplier ?? 2.0}x ATR (L0 Invariant Base)</span>` },
                 { key: 'Trailing Stop %', val: `<span class="param-val number">${fmtParamPercent(params.atr_parameters?.trailing_stop_pct ?? 0.03)}</span>` },
                 { key: 'Activation Floor %', val: `<span class="param-val number">${fmtParamPercent(params.atr_parameters?.activation_floor_pct ?? 0.012)}</span>` },
                 { key: 'Trailing Stop ATR', val: `<span class="param-val number">${params.atr_parameters?.trailing_stop_atr_multiplier ?? 2.0}x ATR</span>` },
@@ -1117,14 +1123,14 @@ function renderBotParameters(params) {
             title: 'Entry Filters & Timing',
             desc: 'Multi-timeframe trend alignment, tick confirmation, and price floors',
             rows: [
-                { key: 'MTF Lookback Bars', val: `<span class="param-val number">${params.entry_filters?.mtf_lookback_bars ?? 2} bars</span>` },
+                { key: 'MTF Lookback Bars', val: `<span class="param-val number highlight-blue">${params.entry_filters?.mtf_lookback_bars ?? 4} bars (L0 Invariant)</span>` },
                 { key: 'MTF Bullish Threshold', val: `<span class="param-val number highlight-blue">${Number(params.entry_filters?.mtf_bullish_threshold ?? 0.5).toFixed(2)}</span>` },
-                { key: 'Confirmation Ticks', val: `<span class="param-val number">${params.entry_filters?.confirmation_ticks_required ?? 10} ticks</span>` },
+                { key: 'Confirmation Ticks', val: `<span class="param-val number">${params.entry_filters?.confirmation_ticks_required ?? 8} ticks</span>` },
                 { key: 'Min Confirmation Time', val: `<span class="param-val number">${params.entry_filters?.confirmation_min_seconds ?? 15} sec</span>` },
                 { key: 'Confirmation Mode', val: `<span class="param-pill tag">${params.entry_filters?.confirmation_mode ?? 'atr_max_floor'}</span>` },
                 { key: 'Min % Price Floor', val: `<span class="param-val number">${fmtParamPercent(params.entry_filters?.confirmation_min_pct_floor ?? 0.0008)}</span>` },
                 { key: 'Confirmation ATR Mult', val: `<span class="param-val number">${params.entry_filters?.confirmation_atr_multiplier ?? 0.2}x ATR</span>` },
-                { key: 'Breakout Lookback', val: `<span class="param-val number">${params.adaptive_entry?.lookback_bars_breakout ?? 2} bars (Normal ${params.adaptive_entry?.lookback_bars_normal ?? 4})</span>` }
+                { key: 'Breakout Lookback', val: `<span class="param-val number">${params.adaptive_entry?.lookback_bars_breakout ?? 4} bars (L0 Invariant)</span>` }
             ]
         },
         // 4. Covered Calls Overlay
@@ -1132,7 +1138,7 @@ function renderBotParameters(params) {
             category: 'calls',
             icon: '📜',
             title: 'Covered Calls Overlay',
-            desc: 'Options income overlay rules, dual-mode governance, delta filter, and expiration cadence',
+            desc: 'Options income overlay rules, dual-mode governance, strike offsets, and expiry cadence',
             rows: [
                 { key: 'Covered Calls Strategy', val: fmtParamPill(params.covered_calls?.use_covered_calls) },
                 // --- Dual-Mode Governance (cc_mode, #199 visibility) ---
@@ -1149,15 +1155,20 @@ function renderBotParameters(params) {
                         : `<span class="param-val number" style="opacity:.5">${hrs} hrs (TOTAL_RETURN)</span>`;
                 })() },
                 { key: 'Profit Target Buyback', val: `<span class="param-val number highlight-purple">${fmtParamPercent(params.covered_calls?.cc_option_profit_target_pct ?? 0.50)} retained</span>` },
-                { key: 'DTE Gamma Guard', val: `<span class="param-val number">&le;${params.covered_calls?.cc_close_at_dte_threshold ?? 3} DTE</span>` },
-                { key: 'Roll Up &amp; Out', val: fmtParamPill(params.covered_calls?.cc_enable_roll_up_and_out, `&ge;${params.covered_calls?.cc_roll_min_net_credit ?? 0.05}/sh net credit`, 'DISABLED') },
-                { key: 'UNRECOVERABLE Block', val: fmtParamPill(params.covered_calls?.cc_unrecoverable_block_portfolio, 'PORTFOLIO-WIDE', 'PER-BUCKET') },
+                { key: 'DTE Gamma Guard', val: `<span class="param-pill tag highlight-green">Holds to Expiry (Policy)</span>` },
+                { key: 'Roll Up &amp; Out', val: (() => {
+                    const mode = params.covered_calls?.cc_mode ?? 'TOTAL_RETURN';
+                    return mode === 'TOTAL_RETURN'
+                        ? `<span class="param-pill tag highlight-blue">Active (TOTAL_RETURN)</span>`
+                        : `<span class="param-pill tag" style="opacity:.5">Disabled (INCOME)</span>`;
+                })() },
                 // --- Entry & Strike Settings ---
                 { key: 'Eligible Regimes', val: fmtParamTags(params.covered_calls?.call_enabled_regimes || ['BULL', 'NEUTRAL']) },
                 { key: 'Target Expiration', val: `<span class="param-val number highlight-blue">${params.covered_calls?.call_expiration_days ?? 14} days</span>` },
                 { key: 'Min Option Premium', val: `<span class="param-val number highlight-green">${fmtParamPercent(params.covered_calls?.call_min_premium_pct ?? 0.006)}</span>` },
                 { key: 'Call Confirm Bars', val: `<span class="param-val number">${params.covered_calls?.call_confirmation_bars ?? 1} bar(s)</span>` },
-                { key: 'Delta Filter', val: fmtParamPill(params.covered_calls?.use_delta_filter, `${params.covered_calls?.min_delta ?? 0.25} - ${params.covered_calls?.max_delta ?? 0.35}`, 'DISABLED') },
+                { key: 'Strike Offset (Normal)', val: `<span class="param-val number">${fmtParamPercent(params.covered_calls?.call_strike_offset_normal ?? 0.018)} OTM</span>` },
+                { key: 'Strike Offset (Low Vol)', val: `<span class="param-val number">${fmtParamPercent(params.covered_calls?.call_strike_offset_low_vol ?? 0.015)} OTM</span>` },
                 { key: 'Profit Cushion ATR', val: `<span class="param-val number">${params.adaptive_covered_call?.base_profit_cushion_atr ?? 1.0}x ATR</span>` },
                 { key: 'Breakout Freeze Thresh', val: `<span class="param-val number">ADX ${params.adaptive_covered_call?.adx_trend_breakout_threshold ?? 25.0}</span>` }
             ]
