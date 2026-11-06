@@ -6,10 +6,11 @@ the top bot selector trigger pill and all dropdown option cards.
 
 from unittest.mock import MagicMock, patch
 from pathlib import Path
+from datetime import datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
-from main import app, dashboard_data
+from main import app, dashboard_data, authenticated_sessions
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 STATIC_DIR = Path(__file__).parent.parent / "static"
@@ -107,3 +108,115 @@ def test_bot_configs_merges_live_bot_status_active():
         assert nvda["is_trading"] is True
         assert nvda["paused"] is False
         assert nvda["status"] == "active"
+
+
+def test_bot_configs_firestore_exceptions_handled():
+    """Verify that /api/bot-configs handles exceptions during Firestore queries gracefully."""
+    client = TestClient(app)
+    mock_db = MagicMock()
+    mock_col = MagicMock()
+    mock_col.stream.side_effect = RuntimeError("Firestore failure")
+    mock_db.collection.return_value = mock_col
+
+    with patch("main.dashboard_data.db", mock_db):
+        res = client.get("/api/bot-configs")
+        assert res.status_code == 200
+        data = res.json()
+        assert "bots" in data
+
+
+def test_restart_bots_updates_status_docs():
+    """Verify /api/bot-control/restart marks is_trading: True in bot_status on success."""
+    client = TestClient(app)
+    session_id = "test-status-restart-session"
+    authenticated_sessions[session_id] = datetime.now() + timedelta(hours=1)
+    client.cookies.set("dashboard_session", session_id)
+
+    mock_doc = MagicMock()
+    mock_db = MagicMock()
+    mock_col = MagicMock()
+    mock_col.stream.return_value = [mock_doc]
+    mock_db.collection.return_value = mock_col
+
+    try:
+        with patch("httpx.AsyncClient.post") as mock_post, patch("main.dashboard_data.db", mock_db):
+            mock_post.return_value = MagicMock(
+                is_success=True,
+                status_code=200,
+                json=lambda: {"status": "success", "message": "Bots restarted"}
+            )
+            res = client.post("/api/bot-control/restart")
+            assert res.status_code == 200
+            data = res.json()
+            assert data["status"] == "success"
+            mock_doc.reference.update.assert_called_once()
+            args, _ = mock_doc.reference.update.call_args
+            assert args[0]["is_trading"] is True
+    finally:
+        authenticated_sessions.pop(session_id, None)
+
+
+def test_restart_bots_handles_status_update_exception():
+    """Verify /api/bot-control/restart still returns success if Firestore status update fails."""
+    client = TestClient(app)
+    session_id = "test-status-restart-err-session"
+    authenticated_sessions[session_id] = datetime.now() + timedelta(hours=1)
+    client.cookies.set("dashboard_session", session_id)
+
+    mock_doc = MagicMock()
+    mock_doc.reference.update.side_effect = RuntimeError("DB write error")
+    mock_db = MagicMock()
+    mock_col = MagicMock()
+    mock_col.stream.return_value = [mock_doc]
+    mock_db.collection.return_value = mock_col
+
+    try:
+        with patch("httpx.AsyncClient.post") as mock_post, patch("main.dashboard_data.db", mock_db):
+            mock_post.return_value = MagicMock(
+                is_success=True,
+                status_code=200,
+                json=lambda: {"status": "success", "message": "Bots restarted"}
+            )
+            res = client.post("/api/bot-control/restart")
+            assert res.status_code == 200
+            assert res.json()["status"] == "success"
+    finally:
+        authenticated_sessions.pop(session_id, None)
+
+
+def test_trade_history_all_doc_and_seq_mapping():
+    """Verify doc_id, analysis_metadata trade_id, and seqNum mapping in /api/trade-history/all."""
+    client = TestClient(app)
+    session_id = "test-trades-map-session"
+    authenticated_sessions[session_id] = datetime.now() + timedelta(hours=1)
+    client.cookies.set("dashboard_session", session_id)
+
+    mock_doc = MagicMock()
+    mock_doc.id = "mock_doc_id_999"
+    mock_doc.to_dict.return_value = {
+        "symbol": "AAPL",
+        "timestamp": datetime.now().isoformat(),
+        "analysis_metadata": {"trade_id": "meta_tid_123"},
+        "sequence_number": 77
+    }
+
+    mock_query = MagicMock()
+    mock_query.stream.return_value = [mock_doc]
+    mock_query.order_by.return_value = mock_query
+    mock_query.limit.return_value = mock_query
+
+    mock_ref = MagicMock()
+    mock_ref.where.return_value = mock_query
+
+    try:
+        with patch("main.dashboard_data.trades_ref", mock_ref):
+            res = client.get("/api/trade-history/all?days=999")
+            assert res.status_code == 200
+            trades = res.json().get("trades", [])
+            assert len(trades) >= 1
+            t = trades[0]
+            assert t["id"] == "mock_doc_id_999"
+            assert t["trade_id"] == "meta_tid_123"
+            assert t["seqNum"] == 77
+    finally:
+        authenticated_sessions.pop(session_id, None)
