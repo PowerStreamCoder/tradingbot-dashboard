@@ -45,6 +45,51 @@ let _profileCache = {
     ttl: 60000             // Cache TTL: 60 seconds
 };
 
+let isSessionExpiredNotified = false;
+
+/**
+ * Handle expired session across any API call in dashboard
+ */
+function handleSessionExpired() {
+    if (isSessionExpiredNotified) return;
+    isSessionExpiredNotified = true;
+
+    Logger.warn('BotFocus', 'Session expired (HTTP 401) - prompting user to log in');
+
+    // Stop all polling timers
+    if (typeof stopAllTimers === 'function') {
+        stopAllTimers();
+    }
+
+    // Complete loading states to avoid stuck spinners
+    if (typeof completeSectionSwitchLoading === 'function' && typeof BOT_SECTION_CONFIG !== 'undefined') {
+        Object.keys(BOT_SECTION_CONFIG).forEach(secKey => completeSectionSwitchLoading(secKey, true));
+    }
+
+    // Display banner
+    if (typeof document !== 'undefined' && document.body) {
+        const existingBanner = document.getElementById('sessionExpiredBanner');
+        if (!existingBanner) {
+            const banner = document.createElement('div');
+            banner.id = 'sessionExpiredBanner';
+            banner.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; z-index: 100000; background: #e53e3e; color: white; padding: 14px 20px; text-align: center; font-weight: 600; font-size: 15px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; gap: 15px;';
+            banner.innerHTML = `
+                <span>⚠️ Session expired. Please log in again to view live bot data.</span>
+                <button id="reloginBtn" style="background: white; color: #e53e3e; border: none; padding: 6px 16px; border-radius: 4px; font-weight: bold; cursor: pointer;">Log In</button>
+            `;
+            document.body.prepend(banner);
+
+            document.getElementById('reloginBtn')?.addEventListener('click', () => {
+                window.location.reload();
+            });
+        }
+    }
+
+    if (typeof showError === 'function') {
+        showError('Session Expired', 'Your session has expired. Please log in again.');
+    }
+}
+
 /**
  * Load bot configuration from API
  * Fetches /api/bot-configs and populates bot selector dropdown
@@ -55,7 +100,14 @@ let _profileCache = {
  */
 async function loadBotConfig() {
     try {
-        const response = await fetch(API_ENDPOINTS.BOT_CONFIGS);
+        const response = await fetch(API_ENDPOINTS.BOT_CONFIGS, {
+            credentials: 'include'
+        });
+
+        if (response.status === 401) {
+            handleSessionExpired();
+            return false;
+        }
 
         if (!response.ok) {
             throw new Error(`API returned ${response.status}: ${response.statusText}`);
@@ -401,7 +453,9 @@ function populateBotSelector(activeBots, allBots, profile) {
  */
 async function refreshBotSelector(targetBotId = null) {
     try {
-        const response = await fetch(`${API_ENDPOINTS.BOT_CONFIGS}?_t=${Date.now()}`);
+        const response = await fetch(`${API_ENDPOINTS.BOT_CONFIGS}?_t=${Date.now()}`, {
+            credentials: 'include'
+        });
         if (!response.ok) return false;
         const data = await response.json();
         if (!data.bots || !Array.isArray(data.bots)) return false;
@@ -750,6 +804,53 @@ function completeSectionSwitchLoading(secKey, isError = false) {
                 chartOverlay.style.display = 'none';
                 chartOverlay.style.opacity = '1';
             }, 250);
+        }
+    }
+
+    // Clean up loading placeholders inside tables & containers if still showing placeholder
+    if (secKey === 'orders') {
+        const ordersTbody = document.getElementById('positionOrdersTableBody');
+        if (ordersTbody && ordersTbody.querySelector('.table-switch-loading')) {
+            ordersTbody.innerHTML = isError
+                ? `<tr><td colspan="8" style="text-align: center; padding: 20px; color: #f56565;">⚠️ Unable to load ${CONFIG?.symbol || ''} positions &amp; orders</td></tr>`
+                : '<tr><td colspan="8" style="text-align: center; padding: 20px; color: #a0aec0;">No active position</td></tr>';
+            ordersTbody.dataset.lastContent = isError ? '' : JSON.stringify({ hasPosition: false });
+        }
+        const ordersStatus = document.getElementById('positionOrdersStatus');
+        if (ordersStatus && ordersStatus.textContent && ordersStatus.textContent.startsWith('Loading')) {
+            ordersStatus.textContent = isError ? 'Error loading orders' : 'No active position';
+        }
+    }
+
+    if (secKey === 'tradeHistory') {
+        const tradeTbody = document.getElementById('tradeHistoryBody');
+        if (tradeTbody && tradeTbody.querySelector('.table-switch-loading')) {
+            tradeTbody.innerHTML = isError
+                ? `<tr><td colspan="15" style="text-align: center; padding: 20px; color: #f56565;">⚠️ Unable to load ${CONFIG?.symbol || ''} trade history</td></tr>`
+                : '<tr><td colspan="15" style="text-align: center; padding: 20px; color: #a0aec0;">No trade history found</td></tr>';
+        }
+        const tradeCount = document.getElementById('tradeCount');
+        if (tradeCount && tradeCount.textContent && tradeCount.textContent.startsWith('Loading')) {
+            tradeCount.textContent = isError ? 'Error loading trades' : '0 trades';
+        }
+    }
+
+    if (secKey === 'logs') {
+        const logsContainer = document.getElementById('logsContainer');
+        if (logsContainer && logsContainer.querySelector('.logs-switch-placeholder')) {
+            logsContainer.innerHTML = isError
+                ? `<div style="text-align: center; padding: 20px; color: #f56565;">⚠️ Unable to load ${CONFIG?.symbol || ''} logs</div>`
+                : '<div style="text-align: center; padding: 20px; color: #a0aec0;">No logs recorded yet</div>';
+            logsContainer.dataset.lastContent = '';
+        }
+    }
+
+    if (secKey === 'params') {
+        const paramsGrid = document.getElementById('paramsCardsGrid');
+        if (paramsGrid && paramsGrid.querySelector('.params-loading-placeholder')) {
+            paramsGrid.innerHTML = isError
+                ? `<div class="params-loading-placeholder" style="color: #f56565;">⚠️ Unable to load ${CONFIG?.symbol || ''} parameters</div>`
+                : '<div class="params-loading-placeholder" style="color: #a0aec0;">No parameters configured</div>';
         }
     }
 
@@ -1105,7 +1206,15 @@ async function loadBotParameters(symbol) {
             ? API_ENDPOINTS.BOT_PARAMS(symbol) 
             : `/api/bot-params/${symbol}`;
 
-        const res = await fetch(endpoint);
+        const res = await fetch(endpoint, {
+            credentials: 'include'
+        });
+
+        if (res.status === 401) {
+            handleSessionExpired();
+            return;
+        }
+
         if (!res.ok) {
             throw new Error(`HTTP ${res.status}: ${res.statusText}`);
         }
@@ -1479,7 +1588,9 @@ function startConfigUpdatePolling() {
  */
 async function checkForConfigUpdates() {
     try {
-        const response = await fetch(`${API_ENDPOINTS.BOT_CONFIGS}?_t=${Date.now()}`);
+        const response = await fetch(`${API_ENDPOINTS.BOT_CONFIGS}?_t=${Date.now()}`, {
+            credentials: 'include'
+        });
         const data = await response.json();
 
         if (data.version && configVersion && data.version > configVersion) {
@@ -3343,11 +3454,23 @@ function clearStalePositionData() {
         positionStatus.className = 'position-status';
     }
 
-    // Clear positions table
-    const tbody = document.getElementById('positionsTableBody');
+    // Clear positions & orders table
+    const tbody = document.getElementById('positionOrdersTableBody');
     if (tbody) {
-        tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: #888;">No active positions (Firestore data syncing...)</td></tr>';
-        tbody.dataset.lastContent = ''; // Clear cache
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 20px; color: #a0aec0;">No active position</td></tr>';
+        tbody.dataset.lastContent = JSON.stringify({ hasPosition: false });
+    }
+    const ordersStatus = document.getElementById('positionOrdersStatus');
+    if (ordersStatus) {
+        ordersStatus.textContent = 'No active position';
+    }
+
+    const createBtn = document.getElementById('createPositionBtn');
+    if (createBtn && !isCreatingPosition) {
+        createBtn.disabled = false;
+        createBtn.classList.remove('loading');
+        createBtn.innerHTML = '<span>+</span> Create Position';
+        createBtn.title = 'Create a new position for this bot';
     }
 
     // Clear global bot data cache
@@ -3365,7 +3488,19 @@ async function updateBotOverview() {
     }
 
     try {
-        const response = await fetch(CONFIG.apiEndpoints.botOverview);
+        const response = await fetch(CONFIG.apiEndpoints.botOverview, {
+            credentials: 'include'
+        });
+
+        if (response.status === 401) {
+            handleSessionExpired();
+            return;
+        }
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
         const data = await response.json();
 
         const botKey = `bot${CONFIG.botId}`;
@@ -3452,6 +3587,16 @@ async function updateBotOverview() {
         completeSectionSwitchLoading('orders', true);
         completeSectionSwitchLoading('position', true);
         console.error('Error updating bot overview:', error);
+
+        const tbody = document.getElementById('positionOrdersTableBody');
+        if (tbody && tbody.querySelector('.table-switch-loading')) {
+            tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; padding: 20px; color: #f56565;">⚠️ Unable to load position data: ${error.message}</td></tr>`;
+            tbody.dataset.lastContent = '';
+        }
+        const ordersStatus = document.getElementById('positionOrdersStatus');
+        if (ordersStatus && ordersStatus.textContent && ordersStatus.textContent.startsWith('Loading')) {
+            ordersStatus.textContent = 'Error loading orders';
+        }
     }
 }
 
@@ -3506,6 +3651,16 @@ async function updateBotStatus() {
         const response = await fetch(`/api/bot-status/${CONFIG.symbol}`, {
             credentials: 'include'
         });
+
+        if (response.status === 401) {
+            handleSessionExpired();
+            return;
+        }
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
         const apiLatency = Date.now() - startTime;
 
         const data = await response.json();
@@ -4017,7 +4172,15 @@ function updateSMAStatus(botData) {
 async function updateTradesData() {
     try {
         // Use new lightweight metrics endpoint - reduces bandwidth by 99.96%
-        const response = await fetch(`/api/bot-metrics/${CONFIG.botId}?days=90`);
+        const response = await fetch(`/api/bot-metrics/${CONFIG.botId}?days=90`, {
+            credentials: 'include'
+        });
+
+        if (response.status === 401) {
+            handleSessionExpired();
+            return;
+        }
+
         if (!response.ok) throw new Error('Failed to fetch metrics');
 
         const metrics = await response.json();
@@ -4456,7 +4619,19 @@ async function updateTradeHistory() {
 
         // Fetch all trades (no limit) then filter for current profile
         console.log('[TRADE HISTORY] Fetching all trades...');
-        const response = await fetch('/api/trade-history/all');
+        const response = await fetch('/api/trade-history/all', {
+            credentials: 'include'
+        });
+
+        if (response.status === 401) {
+            handleSessionExpired();
+            return;
+        }
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
         const data = await response.json();
 
         const tbody = document.getElementById('tradeHistoryBody');
@@ -4685,7 +4860,19 @@ window.deleteTrade = confirmDeleteTradeHistoryItem;
  */
 async function updateLogsData() {
     try {
-        const response = await fetch(CONFIG.apiEndpoints.logs(CONFIG.botId));
+        const response = await fetch(CONFIG.apiEndpoints.logs(CONFIG.botId), {
+            credentials: 'include'
+        });
+
+        if (response.status === 401) {
+            handleSessionExpired();
+            return;
+        }
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
         const data = await response.json();
 
         const logsContainer = document.getElementById('logsContainer');
@@ -4697,6 +4884,7 @@ async function updateLogsData() {
         // Check if data has changed to avoid flickering
         const newContent = JSON.stringify(logs.slice(-20));
         if (logsContainer.dataset.lastContent === newContent) {
+            completeSectionSwitchLoading('logs');
             return; // No changes, don't update
         }
         logsContainer.dataset.lastContent = newContent;
@@ -4710,6 +4898,7 @@ async function updateLogsData() {
 
         if (logs.length === 0) {
             logsContainer.innerHTML = '<div class="log-entry" style="text-align: center; color: #a0aec0;">No logs available</div>';
+            completeSectionSwitchLoading('logs');
             return;
         }
 
