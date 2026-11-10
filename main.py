@@ -1166,12 +1166,17 @@ async def authenticate(request: Request):
 
             # Create response with session cookie
             response = Response(content=json.dumps({"status": "success"}), media_type="application/json")
+            is_secure = (
+                request.url.scheme == "https"
+                or request.headers.get("x-forwarded-proto") == "https"
+                or bool(os.environ.get("K_SERVICE"))
+            )
             response.set_cookie(
                 key="dashboard_session",
                 value=session_id,
                 max_age=86400,  # 24 hours
                 httponly=True,
-                secure=False,  # Set to False for development, True for production HTTPS
+                secure=is_secure,
                 samesite="lax"  # Allow cookie to be sent with same-site requests
             )
             return response
@@ -3496,7 +3501,7 @@ async def get_learning_candidates():
         priority_order = {"high": 0, "medium": 1, "low": 2}
         findings.sort(key=lambda x: (
             priority_order.get(x.get("priority", "low"), 3),
-            x.get("created_at", "")
+            str(x.get("created_at") or "")
         ), reverse=False)
 
         return {"findings": findings}
@@ -3691,7 +3696,7 @@ async def get_applied_changes(symbol: str = "", limit: int = 100):
             if symbol and data.get("symbol") != symbol:
                 continue
             changes.append(data)
-        changes.sort(key=lambda c: c.get("applied_at", ""), reverse=True)
+        changes.sort(key=lambda c: str(c.get("applied_at") or ""), reverse=True)
         return {"changes": changes[:limit]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch applied changes: {str(e)}")
@@ -3728,7 +3733,7 @@ async def get_adaptive_actions(limit: int = 100):
                     bucket["wins"] += 1
             else:
                 bucket["unresolved"] += 1
-        actions.sort(key=lambda a: a.get("created_at", ""), reverse=True)
+        actions.sort(key=lambda a: str(a.get("created_at") or ""), reverse=True)
         stats = []
         for a_type, bucket in sorted(per_type.items()):
             fired = bucket["resolved"] + bucket["unresolved"]
