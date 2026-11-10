@@ -3657,6 +3657,19 @@ async function updateBotStatus() {
         if (data.sma20 !== null && data.sma20 !== undefined) {
             updateElement('sma20', `$${data.sma20.toFixed(2)}`);
         }
+        const activeBucketForSlope = typeof getActiveBucket === 'function' ? getActiveBucket(window.latestBotData || {}) : null;
+        const sma20SlopeVal = (data.sma20_slope !== null && data.sma20_slope !== undefined)
+            ? data.sma20_slope
+            : (activeBucketForSlope?.sma20Slope !== undefined ? activeBucketForSlope.sma20Slope : null);
+        if (sma20SlopeVal !== null && sma20SlopeVal !== undefined) {
+            const slopeSign = sma20SlopeVal >= 0 ? '+' : '';
+            const slopeColor = sma20SlopeVal >= 0 ? '#48bb78' : '#f56565';
+            const slopeEl = document.getElementById('sma20Slope');
+            if (slopeEl) {
+                slopeEl.textContent = `${slopeSign}${sma20SlopeVal.toFixed(2)}%`;
+                slopeEl.style.color = slopeColor;
+            }
+        }
         if (data.sma200 !== null && data.sma200 !== undefined) {
             updateElement('sma200', `$${data.sma200.toFixed(2)}`);
         }
@@ -3830,20 +3843,30 @@ async function updateBotStatus() {
  * Update position data
  */
 function updatePositionData(botData) {
-    // Find first active bucket
-    let activeBucket = null;
-    for (let i = 1; i <= 10; i++) {
-        const bucket = botData[`bucket${i}`];
-        if (bucket && bucket.entryPrice) {
-            activeBucket = bucket;
-            break;
+    const activeBuckets = typeof getActiveBuckets === 'function' ? getActiveBuckets(botData) : [];
+    let activeBucket = activeBuckets.length > 0 ? activeBuckets[0] : null;
+
+    if (!activeBucket) {
+        for (let i = 1; i <= 10; i++) {
+            const bucket = botData[`bucket${i}`];
+            if (bucket && bucket.entryPrice) {
+                activeBucket = bucket;
+                activeBucket.bucketNumber = i;
+                break;
+            }
         }
     }
 
     if (activeBucket) {
         // Position is active
-        const side = activeBucket.side || 'long';
-        updateElement('positionStatus', `${side.toUpperCase()} ACTIVE`, 'position-status');
+        const side = (activeBucket.side || 'long').toUpperCase();
+        let statusText = `${side} ACTIVE`;
+        if (activeBuckets.length > 1) {
+            statusText = `${activeBuckets.length} ${side} POSITIONS (B#${activeBuckets.map(b => b.bucketNumber).join(', B#')})`;
+        } else if (activeBucket.residenceActive) {
+            statusText = `${side} ACTIVE 🏡 RESIDENCE`;
+        }
+        updateElement('positionStatus', statusText, 'position-status');
         updateElement('posAvgPrice', `$${activeBucket.entryPrice.toFixed(2)}`);
 
         // Use actual current price from bot (updated every 5 seconds)
@@ -3901,14 +3924,31 @@ function updatePositionData(botData) {
         const target = activeBucket.profitTargetPrice || (isShort ? activeBucket.entryPrice * 0.975 : activeBucket.entryPrice * 1.025);
 
         const isBreakEvenLocked = activeBucket.break_even_locked || (isShort ? stopLoss <= activeBucket.entryPrice : stopLoss >= activeBucket.entryPrice);
-        const slLabel = isBreakEvenLocked ? `🔒 $${stopLoss.toFixed(2)} (Break-Even)` : `$${stopLoss.toFixed(2)}`;
+        let slLabel = `$${stopLoss.toFixed(2)}`;
+        if (activeBucket.tieredProfitLocked || activeBucket.breakEvenStage === 'profit_floor') {
+            slLabel = `💰 $${stopLoss.toFixed(2)} (+1.0R Floor)`;
+        } else if (activeBucket.breakEvenStage === 'cost_basis') {
+            slLabel = `🔒 $${stopLoss.toFixed(2)} (Scratch Lock)`;
+        } else if (activeBucket.breakEvenStage === 'buffer') {
+            slLabel = `🛡️ $${stopLoss.toFixed(2)} (Buffer Lock)`;
+        } else if (isBreakEvenLocked) {
+            slLabel = `🔒 $${stopLoss.toFixed(2)} (Break-Even)`;
+        }
         updateElement('posStopLoss', slLabel);
         updateElement('posTarget', `$${target.toFixed(2)}`);
 
 
         // Update quantity display (if element exists)
         if (document.getElementById('posQuantity')) {
-            updateElement('posQuantity', quantity.toFixed(0));
+            let qtyDisplay = quantity.toFixed(0);
+            if (activeBucket.pyramidExecuted) {
+                qtyDisplay += ` (📈 +${activeBucket.pyramidAddQuantity || 50})`;
+            }
+            if (activeBuckets.length > 1) {
+                const totalQty = activeBuckets.reduce((sum, b) => sum + (b.quantity || 0), 0);
+                qtyDisplay = `${totalQty} (${activeBuckets.map(b => `${b.quantity || 100} [B#${b.bucketNumber}]`).join(' + ')})`;
+            }
+            updateElement('posQuantity', qtyDisplay);
         }
     } else {
         // No active position
@@ -4491,10 +4531,19 @@ function formatExitReason(reason) {
         'stop_loss': 'Stop Loss',
         'trailing_stop': 'Trailing Stop',
         'break_even_lock': '🔒 Break-Even Lock',
+        'break_even_lock_exit': '🔒 Break-Even Lock Exit',
         'time_decay_stagnation': '⌛ Time Decay Stagnation',
         'scale_out_target': '💰 Tier 1 Scale-Out',
         'pyramid_add': '📈 Pyramid Scale-In Add',
+        'regime_flip_to_bear_loss_cut': '🐻 Regime Flip Loss Cut',
+        'regime_flip': '🔄 Regime Flip Exit',
         'sma_reversal': 'SMA Reversal',
+        'sma_slope_reversal': '📉 SMA Slope Reversal',
+        'intraday_peak_giveback_shield': '🛡️ Peak Giveback Shield',
+        'orb_breakdown_shield': '🛡️ ORB Breakdown Shield',
+        'gap_up_fade_shield': '🛡️ Gap Fade Shield',
+        'premarket_trap_shield': '🛡️ Premarket Trap Shield',
+        'morning_distribution_shield': '🛡️ Morning Distribution Shield',
         'market_close': 'Market Close',
         'manual': 'Manual Exit',
         'unknown': 'Unknown'
@@ -4713,19 +4762,35 @@ async function updateLogsData() {
 }
 
 /**
- * Helper function to get the first active bucket from bot data
+ * Helper function to get all active buckets from bot data
  */
-function getActiveBucket(botData) {
-    if (!botData) return null;
+function getActiveBuckets(botData) {
+    if (!botData) return [];
 
-    // Check buckets 1-10 for first active one
+    const activeBuckets = [];
+    // Check buckets 1-10 for active ones
     for (let i = 1; i <= 10; i++) {
         const bucket = botData[`bucket${i}`];
         if (bucket && bucket.entryPrice && bucket.quantity) {
-            return bucket;
+            bucket.bucketNumber = i;
+            if (bucket.bucket_id === undefined || bucket.bucket_id === null) {
+                bucket.bucket_id = i;
+            }
+            if (!bucket.group) {
+                bucket.group = 'default';
+            }
+            activeBuckets.push(bucket);
         }
     }
-    return null;
+    return activeBuckets;
+}
+
+/**
+ * Helper function to get the first active bucket from bot data
+ */
+function getActiveBucket(botData) {
+    const buckets = getActiveBuckets(botData);
+    return buckets.length > 0 ? buckets[0] : null;
 }
 
 /**
@@ -4741,11 +4806,11 @@ function updatePositionOrdersTable(botData) {
         return;
     }
 
-    // Get active bucket from bot data
-    const activeBucket = getActiveBucket(botData);
+    // Get active buckets from bot data
+    const activeBuckets = getActiveBuckets(botData);
 
-    // FORCE UPDATE: Clear cache to fix stuck state
-    if (!activeBucket || !activeBucket.quantity) {
+    // FORCE UPDATE: Clear cache to fix stuck state when empty
+    if (activeBuckets.length === 0) {
         tbody.dataset.lastContent = ''; // Clear cache for empty state
     }
 
@@ -4755,7 +4820,7 @@ function updatePositionOrdersTable(botData) {
 
     const createBtn = document.getElementById('createPositionBtn');
 
-    if (!activeBucket || !activeBucket.quantity) {
+    if (activeBuckets.length === 0) {
         // If position creation is in-flight for this bot, keep the loading row intact
         if (isCreatingPosition && creatingBotId === CONFIG.botId) {
             return;
@@ -4805,82 +4870,6 @@ function updatePositionOrdersTable(botData) {
         createBtn.title = 'Position already exists for this bot. Close it first before creating a new one.';
     }
 
-    // Calculate display values
-    const symbol = CONFIG.symbol || 'N/A';
-    const quantity = activeBucket.quantity || 100;
-    const avgPrice = activeBucket.entryPrice || 0;
-    const markPrice = activeBucket.currentPrice || botData.currentPrice || avgPrice;
-
-    // Calculate unrealized P&L from stock position
-    const stockUnrealizedPnL = activeBucket.unrealizedPnL !== undefined
-        ? activeBucket.unrealizedPnL
-        : ((markPrice - avgPrice) * quantity);
-
-    // Add covered call gains/losses
-    // (#199): when optionCurrentValue is absent do NOT credit full premium — MTM
-    // is unknown; leave gain at 0 to avoid inflating dashboard P&L.
-    let coveredCallGain = 0;
-    if (activeBucket.optionSold && activeBucket.optionPremium) {
-        const premiumReceived = activeBucket.optionPremium;
-        if (activeBucket.optionCurrentValue !== undefined) {
-            coveredCallGain = premiumReceived - activeBucket.optionCurrentValue;
-        }
-        // else: MTM unavailable — coveredCallGain stays 0
-    }
-
-    // Total unrealized P&L
-    const unrealizedPnL = stockUnrealizedPnL + coveredCallGain;
-    const pnlPercent = (unrealizedPnL / (avgPrice * quantity)) * 100;
-
-    // Orders info
-    const stopLoss = activeBucket.stopLossPrice || null;
-    const target = activeBucket.profitTargetPrice || null;
-
-    // Covered call info (#194, #195, #199)
-    let coveredCallDisplay = '--';
-    if (activeBucket.optionSold) {
-        let parts = [];
-        if (activeBucket.optionStrike && activeBucket.optionExpiration) {
-            const expiration = new Date(activeBucket.optionExpiration).toLocaleDateString('en-US', {
-                month: 'short',
-                day: 'numeric'
-            });
-            const premium = activeBucket.optionPremium || 0;
-            parts.push(`${expiration} $${activeBucket.optionStrike}C`);
-            parts.push(`<small style="color: #48bb78;">+$${premium.toFixed(2)}</small>`);
-        }
-
-        // MTM valuation and basis (#194/#195)
-        if (activeBucket.optionCurrentValue !== undefined) {
-            const mtmBasis = activeBucket.optionMtmBasis;
-            let basisTag = '';
-            if (mtmBasis === 'BROKER_MID') {
-                basisTag = '<span style="font-size:0.75em; color:#48bb78; font-weight:600;" title="Live Broker Mid Mark">[Broker]</span>';
-            } else if (mtmBasis === 'STALE_BROKER_MID') {
-                basisTag = '<span style="font-size:0.75em; color:#ecc94b; font-weight:600;" title="Cached Broker Mid (<5m old)">[Stale]</span>';
-            } else if (mtmBasis === 'BLACK_SCHOLES') {
-                basisTag = '<span style="font-size:0.75em; color:#9f7aea; font-weight:600;" title="Black-Scholes Synthetic Fallback Mark">[BS Est]</span>';
-            }
-            parts.push(`<small style="color: #a0aec0;">MTM: $${activeBucket.optionCurrentValue.toFixed(2)} ${basisTag}</small>`);
-        }
-
-        // Option lifecycle state badge (#199)
-        const optState = activeBucket.optionState;
-        if (optState === 'UNRECOVERABLE') {
-            parts.push('<div style="margin-top:3px;"><span class="badge badge-danger" style="background:#e53e3e; color:#fff; padding:2px 6px; border-radius:4px; font-size:0.75em; font-weight:bold; letter-spacing:0.5px;">⚠️ UNRECOVERABLE</span></div>');
-        } else if (optState === 'RECONCILE_FAILED') {
-            parts.push('<div style="margin-top:3px;"><span class="badge badge-warning" style="background:#dd6b20; color:#fff; padding:2px 6px; border-radius:4px; font-size:0.75em; font-weight:bold; letter-spacing:0.5px;">⚠️ RECONCILE_FAILED</span></div>');
-        } else if (optState === 'CLOSING') {
-            parts.push('<div style="margin-top:3px;"><span class="badge badge-info" style="background:#3182ce; color:#fff; padding:2px 6px; border-radius:4px; font-size:0.75em;">CLOSING</span></div>');
-        }
-
-        if (parts.length > 0) {
-            coveredCallDisplay = parts.join('<br>');
-        }
-    }
-
-    const strategyTag = 'SMA Crossover';
-
     // Check for unrecoverable/reconcile-failed buckets across all bot buckets (#199)
     let unrecoverableWarning = '';
     for (let i = 1; i <= 10; i++) {
@@ -4894,22 +4883,33 @@ function updatePositionOrdersTable(botData) {
         }
     }
 
-    // Hash the display values for change detection
+    const symbol = CONFIG?.symbol || botData?.symbol || 'N/A';
+
+    // Hash the display values for change detection across all active buckets
     const newContent = JSON.stringify({
         hasPosition: true,
-        quantity: quantity,
-        entryPrice: roundPrice(avgPrice),
-        markPrice: roundPrice(markPrice),
-        unrealizedPnL: roundPnL(unrealizedPnL),
-        pnlPercent: roundPrice(pnlPercent),
-        stopLoss: roundPrice(stopLoss),
-        target: roundPrice(target),
-        optionSold: activeBucket.optionSold,
-        optionStrike: roundPrice(activeBucket.optionStrike),
-        optionPremium: roundPrice(activeBucket.optionPremium),
-        optionCurrentValue: roundPrice(activeBucket.optionCurrentValue),
-        optionState: activeBucket.optionState,
-        optionMtmBasis: activeBucket.optionMtmBasis,
+        count: activeBuckets.length,
+        buckets: activeBuckets.map(b => ({
+            bucketNum: b.bucketNumber,
+            quantity: b.quantity,
+            entryPrice: roundPrice(b.entryPrice),
+            markPrice: roundPrice(b.currentPrice || botData.currentPrice || b.entryPrice),
+            unrealizedPnL: roundPnL(b.unrealizedPnL),
+            stopLoss: roundPrice(b.stopLossPrice),
+            target: roundPrice(b.profitTargetPrice),
+            breakEvenStage: b.break_even_stage || b.breakEvenStage,
+            tieredProfitLocked: b.tiered_profit_locked || b.tieredProfitLocked,
+            breakEvenLocked: b.break_even_locked || b.breakEvenLocked,
+            pyramidExecuted: b.pyramid_executed || b.pyramidExecuted,
+            pyramidAddQuantity: b.pyramid_add_quantity || b.pyramidAddQuantity,
+            residenceActive: b.residence_active || b.residenceActive,
+            optionSold: b.optionSold,
+            optionStrike: roundPrice(b.optionStrike),
+            optionPremium: roundPrice(b.optionPremium),
+            optionCurrentValue: roundPrice(b.optionCurrentValue),
+            optionState: b.optionState,
+            optionMtmBasis: b.optionMtmBasis
+        })),
         warning: unrecoverableWarning
     });
 
@@ -4919,46 +4919,165 @@ function updatePositionOrdersTable(botData) {
 
     tbody.dataset.lastContent = newContent;
 
-    const pnlClass = unrealizedPnL >= 0 ? 'positive' : 'negative';
-    const pnlSign = unrealizedPnL >= 0 ? '+' : '';
-    const pnlIndicator = unrealizedPnL >= 0 ? '↑' : '↓';
+    const previouslySelectedId = document.querySelector('input[name="selectedPosition"]:checked')?.value;
+    const strategyTag = 'SMA Crossover';
+    let rowsHtml = '';
 
-    // Generate unique position ID
-    const positionId = `${botData.botId || 1}-${symbol}-${activeBucket.group || 'unknown'}-${activeBucket.bucket_id || 0}`;
+    activeBuckets.forEach(activeBucket => {
+        const bucketNum = activeBucket.bucketNumber || 1;
+        const quantity = activeBucket.quantity || 100;
+        const avgPrice = activeBucket.entryPrice || 0;
+        const markPrice = activeBucket.currentPrice || botData.currentPrice || avgPrice;
 
-    // Build the merged row
-    tbody.innerHTML = `
-        <tr class="position-row" data-position-id="${positionId}">
-            <td style="text-align: center;">
-                <input type="radio" name="selectedPosition" value="${positionId}" class="position-selector">
-            </td>
-            <td><strong>${symbol}</strong></td>
-            <td>
-                <div style="font-weight: 600;">${quantity} shares</div>
-                <div style="font-size: 0.85em; color: #a0aec0;">
-                    Entry: $${avgPrice.toFixed(2)} | Mark: $${markPrice.toFixed(2)}
+        // Calculate unrealized P&L from stock position
+        const stockUnrealizedPnL = activeBucket.unrealizedPnL !== undefined
+            ? activeBucket.unrealizedPnL
+            : ((markPrice - avgPrice) * quantity);
+
+        // Add covered call gains/losses
+        let coveredCallGain = 0;
+        if (activeBucket.optionSold && activeBucket.optionPremium) {
+            const premiumReceived = activeBucket.optionPremium;
+            if (activeBucket.optionCurrentValue !== undefined) {
+                coveredCallGain = premiumReceived - activeBucket.optionCurrentValue;
+            }
+        }
+
+        // Total unrealized P&L
+        const unrealizedPnL = stockUnrealizedPnL + coveredCallGain;
+        const pnlPercent = (avgPrice * quantity) > 0 ? (unrealizedPnL / (avgPrice * quantity)) * 100 : 0;
+
+        // Orders info
+        const stopLoss = activeBucket.stopLossPrice || null;
+        const target = activeBucket.profitTargetPrice || null;
+
+        // Stepped stop loss badge
+        const breakEvenStage = activeBucket.break_even_stage || activeBucket.breakEvenStage;
+        const tieredProfitLocked = activeBucket.tiered_profit_locked || activeBucket.tieredProfitLocked;
+        const isShort = (activeBucket.side || 'long').toLowerCase() === 'short';
+        const isBreakEvenLocked = activeBucket.break_even_locked || activeBucket.breakEvenLocked || (isShort ? (stopLoss !== null && stopLoss <= avgPrice) : (stopLoss !== null && stopLoss >= avgPrice));
+
+        let stopLossBadge = '<span style="color: #718096;">--</span>';
+        if (stopLoss !== null && stopLoss !== undefined) {
+            if (tieredProfitLocked || breakEvenStage === 'profit_floor') {
+                stopLossBadge = `<span class="order-badge stop" style="background:#22543d; border-color:#38a169; color:#9ae6b4;">$${stopLoss.toFixed(2)} <small style="display:block; font-size:0.75em;">💰 +1.0R Floor</small></span>`;
+            } else if (breakEvenStage === 'cost_basis') {
+                stopLossBadge = `<span class="order-badge stop" style="background:#2c5282; border-color:#4299e1; color:#bee3f8;">$${stopLoss.toFixed(2)} <small style="display:block; font-size:0.75em;">🔒 Scratch Lock</small></span>`;
+            } else if (breakEvenStage === 'buffer') {
+                stopLossBadge = `<span class="order-badge stop" style="background:#2a4365; border-color:#63b3ed; color:#ebf8ff;">$${stopLoss.toFixed(2)} <small style="display:block; font-size:0.75em;">🛡️ Buffer Lock</small></span>`;
+            } else if (isBreakEvenLocked) {
+                stopLossBadge = `<span class="order-badge stop">$${stopLoss.toFixed(2)} <small style="display:block; font-size:0.75em;">🔒 Break-Even</small></span>`;
+            } else {
+                stopLossBadge = `<span class="order-badge stop">$${stopLoss.toFixed(2)}</span>`;
+            }
+        }
+
+        // Covered call info (#194, #195, #199)
+        let coveredCallDisplay = '--';
+        if (activeBucket.optionSold) {
+            let parts = [];
+            if (activeBucket.optionStrike && activeBucket.optionExpiration) {
+                const expiration = new Date(activeBucket.optionExpiration).toLocaleDateString('en-US', {
+                    month: 'short',
+                    day: 'numeric'
+                });
+                const premium = activeBucket.optionPremium || 0;
+                parts.push(`${expiration} $${activeBucket.optionStrike}C`);
+                parts.push(`<small style="color: #48bb78;">+$${premium.toFixed(2)}</small>`);
+            }
+
+            // MTM valuation and basis (#194/#195)
+            if (activeBucket.optionCurrentValue !== undefined) {
+                const mtmBasis = activeBucket.optionMtmBasis;
+                let basisTag = '';
+                if (mtmBasis === 'BROKER_MID') {
+                    basisTag = '<span style="font-size:0.75em; color:#48bb78; font-weight:600;" title="Live Broker Mid Mark">[Broker]</span>';
+                } else if (mtmBasis === 'STALE_BROKER_MID') {
+                    basisTag = '<span style="font-size:0.75em; color:#ecc94b; font-weight:600;" title="Cached Broker Mid (<5m old)">[Stale]</span>';
+                } else if (mtmBasis === 'BLACK_SCHOLES') {
+                    basisTag = '<span style="font-size:0.75em; color:#9f7aea; font-weight:600;" title="Black-Scholes Synthetic Fallback Mark">[BS Est]</span>';
+                }
+                parts.push(`<small style="color: #a0aec0;">MTM: $${activeBucket.optionCurrentValue.toFixed(2)} ${basisTag}</small>`);
+            }
+
+            // Option lifecycle state badge (#199)
+            const optState = activeBucket.optionState;
+            if (optState === 'UNRECOVERABLE') {
+                parts.push('<div style="margin-top:3px;"><span class="badge badge-danger" style="background:#e53e3e; color:#fff; padding:2px 6px; border-radius:4px; font-size:0.75em; font-weight:bold; letter-spacing:0.5px;">⚠️ UNRECOVERABLE</span></div>');
+            } else if (optState === 'RECONCILE_FAILED') {
+                parts.push('<div style="margin-top:3px;"><span class="badge badge-warning" style="background:#dd6b20; color:#fff; padding:2px 6px; border-radius:4px; font-size:0.75em; font-weight:bold; letter-spacing:0.5px;">⚠️ RECONCILE_FAILED</span></div>');
+            } else if (optState === 'CLOSING') {
+                parts.push('<div style="margin-top:3px;"><span class="badge badge-info" style="background:#3182ce; color:#fff; padding:2px 6px; border-radius:4px; font-size:0.75em;">CLOSING</span></div>');
+            }
+
+            if (parts.length > 0) {
+                coveredCallDisplay = parts.join('<br>');
+            }
+        }
+
+        const pnlClass = unrealizedPnL >= 0 ? 'positive' : 'negative';
+        const pnlSign = unrealizedPnL >= 0 ? '+' : '';
+        const pnlIndicator = unrealizedPnL >= 0 ? '↑' : '↓';
+
+        // Generate unique position ID
+        const positionId = `${botData.botId || 1}-${symbol}-${activeBucket.group || 'unknown'}-${activeBucket.bucket_id || bucketNum}`;
+        const isChecked = previouslySelectedId === positionId ? 'checked' : '';
+
+        const residenceActive = activeBucket.residence_active || activeBucket.residenceActive;
+        const pyramidExecuted = activeBucket.pyramid_executed || activeBucket.pyramidExecuted;
+        const pyramidAddQuantity = activeBucket.pyramid_add_quantity || activeBucket.pyramidAddQuantity || 50;
+
+        let qtyHtml = `<div style="font-weight: 600;">${quantity} shares`;
+        if (pyramidExecuted) {
+            qtyHtml += ` <span class="badge" style="background: #276749; color: #fff; padding: 1px 5px; border-radius: 3px; font-size: 0.75em; margin-left: 4px;" title="Pyramided scale-in executed">📈 Pyramided (+${pyramidAddQuantity})</span>`;
+        }
+        qtyHtml += `</div>`;
+        qtyHtml += `
+            <div style="font-size: 0.85em; color: #a0aec0;">
+                Entry: $${avgPrice.toFixed(2)} | Mark: $${markPrice.toFixed(2)}
+            </div>
+        `;
+        if (residenceActive) {
+            qtyHtml += `
+                <div style="margin-top: 3px;">
+                    <span class="badge" style="background: #2b6cb0; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 0.75em; font-weight: 600;" title="Trend-capture residence active — scalp churn shields deferred to ATR trailing stop">🏡 Trend Residence</span>
                 </div>
-            </td>
-            <td>
-                <div class="${pnlClass}" style="font-weight: 700; font-size: 1.05em;">
-                    ${pnlIndicator} ${pnlSign}$${Math.abs(unrealizedPnL).toFixed(2)}
-                </div>
-                <div class="${pnlClass}" style="font-size: 0.85em;">
-                    ${pnlSign}${pnlPercent.toFixed(2)}%
-                </div>
-            </td>
-            <td>
-                ${stopLoss ? `<span class="order-badge stop">$${stopLoss.toFixed(2)}</span>` : '<span style="color: #718096;">--</span>'}
-            </td>
-            <td>
-                ${target ? `<span class="order-badge target">$${target.toFixed(2)}</span>` : '<span style="color: #718096;">--</span>'}
-            </td>
-            <td style="font-size: 0.9em;">
-                ${coveredCallDisplay}
-            </td>
-            <td><span class="strategy-tag">${strategyTag}</span></td>
-        </tr>
-    `;
+            `;
+        }
+
+        let symbolHtml = `<strong>${symbol}</strong>`;
+        if (activeBuckets.length > 1 || bucketNum > 1) {
+            symbolHtml += ` <span class="badge" style="background: #4a5568; color: #fff; padding: 1px 5px; border-radius: 3px; font-size: 0.75em; margin-left: 4px;">B#${bucketNum}</span>`;
+        }
+
+        rowsHtml += `
+            <tr class="position-row" data-position-id="${positionId}">
+                <td style="text-align: center;">
+                    <input type="radio" name="selectedPosition" value="${positionId}" class="position-selector" ${isChecked}>
+                </td>
+                <td>${symbolHtml}</td>
+                <td>${qtyHtml}</td>
+                <td>
+                    <div class="${pnlClass}" style="font-weight: 700; font-size: 1.05em;">
+                        ${pnlIndicator} ${pnlSign}$${Math.abs(unrealizedPnL).toFixed(2)}
+                    </div>
+                    <div class="${pnlClass}" style="font-size: 0.85em;">
+                        ${pnlSign}${pnlPercent.toFixed(2)}%
+                    </div>
+                </td>
+                <td>${stopLossBadge}</td>
+                <td>
+                    ${target ? `<span class="order-badge target">$${target.toFixed(2)}</span>` : '<span style="color: #718096;">--</span>'}
+                </td>
+                <td style="font-size: 0.9em;">
+                    ${coveredCallDisplay}
+                </td>
+                <td><span class="strategy-tag">${strategyTag}</span></td>
+            </tr>
+        `;
+    });
+
+    tbody.innerHTML = rowsHtml;
 
     // Update status
     if (statusEl) {
@@ -4967,8 +5086,14 @@ function updatePositionOrdersTable(botData) {
             statusEl.style.color = '#e53e3e';
             statusEl.style.fontWeight = 'bold';
         } else {
-            const side = (activeBucket.side || 'long').toUpperCase();
-            statusEl.textContent = `${side} - 1 position active`;
+            const side = (activeBuckets[0].side || 'long').toUpperCase();
+            if (activeBuckets.length === 1) {
+                const residenceTag = (activeBuckets[0].residence_active || activeBuckets[0].residenceActive) ? ' (🏡 Residence Active)' : '';
+                statusEl.textContent = `${side} - 1 position active (Bucket #${activeBuckets[0].bucketNumber})${residenceTag}`;
+            } else {
+                const bNums = activeBuckets.map(b => `#${b.bucketNumber}`).join(', ');
+                statusEl.textContent = `${side} - ${activeBuckets.length} positions active (Buckets: ${bNums})`;
+            }
             statusEl.style.color = '';
             statusEl.style.fontWeight = '';
         }
@@ -4987,6 +5112,12 @@ function updatePositionOrdersTable(botData) {
             }
         });
     });
+
+    // Update close position button state based on current selection
+    const closeBtn = document.getElementById('closePositionBtn');
+    if (closeBtn) {
+        closeBtn.disabled = !tbody.querySelector('.position-selector:checked');
+    }
 }
 
 /**
