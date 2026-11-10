@@ -3,6 +3,23 @@
   "description": "Error fingerprint database mapping stack traces, error messages, and symptoms to root causes and quick resolutions.",
   "fingerprints": [
     {
+      "id": "ERR_IBKR_COMPETING_SESSION_10197",
+      "patterns": [
+        "Error 10197",
+        "No market data during competing live session",
+        "Trading TWS session is connected from a different IP address"
+      ],
+      "symptom": "Market data is frozen across all bots; tick stream stops; no trades execute; watchdog reports no bar data.",
+      "affected_files": [
+        "services/bot_manager.py",
+        "trading/base.py",
+        "docker-compose.gateways.yml"
+      ],
+      "root_cause": "Simultaneous live and paper IBKR sessions for the same user (e.g. ib-gateway-live running concurrently with ib-gateway-paper, or an active session on IBKR Mobile / Desktop TWS / Web Portal). IBKR enforces single-session market data rules for shared market data subscriptions.",
+      "resolution": "Stop competing gateway/session (e.g. 'sudo docker stop ib-gateway-live' or log out of mobile/web TWS), then restart the trading bot manager ('sudo systemctl restart trading-bot-manager').",
+      "verification_cmd": "python3 services/bot_manager.py --status"
+    },
+    {
       "id": "ERR_NAIVE_DATETIME",
       "patterns": [
         "can't subtract offset-naive and offset-aware datetimes",
@@ -243,6 +260,60 @@
       "root_cause": "The watchdog decides liveness by sampling the pidfile's pid (os.kill(pid, 0) plus a /proc/<pid>/cmdline check), so it observes a crash-looping bot as 'alive' during the instant between two restarts, and a stale Firestore heartbeat then reads as a hang. It samples liveness and never sees deaths, so the supervisor's crash-loop detection (D21, bots #355) does not cover it and the two alerts contradict each other about one fault. The pidfile already carried the discriminator - bot_manager._write_pidfile writes '<pid>\\n<start_epoch>' - but only the pid was read.",
       "resolution": "Read the start epoch from the pidfile and suppress the hung event while the current process instance is younger than the heartbeat timeout (a process that has just started has not yet had a full window to heartbeat, so a stale heartbeat belongs to a dead predecessor). An unknown or negative uptime still alerts, so a real hang is never silenced. bots #363.",
       "verification_cmd": "python3 -m pytest tradingbot-bots/tests/test_event_detector.py tradingbot-bots/tests/test_notification_service.py"
+    },
+    {
+      "id": "ERR_OPS_WATCHDOG_DISABLED",
+      "patterns": [
+        "No recent VM health snapshot is available",
+        "The ops-watchdog timer (every 15 min) has not reported within the last hour",
+        "ops-watchdog.service/.timer on the VM"
+      ],
+      "symptom": "The daily summary digest (16:00 ET) includes a LOW priority alert saying 'No recent VM health snapshot is available. The ops-watchdog timer (every 15 min) has not reported within the last hour -- check ops-watchdog.service/.timer on the VM.'",
+      "affected_files": [
+        "tradingbot-services/.github/workflows/deploy-services.yml",
+        "tradingbot-services/scripts/ops-watchdog.sh",
+        "tradingbot-bots/notification_service/main.py"
+      ],
+      "root_cause": "When ops-watchdog.timer was introduced (Issue #310), deploy-services.yml did not enable or start ops-watchdog.timer. It remained disabled/inactive on the VM, so ops-watchdog.sh never ran and system_health/current in Firestore went stale/missing. Additionally, weekday-only timers lacked weekend staleness tolerance in ops-watchdog.sh.",
+      "resolution": "Enable ops-watchdog.timer with `sudo systemctl enable --now ops-watchdog.timer` in deploy-services.yml. Also add weekend tolerance (+52h on Sat, Sun, Mon) in ops-watchdog.sh for weekday-only timers (trade-log-auditor, learning-analysis).",
+      "verification_cmd": "gcloud compute ssh trading-bot-vm --zone=us-central1-a --command='systemctl status ops-watchdog.timer'"
+    },
+    {
+      "id": "ERR_ADAPTIVE_INDICATORS_NONE_FLOAT",
+      "patterns": [
+        "TypeError: float() argument must be a string or a real number, not 'NoneType'",
+        "compute_dynamic_call_params",
+        "Broker Client ID Conflict - Restart Failure Persisting"
+      ],
+      "symptom": "Bot crash-loops upon startup or during bar processing with 'TypeError: float() argument must be a string or a real number, not 'NoneType'', prompting the supervisor to issue a persistent failure notification (often misidentified as an IBKR Client ID 326 conflict).",
+      "affected_files": [
+        "trading/adaptive_covered_call_agent.py",
+        "trading/adaptive_entry_agent.py",
+        "trading/agent_orchestrator.py",
+        "trading/options_manager.py",
+        "trading/base.py"
+      ],
+      "root_cause": "When market indicators (e.g. iv, iv_rank, hv, adx, atr) contain explicit None values (e.g. when option quotes return empty/no conId), dict.get('iv', 0.0) returns None because the key is present in the dictionary. Casting this with float() raises TypeError and crashes the bot loop.",
+      "resolution": "Use safe float coercion helper (_safe_float) across adaptive agents and orchestrators to safely handle None and non-numeric types. Add defensive try-except fallback in options_manager and base.py so secondary overlay failures never terminate core bot execution.",
+      "verification_cmd": "pytest tests/test_adaptive_covered_call_agent.py tests/test_adaptive_entry_agent.py tests/test_agent_orchestrator.py -v --no-cov"
+    },
+    {
+      "id": "ERR_POSITION_CREATION_TIMEOUT_STALE_FEED",
+      "patterns": [
+        "Position creation timed out waiting for bot response",
+        "The bot may be offline or delayed. Please check bot logs and status",
+        "Blocking order execution: IBKR unhealthy (Market data stale",
+        "IBKR connection unhealthy: Market data stale"
+      ],
+      "symptom": "Operator attempts to create position from dashboard; UI times out after 45s with warning 'Position creation timed out waiting for bot response. The bot may be offline or delayed.', while bot log reports 'Blocking order execution: IBKR unhealthy (Market data stale)'.",
+      "affected_files": [
+        "trading/execution_manager.py",
+        "trading/base.py",
+        "tradingbot-dashboard/static/js/bot_focus.js"
+      ],
+      "root_cause": "1) IBKRHealthMonitor hardcoded a 120s staleness threshold which is shorter than the 300s (5-min) bar cadence, falsely blocking execution for 60% of the session. 2) The bot pending command check was tied to the 60s heartbeat while dashboard polling timed out after 45s.",
+      "resolution": "Scale IBKRHealthMonitor stale data threshold dynamically based on bar_size/stale_data_timeout (450s-600s). Decouple pending command polling to run every 3s in the heartbeat loop. Increase dashboard UI maxAttempts from 30 (45s) to 50 (75s).",
+      "verification_cmd": "pytest tests/test_execution_manager_coverage.py tests/test_base_coverage.py -v --no-cov"
     }
   ]
 }
