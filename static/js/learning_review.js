@@ -42,8 +42,38 @@ function showToast(message, type = 'success') {
  * Load learning findings from API
  */
 async function loadFindings() {
+    const container = document.getElementById('findings-container');
+    if (container) {
+        container.innerHTML = '<div class="loading">Loading findings...</div>';
+    }
+
     try {
-        const response = await fetch('/api/learning-candidates');
+        const response = await fetch(`/api/learning-candidates?_t=${Date.now()}`, {
+            credentials: 'include',
+            cache: 'no-store'
+        });
+
+        if (response.status === 401) {
+            if (container) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <h2>⚠️ Authentication Required</h2>
+                        <p>Your session has expired. Please <a href="/learning-review" style="color: #38bdf8; text-decoration: underline;">log in</a> to view learning findings.</p>
+                    </div>
+                `;
+            }
+            return;
+        }
+
+        if (!response.ok) {
+            let errorMsg = `HTTP ${response.status}: ${response.statusText}`;
+            try {
+                const errData = await response.json();
+                errorMsg = errData.detail || errorMsg;
+            } catch (_) {}
+            throw new Error(errorMsg);
+        }
+
         const data = await response.json();
         allFindings = data.findings || [];
 
@@ -51,12 +81,14 @@ async function loadFindings() {
         renderFindings(allFindings);
     } catch (error) {
         console.error('Failed to load findings:', error);
-        document.getElementById('findings-container').innerHTML = `
-            <div class="empty-state">
-                <h2>Error loading findings</h2>
-                <p>${error.message}</p>
-            </div>
-        `;
+        if (container) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <h2>Error loading findings</h2>
+                    <p>${error.message}</p>
+                </div>
+            `;
+        }
     }
 }
 
@@ -91,13 +123,15 @@ function updateStats(findings) {
     const bLow = document.getElementById('badge-learning-low');
     if (bLow) bLow.textContent = low;
 
-    // Find most recent finding
-    if (findings.length > 0) {
-        const latest = findings.reduce((a, b) =>
-            new Date(a.created_at) > new Date(b.created_at) ? a : b
-        );
-        const date = new Date(latest.created_at);
-        document.getElementById('stat-last-run').textContent = date.toLocaleDateString();
+    // Find most recent finding safely handling null/missing timestamps
+    const validDates = findings
+        .map(f => (f.created_at ? new Date(f.created_at) : null))
+        .filter(d => d && !isNaN(d.getTime()));
+
+    if (validDates.length > 0) {
+        const latestTime = Math.max(...validDates.map(d => d.getTime()));
+        const latestDate = new Date(latestTime);
+        document.getElementById('stat-last-run').textContent = latestDate.toLocaleDateString();
     } else {
         document.getElementById('stat-last-run').textContent = 'Never';
     }

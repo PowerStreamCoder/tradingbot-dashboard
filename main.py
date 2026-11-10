@@ -3462,7 +3462,7 @@ async def learning_review_page():
 
 
 @app.get("/api/learning-candidates")
-async def get_learning_candidates():
+async def get_learning_candidates(response: Response = None):
     """
     Get all learning candidates from Firestore.
 
@@ -3503,6 +3503,9 @@ async def get_learning_candidates():
             priority_order.get(x.get("priority", "low"), 3),
             str(x.get("created_at") or "")
         ), reverse=False)
+
+        if response:
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
 
         return {"findings": findings}
 
@@ -3566,7 +3569,7 @@ async def handle_learning_decision(decision: LearningDecision):
 
 
 @app.get("/api/learning-candidates/stats")
-async def get_learning_stats():
+async def get_learning_stats(response: Response = None):
     """
     Get statistics about learning candidates.
 
@@ -3620,6 +3623,9 @@ async def get_learning_stats():
                 backtest = data.get("backtest_results", {})
                 improvement = backtest.get("pnl_improvement", 0)
                 stats["potential_savings"] += improvement
+
+        if response:
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
 
         return stats
 
