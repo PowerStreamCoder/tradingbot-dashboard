@@ -2808,7 +2808,7 @@ function pollPositionCommandStatus(botId, symbol, startTime) {
     }
 
     let pollAttempts = 0;
-    const maxAttempts = 30; // 30 * 1.5s = 45 seconds
+    const maxAttempts = 50; // 50 * 1.5s = 75 seconds (v4.6: increased from 45s to allow for broker fills)
 
     positionCommandPollTimer = setInterval(async () => {
         pollAttempts++;
