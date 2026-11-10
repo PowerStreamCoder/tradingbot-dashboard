@@ -168,12 +168,12 @@ BasePaperTrader._heartbeat_loop() → Writes last_heartbeat timestamp, connectio
 ### Known Failure Modes & Diagnostic Playbook
 | Error ID | Symptom | Quick Resolution |
 |---|---|---|
+| `ERR_IBKR_COMPETING_SESSION_10197` | Market data is frozen across all bots; tick stream | Stop competing gateway/session (e.g. 'sudo docker stop ib-gateway |
 | `ERR_NAIVE_DATETIME` | Trade timestamps mismatched or offset datetime err | Use datetime.now(timezone.utc) or utcnow() helper. All Firestore  |
 | `ERR_PHANTOM_EXIT` | Bot triggers exit callback for position no longer  | Check ib.positions() before processing fill and enforce exec_id d |
 | `ERR_IBKR_HMDS_162` | Bot receives 0 historical bars on startup and rema | Use bar_size '5 mins' and whatToShow='TRADES'. |
 | `ERR_OPTION_PNL_ZERO` | Tick-based exit calculations evaluate covered call | Pass bucket parameter explicitly to _check_exit_conditions to pul |
 | `ERR_PENDING_SUBMIT_TIMEOUT` | Bot classified as unhealthy on latency spike or th | Set unhealthy threshold to 7 timeouts and add 60-second cooldown  |
-| `ERR_ASYNC_FILL_ORPHAN` | IBKR fills order after bot gave up waiting, causin | Use AsyncFillMonitor to track timed-out order IDs for 60 seconds  |
 
 ### Quick Verification Tools
 - Fast parameter eval: `python3 tradingbot-tools/scripts/quick_backtest_eval.py --symbol <TICKER> --compact`
