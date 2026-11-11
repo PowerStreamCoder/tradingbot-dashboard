@@ -295,3 +295,23 @@ def test_api_key_auth_allows_proxy_access(api_key_client):
     with patch("httpx.AsyncClient.request", new_callable=AsyncMock, return_value=mock_resp):
         res = api_key_client.post("/api/bot-control/bots/afrm_sma/enable")
         assert res.status_code == 200
+
+
+def test_graduate_and_flatten_modals_outside_stock_picker_section():
+    """Verify that graduateLiveModal and emergencyFlattenModal are not inside stock-picker-section."""
+    from pathlib import Path
+    template_path = Path(__file__).parent.parent / "templates" / "bot_focus.html"
+    assert template_path.exists()
+    content = template_path.read_text(encoding="utf-8")
+
+    sp_start = content.find('id="stock-picker-section"')
+    assert sp_start != -1
+    sp_end = content.find('</section>', sp_start)
+    assert sp_end != -1
+
+    stock_picker_block = content[sp_start:sp_end]
+    assert 'id="graduateLiveModal"' not in stock_picker_block
+    assert 'id="emergencyFlattenModal"' not in stock_picker_block
+
+    assert 'id="graduateLiveModal"' in content
+    assert 'id="emergencyFlattenModal"' in content

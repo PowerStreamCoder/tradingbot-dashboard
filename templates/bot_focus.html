@@ -943,123 +943,6 @@
                     </div>
                 </div>
             </div>
-
-            <!-- Graduate to Live Modal (Phase 5 / Issue #113) -->
-            <div id="graduateLiveModal" class="sp-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-graduate-title" style="display: none;">
-                <div class="sp-modal-container">
-                    <div class="sp-modal-header">
-                        <div>
-                            <h3 class="sp-modal-title" id="modal-graduate-title">
-                                🚀 Graduate <span id="modal-graduate-symbol" class="sp-symbol-highlight">-</span> to LIVE Trading
-                            </h3>
-                            <p class="sp-modal-subtitle">
-                                Switch bot to Interactive Brokers Live Gateway (Port 4001, Real Money).
-                            </p>
-                        </div>
-                        <button type="button" class="sp-modal-close-btn" onclick="closeGraduateModal()" aria-label="Close modal" title="Close (Esc)">✕</button>
-                    </div>
-
-                    <!-- Pre-flight Gates Checklist -->
-                    <div class="preflight-checklist" id="preflightChecklist">
-                        <h4 style="font-size: 0.85em; text-transform: uppercase; color: #94a3b8; margin: 0 0 8px 0; letter-spacing: 0.05em;">Mandatory Pre-Flight Gates:</h4>
-                        <div class="gate-item" id="gateFlatness">
-                            <span class="gate-status-icon" id="gateFlatnessIcon">⏳</span>
-                            <div class="gate-desc">
-                                <strong>Gate 1: 4-Layer Flatness Gate</strong>
-                                <div class="gate-detail" id="gateFlatnessDetail">Zero shares, zero options, flat on paper &amp; live gateways</div>
-                            </div>
-                        </div>
-                        <div class="gate-item" id="gateOrders">
-                            <span class="gate-status-icon" id="gateOrdersIcon">⏳</span>
-                            <div class="gate-desc">
-                                <strong>Gate 2: Pending Orders Gate</strong>
-                                <div class="gate-detail" id="gateOrdersDetail">Zero active orders in live IBKR openTrades()</div>
-                            </div>
-                        </div>
-                        <div class="gate-item" id="gateQuiescence">
-                            <span class="gate-status-icon" id="gateQuiescenceIcon">⏳</span>
-                            <div class="gate-desc">
-                                <strong>Gate 3: Execution Quiescence Gate</strong>
-                                <div class="gate-detail" id="gateQuiescenceDetail">Outside 15s bar boundary, no active crossover calculation</div>
-                            </div>
-                        </div>
-                        <div class="gate-item" id="gatePort">
-                            <span class="gate-status-icon" id="gatePortIcon">⏳</span>
-                            <div class="gate-desc">
-                                <strong>Gate 4: Client ID &amp; Port Verification</strong>
-                                <div class="gate-detail" id="gatePortDetail">Target port 4001 Client ID available without collision</div>
-                            </div>
-                        </div>
-                        <div class="gate-item" id="gateArchival">
-                            <span class="gate-status-icon" id="gateArchivalIcon">⏳</span>
-                            <div class="gate-desc">
-                                <strong>Gate 5: State Archival Gate</strong>
-                                <div class="gate-detail" id="gateArchivalDetail">Atomic archival of paper state before live activation</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div id="modal-graduate-alert" class="sp-modal-alert" style="display: none; margin-top: 12px; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); border-radius: 8px; padding: 10px 14px;">
-                        <div id="modal-graduate-alert-text" style="color: #fca5a5; font-size: 0.85em; line-height: 1.4;"></div>
-                    </div>
-
-                    <!-- Confirmation Controls -->
-                    <div class="sp-form-group" style="margin-top: 16px;">
-                        <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer; color: #f8fafc; font-size: 0.88em;">
-                            <input type="checkbox" id="modalConfirmLiveCheck" onchange="validateGraduateConfirmation()" style="margin-top: 3px;" />
-                            <span>I confirm that I want to switch this bot to <strong>REAL MONEY LIVE TRADING</strong> on Interactive Brokers port 4001.</span>
-                        </label>
-                    </div>
-                    <div class="sp-form-group" style="margin-top: 10px;">
-                        <label class="sp-form-label" style="font-size: 0.82em; color: #94a3b8;">Type <strong id="modalEchoSymbol" style="color: #38bdf8;">SYMBOL</strong> to confirm promotion:</label>
-                        <input type="text" id="modalEchoSymbolInput" class="sp-input" placeholder="Type symbol here..." oninput="validateGraduateConfirmation()" autocomplete="off" />
-                    </div>
-
-                    <div class="sp-modal-footer" style="margin-top: 20px;">
-                        <button type="button" class="sp-btn-modal-cancel" onclick="closeGraduateModal()">Cancel</button>
-                        <button type="button" id="modalConfirmGraduateBtn" class="sp-btn-modal-confirm" disabled onclick="executeGraduateLive()">
-                            🚀 Confirm Promotion to LIVE
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Emergency Flatten Confirmation Modal (Phase 5 / Issue #113) -->
-            <div id="emergencyFlattenModal" class="sp-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-flatten-title" style="display: none;">
-                <div class="sp-modal-container sp-modal-reject-container">
-                    <div class="sp-modal-header">
-                        <div>
-                            <h3 class="sp-modal-title danger" id="modal-flatten-title">
-                                🚨 Emergency Flatten &amp; Demote
-                            </h3>
-                            <p class="sp-modal-subtitle">
-                                Liquidate open positions for <strong id="modal-flatten-symbol" class="sp-symbol-highlight">-</strong> and demote to Paper mode.
-                            </p>
-                        </div>
-                        <button type="button" class="sp-modal-close-btn" onclick="closeEmergencyFlattenModal()" aria-label="Close modal" title="Close (Esc)">✕</button>
-                    </div>
-
-                    <div class="sp-modal-alert" style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); padding: 12px; border-radius: 8px; margin-bottom: 14px;">
-                        <div style="color: #fca5a5; font-size: 0.88em; line-height: 1.45;">
-                            <strong>WARNING:</strong> Open live positions detected! This will immediately place a MARKET LIQUIDATION ORDER on IBKR Live Gateway (Port 4001), await fills, verify flatness, archive live state, and restart on Paper Gateway (Port 4002).
-                        </div>
-                    </div>
-
-                    <div class="sp-form-group">
-                        <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer; color: #f8fafc; font-size: 0.88em;">
-                            <input type="checkbox" id="modalConfirmFlattenCheck" onchange="validateFlattenConfirmation()" style="margin-top: 3px;" />
-                            <span>I authorize immediate market liquidation of all live positions for this bot.</span>
-                        </label>
-                    </div>
-
-                    <div class="sp-modal-footer">
-                        <button type="button" class="sp-btn-modal-cancel" onclick="closeEmergencyFlattenModal()">Cancel</button>
-                        <button type="button" id="modalConfirmFlattenBtn" class="sp-btn-modal-danger" disabled onclick="executeEmergencyFlatten()">
-                            🚨 Liquidate &amp; Demote Now
-                        </button>
-                    </div>
-                </div>
-            </div>
         </section>
 
         <!-- Alerts & Logs -->
@@ -1080,6 +963,123 @@
                 <!-- Dynamically populated -->
             </div>
         </section>
+    </div>
+
+    <!-- Graduate to Live Modal (Phase 5 / Issue #113) -->
+    <div id="graduateLiveModal" class="sp-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-graduate-title" style="display: none;">
+        <div class="sp-modal-container">
+            <div class="sp-modal-header">
+                <div>
+                    <h3 class="sp-modal-title" id="modal-graduate-title">
+                        🚀 Graduate <span id="modal-graduate-symbol" class="sp-symbol-highlight">-</span> to LIVE Trading
+                    </h3>
+                    <p class="sp-modal-subtitle">
+                        Switch bot to Interactive Brokers Live Gateway (Port 4001, Real Money).
+                    </p>
+                </div>
+                <button type="button" class="sp-modal-close-btn" onclick="closeGraduateModal()" aria-label="Close modal" title="Close (Esc)">✕</button>
+            </div>
+
+            <!-- Pre-flight Gates Checklist -->
+            <div class="preflight-checklist" id="preflightChecklist">
+                <h4 style="font-size: 0.85em; text-transform: uppercase; color: #94a3b8; margin: 0 0 8px 0; letter-spacing: 0.05em;">Mandatory Pre-Flight Gates:</h4>
+                <div class="gate-item" id="gateFlatness">
+                    <span class="gate-status-icon" id="gateFlatnessIcon">⏳</span>
+                    <div class="gate-desc">
+                        <strong>Gate 1: 4-Layer Flatness Gate</strong>
+                        <div class="gate-detail" id="gateFlatnessDetail">Zero shares, zero options, flat on paper &amp; live gateways</div>
+                    </div>
+                </div>
+                <div class="gate-item" id="gateOrders">
+                    <span class="gate-status-icon" id="gateOrdersIcon">⏳</span>
+                    <div class="gate-desc">
+                        <strong>Gate 2: Pending Orders Gate</strong>
+                        <div class="gate-detail" id="gateOrdersDetail">Zero active orders in live IBKR openTrades()</div>
+                    </div>
+                </div>
+                <div class="gate-item" id="gateQuiescence">
+                    <span class="gate-status-icon" id="gateQuiescenceIcon">⏳</span>
+                    <div class="gate-desc">
+                        <strong>Gate 3: Execution Quiescence Gate</strong>
+                        <div class="gate-detail" id="gateQuiescenceDetail">Outside 15s bar boundary, no active crossover calculation</div>
+                    </div>
+                </div>
+                <div class="gate-item" id="gatePort">
+                    <span class="gate-status-icon" id="gatePortIcon">⏳</span>
+                    <div class="gate-desc">
+                        <strong>Gate 4: Client ID &amp; Port Verification</strong>
+                        <div class="gate-detail" id="gatePortDetail">Target port 4001 Client ID available without collision</div>
+                    </div>
+                </div>
+                <div class="gate-item" id="gateArchival">
+                    <span class="gate-status-icon" id="gateArchivalIcon">⏳</span>
+                    <div class="gate-desc">
+                        <strong>Gate 5: State Archival Gate</strong>
+                        <div class="gate-detail" id="gateArchivalDetail">Atomic archival of paper state before live activation</div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="modal-graduate-alert" class="sp-modal-alert" style="display: none; margin-top: 12px; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); border-radius: 8px; padding: 10px 14px;">
+                <div id="modal-graduate-alert-text" style="color: #fca5a5; font-size: 0.85em; line-height: 1.4;"></div>
+            </div>
+
+            <!-- Confirmation Controls -->
+            <div class="sp-form-group" style="margin-top: 16px;">
+                <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer; color: #f8fafc; font-size: 0.88em;">
+                    <input type="checkbox" id="modalConfirmLiveCheck" onchange="validateGraduateConfirmation()" style="margin-top: 3px;" />
+                    <span>I confirm that I want to switch this bot to <strong>REAL MONEY LIVE TRADING</strong> on Interactive Brokers port 4001.</span>
+                </label>
+            </div>
+            <div class="sp-form-group" style="margin-top: 10px;">
+                <label class="sp-form-label" style="font-size: 0.82em; color: #94a3b8;">Type <strong id="modalEchoSymbol" style="color: #38bdf8;">SYMBOL</strong> to confirm promotion:</label>
+                <input type="text" id="modalEchoSymbolInput" class="sp-input" placeholder="Type symbol here..." oninput="validateGraduateConfirmation()" autocomplete="off" />
+            </div>
+
+            <div class="sp-modal-footer" style="margin-top: 20px;">
+                <button type="button" class="sp-btn-modal-cancel" onclick="closeGraduateModal()">Cancel</button>
+                <button type="button" id="modalConfirmGraduateBtn" class="sp-btn-modal-confirm" disabled onclick="executeGraduateLive()">
+                    🚀 Confirm Promotion to LIVE
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Emergency Flatten Confirmation Modal (Phase 5 / Issue #113) -->
+    <div id="emergencyFlattenModal" class="sp-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-flatten-title" style="display: none;">
+        <div class="sp-modal-container sp-modal-reject-container">
+            <div class="sp-modal-header">
+                <div>
+                    <h3 class="sp-modal-title danger" id="modal-flatten-title">
+                        🚨 Emergency Flatten &amp; Demote
+                    </h3>
+                    <p class="sp-modal-subtitle">
+                        Liquidate open positions for <strong id="modal-flatten-symbol" class="sp-symbol-highlight">-</strong> and demote to Paper mode.
+                    </p>
+                </div>
+                <button type="button" class="sp-modal-close-btn" onclick="closeEmergencyFlattenModal()" aria-label="Close modal" title="Close (Esc)">✕</button>
+            </div>
+
+            <div class="sp-modal-alert" style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); padding: 12px; border-radius: 8px; margin-bottom: 14px;">
+                <div style="color: #fca5a5; font-size: 0.88em; line-height: 1.45;">
+                    <strong>WARNING:</strong> Open live positions detected! This will immediately place a MARKET LIQUIDATION ORDER on IBKR Live Gateway (Port 4001), await fills, verify flatness, archive live state, and restart on Paper Gateway (Port 4002).
+                </div>
+            </div>
+
+            <div class="sp-form-group">
+                <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer; color: #f8fafc; font-size: 0.88em;">
+                    <input type="checkbox" id="modalConfirmFlattenCheck" onchange="validateFlattenConfirmation()" style="margin-top: 3px;" />
+                    <span>I authorize immediate market liquidation of all live positions for this bot.</span>
+                </label>
+            </div>
+
+            <div class="sp-modal-footer">
+                <button type="button" class="sp-btn-modal-cancel" onclick="closeEmergencyFlattenModal()">Cancel</button>
+                <button type="button" id="modalConfirmFlattenBtn" class="sp-btn-modal-danger" disabled onclick="executeEmergencyFlatten()">
+                    🚨 Liquidate &amp; Demote Now
+                </button>
+            </div>
+        </div>
     </div>
 
     <!-- Shared Utilities -->
