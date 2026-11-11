@@ -1152,15 +1152,21 @@ function updateSymbolReferences() {
 
     // Update header trigger status dot and mode pill
     const customModePill = document.getElementById('customBotModePill');
-    const currentProfile = _profileCache.value || CONFIG.tradingProfile || 'paper';
+    const botMode = (CONFIG.profile || CONFIG.trading_mode || CONFIG.tradingProfile || _profileCache.value || 'paper').toLowerCase();
 
     const isFleetPaused = localStorage.getItem('fleetPaused') === 'true';
     const isBotActive = !CONFIG.isPaused && !isFleetPaused;
     syncBotStatusUI(CONFIG.botId, isBotActive, isFleetPaused, CONFIG.status);
 
     if (customModePill) {
-        customModePill.className = `custom-bot-mode-pill ${currentProfile}`;
-        customModePill.textContent = currentProfile.toUpperCase();
+        customModePill.className = `custom-bot-mode-pill ${botMode}`;
+        customModePill.textContent = botMode.toUpperCase();
+    }
+
+    const portEl = document.getElementById('tradingPort');
+    if (portEl) {
+        const isLive = (botMode === 'live');
+        portEl.textContent = isLive ? '4001 (Live)' : '4002 (Gateway)';
     }
 
     // Update selected state in custom dropdown menu
@@ -2156,8 +2162,13 @@ function updatePerBotControls(selectedBot) {
     const isEnabled = selectedBot.enabled !== false;
     const isOverridden = !!selectedBot.is_overridden;
 
-    // 1. Update Mode Badge
+    // 1. Update Mode Badge & Port
     updateModeIndicator(_profileCache.isOffline ? 'offline' : (isLive ? 'live' : 'paper'));
+
+    const portEl = document.getElementById('tradingPort');
+    if (portEl) {
+        portEl.textContent = isLive ? '4001 (Live)' : '4002 (Gateway)';
+    }
 
     // 2. Update Enable / Disable Button
     const enableBtn = document.getElementById('botEnableToggleBtn');
@@ -2592,8 +2603,9 @@ async function updateSwitchButtonText() {
             btn.title = 'Switch to paper trading mode (test mode)';
         }
 
-        // Update mode indicator badge
-        updateModeIndicator(currentProfile);
+        // Update mode indicator badge (respecting focused bot profile)
+        const effectiveMode = (CONFIG?.profile || CONFIG?.trading_mode || currentProfile || 'paper').toLowerCase();
+        updateModeIndicator(_profileCache.isOffline ? 'offline' : (effectiveMode === 'live' ? 'live' : currentProfile));
 
         console.log(`[MODE-INDICATOR] Current profile: ${currentProfile}, Button shows: Switch to ${targetProfile}`);
 

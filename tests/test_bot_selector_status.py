@@ -338,3 +338,20 @@ def test_bot_focus_js_disabled_bots_resolved_in_config():
     assert "selectedBot = activeBots[0] || data.bots[0];" in content
     # refreshBotSelector should search data.bots
     assert "const target = data.bots.find" in content
+
+
+def test_bot_focus_js_mode_and_port_dynamic_sync():
+    """Verify that bot mode pill and port indicator dynamically synchronize with focused bot profile."""
+    js_path = STATIC_DIR / "js" / "bot_focus.js"
+    assert js_path.exists()
+    content = js_path.read_text(encoding="utf-8")
+
+    # updateSymbolReferences must determine botMode using CONFIG.profile
+    assert "const botMode = (CONFIG.profile || CONFIG.trading_mode || CONFIG.tradingProfile || _profileCache.value || 'paper').toLowerCase();" in content
+
+    # updateSymbolReferences must set tradingPort text
+    assert "portEl.textContent = isLive ? '4001 (Live)' : '4002 (Gateway)';" in content
+
+    # updateSwitchButtonText must not overwrite mode indicator with fleet profile when focused bot is live
+    assert "const effectiveMode = (CONFIG?.profile || CONFIG?.trading_mode || currentProfile || 'paper').toLowerCase();" in content
+

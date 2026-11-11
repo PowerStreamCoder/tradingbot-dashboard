@@ -92,6 +92,10 @@ def test_header_css_dimensions_and_alignment():
     assert "line-height: 28px;" in css_content
     assert "font-size: 22px;" in css_content
 
+    # Bot metadata and header-right must not wrap to prevent port or buttons wrapping to second row
+    assert re.search(r'\.bot-metadata\s*\{[^}]*flex-wrap:\s*nowrap;', css_content) is not None
+    assert re.search(r'\.header-right\s*\{[^}]*flex-wrap:\s*nowrap;', css_content) is not None
+
 
 def test_custom_bot_dropdown_visibility_and_stacking():
     """Verify that the bot header and dropdown menu have proper stacking context to render above the nav-bar."""
