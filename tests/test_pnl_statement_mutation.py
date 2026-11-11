@@ -327,8 +327,9 @@ def test_mutation_kill_live_zero_trade_mock_metric_fallbacks():
     KILLS MUTANT 11: Injecting mock metrics (Sharpe=2.18, Sortino=3.42, MaxDD=-4.10,
     Alpha=-9.60%, NAV=184520.40) when 0 live trades and 0 live bots exist.
     """
-    from services.pnl_statement_engine import aggregate_portfolio_pnl
+    from services.pnl_statement_engine import aggregate_portfolio_pnl, clear_statement_cache
 
+    clear_statement_cache()
     configs = {
         "NVDA": {"symbol": "NVDA", "clientId": 4, "trading_mode": "paper"},
         "IWM": {"symbol": "IWM", "clientId": 3, "trading_mode": "paper"}

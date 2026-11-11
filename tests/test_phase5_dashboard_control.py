@@ -262,6 +262,25 @@ def test_bot_configs_merges_runtime_state_overrides(auth_client):
             assert afrm["enabled"] is False
             assert afrm["is_overridden"] is True
 
+    # Test that an override identical to baseline does NOT mark is_overridden=True
+    mock_baseline_doc = MagicMock()
+    mock_baseline_doc.id = "afrm_sma"
+    mock_baseline_doc.to_dict.return_value = {
+        "enabled": True,
+        "profile": "paper",
+    }
+    mock_db2 = MagicMock()
+    mock_db2.collection.return_value.stream.return_value = [mock_baseline_doc]
+
+    with patch("main.dashboard_data.db", mock_db2):
+        res2 = auth_client.get("/api/bot-configs")
+        assert res2.status_code == 200
+        data2 = res2.json()
+        afrm2 = next((b for b in data2["bots"] if b.get("name") == "afrm_sma"), None)
+        if afrm2:
+            assert afrm2["enabled"] is True
+            assert afrm2["is_overridden"] is False
+
 
 # ============================================================================
 #  API Key Authentication for Machine Clients

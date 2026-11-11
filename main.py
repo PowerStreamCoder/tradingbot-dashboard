@@ -1556,13 +1556,22 @@ async def get_bot_configs():
                     b_name = b.get("name")
                     if b_name and b_name in overrides:
                         ov = overrides[b_name]
+                        baseline_enabled = b.get("enabled", True)
+                        baseline_profile = b.get("profile", "paper")
+                        is_diff = False
                         if "enabled" in ov:
                             b["enabled"] = ov["enabled"]
+                            if ov["enabled"] != baseline_enabled:
+                                is_diff = True
                         if "profile" in ov:
                             b["profile"] = ov["profile"]
+                            if ov["profile"] != baseline_profile:
+                                is_diff = True
                         if "trading_mode" in ov:
                             b["trading_mode"] = ov["trading_mode"]
-                        b["is_overridden"] = True
+                            if ov["trading_mode"] != baseline_profile:
+                                is_diff = True
+                        b["is_overridden"] = is_diff
             except Exception as e:
                 logger.debug(f"Could not merge bot_runtime_controls: {e}")
 
