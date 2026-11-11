@@ -133,9 +133,9 @@ async function loadBotConfig() {
 
         const activeBots = data.bots.filter(b => b.enabled);
 
-        if (activeBots.length === 0) {
-            Logger.warn('BotFocus', 'No active bots found in configuration');
-            showError('No Active Bots', 'No enabled bots found in configuration. Please enable at least one bot in bots.json.');
+        if (!data.bots || data.bots.length === 0) {
+            Logger.warn('BotFocus', 'No bots found in configuration');
+            showError('No Bots', 'No bots found in configuration. Please check bots.json.');
             useFallbackConfig();
             return false;
         }
@@ -147,7 +147,7 @@ async function loadBotConfig() {
 
         let selectedBot = null;
         if (queryBot || querySymbol) {
-            const matched = activeBots.find(b => {
+            const matched = data.bots.find(b => {
                 if (queryBot) {
                     const parsedId = parseInt(queryBot);
                     if (!isNaN(parsedId) && b.client_id === parsedId) return true;
@@ -169,7 +169,7 @@ async function loadBotConfig() {
         if (!selectedBot) {
             const savedBotId = localStorage.getItem('selectedBotId');
             if (savedBotId) {
-                const preferredBot = activeBots.find(b => b.client_id === parseInt(savedBotId));
+                const preferredBot = data.bots.find(b => b.client_id === parseInt(savedBotId));
                 if (preferredBot) {
                     selectedBot = preferredBot;
                 }
@@ -177,7 +177,7 @@ async function loadBotConfig() {
         }
 
         if (!selectedBot) {
-            selectedBot = activeBots[0]; // Default to first bot
+            selectedBot = activeBots[0] || data.bots[0]; // Default to first active bot, or first bot
         }
 
         // Fetch current profile early (paper vs live)
@@ -288,7 +288,7 @@ function populateBotSelector(activeBots, allBots, profile) {
     const currentProfile = profile || _profileCache.value || 'paper';
 
     const savedBotId = localStorage.getItem('selectedBotId');
-    const currentSelectedId = (CONFIG && CONFIG.botId) ? CONFIG.botId : (savedBotId ? parseInt(savedBotId) : (activeBots[0]?.client_id || 1));
+    const currentSelectedId = (CONFIG && CONFIG.botId) ? CONFIG.botId : (savedBotId ? parseInt(savedBotId) : (activeBots[0]?.client_id || allBots[0]?.client_id || 1));
 
     // The bot selector dropdown remains unchanged and shows all active bots
     const filteredActiveBots = activeBots;
@@ -361,7 +361,7 @@ function populateBotSelector(activeBots, allBots, profile) {
         });
     }
 
-    // Add disabled bots if any (grayed out, informational)
+    // Add disabled bots if any (selectable with clear disabled styling)
     const disabledBots = allBots.filter(b => !b.enabled);
     if (disabledBots.length > 0) {
         const disabledGroup = document.createElement('optgroup');
@@ -371,22 +371,24 @@ function populateBotSelector(activeBots, allBots, profile) {
             const option = document.createElement('option');
             option.value = bot.client_id;
             option.textContent = `${bot.symbol} - ${bot.name} (disabled)`;
-            option.disabled = true;
-            option.style.color = '#718096';
+            option.style.color = '#a0aec0';
             disabledGroup.appendChild(option);
 
             if (customMenu) {
+                const isSelected = bot.client_id === currentSelectedId;
                 const optCard = document.createElement('div');
-                optCard.className = 'custom-bot-option disabled';
+                optCard.className = `custom-bot-option disabled ${isSelected ? 'selected' : ''}`;
                 optCard.setAttribute('data-client-id', bot.client_id);
                 optCard.setAttribute('role', 'option');
-                optCard.setAttribute('aria-disabled', 'true');
+                optCard.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+                const symClass = (bot.symbol || '').toLowerCase();
+                const stratText = bot.strategy === 'sma_crossover' ? 'SMA 5/20 Crossover' : (bot.strategy || 'Trend Strategy');
                 optCard.innerHTML = `
                     <div class="custom-bot-option-left">
-                        <span class="custom-bot-option-symbol-badge">${bot.symbol}</span>
+                        <span class="custom-bot-option-symbol-badge ${symClass}">${bot.symbol}</span>
                         <div class="custom-bot-option-details">
-                            <span class="custom-bot-option-name">${bot.name} (disabled)</span>
-                            <span class="custom-bot-option-desc">Inactive</span>
+                            <span class="custom-bot-option-name">${bot.name}</span>
+                            <span class="custom-bot-option-desc">${stratText} (disabled)</span>
                         </div>
                     </div>
                     <div class="custom-bot-option-right">
@@ -395,8 +397,15 @@ function populateBotSelector(activeBots, allBots, profile) {
                             <span class="custom-bot-option-status-dot disabled" title="Disabled"></span>
                             <span class="custom-bot-status-label">DISABLED</span>
                         </span>
+                        <span class="custom-bot-option-check">✓</span>
                     </div>
                 `;
+
+                optCard.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    selectCustomBot(bot);
+                });
+
                 customMenu.appendChild(optCard);
             }
         });
@@ -409,7 +418,7 @@ function populateBotSelector(activeBots, allBots, profile) {
     }
 
     // Synchronize header trigger status with selected bot
-    const selectedBot = activeBots.find(b => b.client_id === currentSelectedId) || activeBots[0];
+    const selectedBot = (allBots && allBots.find(b => b.client_id === currentSelectedId)) || activeBots.find(b => b.client_id === currentSelectedId) || activeBots[0] || (allBots && allBots[0]);
     if (selectedBot) {
         const selectedIsPaused = selectedBot.paused === true || selectedBot.status === 'paused' || (selectedBot.is_trading === false) || isFleetPaused;
         syncBotStatusUI(selectedBot.client_id, !selectedIsPaused, isFleetPaused, selectedBot.status);
@@ -461,7 +470,7 @@ async function refreshBotSelector(targetBotId = null) {
         if (!data.bots || !Array.isArray(data.bots)) return false;
 
         const activeBots = data.bots.filter(b => b.enabled);
-        if (activeBots.length === 0) return false;
+        if (data.bots.length === 0) return false;
 
         configVersion = data.version || Date.now();
 
@@ -470,7 +479,7 @@ async function refreshBotSelector(targetBotId = null) {
 
         if (targetBotId != null) {
             const targetParsed = parseInt(targetBotId);
-            const target = activeBots.find(b => {
+            const target = data.bots.find(b => {
                 if (!isNaN(targetParsed) && b.client_id === targetParsed) return true;
                 if (b.symbol && b.symbol.toUpperCase() === String(targetBotId).toUpperCase()) return true;
                 return false;
@@ -635,9 +644,12 @@ function selectCustomBot(bot) {
     syncBotStatusUI(bot.client_id, !isPaused, isFleetPaused, bot.status);
     updatePerBotControls(bot);
     const selector = document.getElementById('botSelector');
-    if (selector && selector.value !== bot.client_id.toString()) {
+    if (selector) {
+        const needsChange = selector.value !== bot.client_id.toString() || (CONFIG && CONFIG.botId !== bot.client_id);
         selector.value = bot.client_id;
-        handleBotSelectorChange({ target: selector });
+        if (needsChange) {
+            handleBotSelectorChange({ target: selector });
+        }
     }
 }
 
