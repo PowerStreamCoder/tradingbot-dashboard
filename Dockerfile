@@ -15,6 +15,9 @@ COPY main.py .
 # The daily access code's derivation - the server's and the operator's helper
 # script must use the same one, so it ships as its own module.
 COPY access_code.py .
+# Vendored session calendar (tradingbot-bots/trading/market_hours.py) used by
+# the order-endpoint market-hours gate (#98). Keep in sync with that repo.
+COPY market_hours.py .
 COPY config ./config
 COPY static ./static
 COPY templates ./templates
