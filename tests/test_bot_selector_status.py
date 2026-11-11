@@ -300,3 +300,41 @@ def test_trade_history_all_doc_and_seq_mapping():
             assert t["seqNum"] == 77
     finally:
         authenticated_sessions.pop(session_id, None)
+
+
+def test_bot_focus_js_disabled_bots_selectable():
+    """Verify that disabled bots in bot_focus.js remain selectable so operators can inspect & re-enable them."""
+    js_path = STATIC_DIR / "js" / "bot_focus.js"
+    assert js_path.exists()
+    content = js_path.read_text(encoding="utf-8")
+
+    # Disabled bots section must attach click listener for selectCustomBot
+    assert "selectCustomBot(bot);" in content
+    # Option must not be hard-disabled in native select
+    assert "option.disabled = true;" not in content
+    # Disabled bot options in custom menu must have disabled class and checkmark
+    assert "custom-bot-option disabled" in content
+    assert "custom-bot-option-check" in content
+
+
+def test_bot_focus_css_disabled_option_pointer():
+    """Verify that disabled bots in bot_focus.css have pointer cursor and interactive hover state."""
+    css_path = STATIC_DIR / "css" / "bot_focus.css"
+    assert css_path.exists()
+    content = css_path.read_text(encoding="utf-8")
+
+    assert ".custom-bot-option.disabled {" in content
+    assert "cursor: pointer;" in content
+    assert ".custom-bot-option.disabled:hover" in content
+
+
+def test_bot_focus_js_disabled_bots_resolved_in_config():
+    """Verify that loadBotConfig and refreshBotSelector look up bots in all bots so disabled bots can be focused."""
+    js_path = STATIC_DIR / "js" / "bot_focus.js"
+    assert js_path.exists()
+    content = js_path.read_text(encoding="utf-8")
+
+    # loadBotConfig should search data.bots, not only activeBots
+    assert "selectedBot = activeBots[0] || data.bots[0];" in content
+    # refreshBotSelector should search data.bots
+    assert "const target = data.bots.find" in content

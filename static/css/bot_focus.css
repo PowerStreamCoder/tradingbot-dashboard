@@ -402,9 +402,20 @@ body {
 }
 
 .custom-bot-option.disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    background: transparent !important;
+    opacity: 0.75;
+    cursor: pointer;
+}
+
+.custom-bot-option.disabled:hover,
+.custom-bot-option.disabled.focused {
+    background: rgba(148, 163, 184, 0.12);
+    border-color: rgba(148, 163, 184, 0.35);
+}
+
+.custom-bot-option.disabled.selected {
+    background: rgba(99, 102, 241, 0.22);
+    border-color: rgba(99, 102, 241, 0.5);
+    opacity: 1;
 }
 
 .custom-bot-option-left {
