@@ -41,6 +41,10 @@ import xlsxwriter
 import secrets
 from access_code import access_code as derive_access_code
 from access_code import code_matches, secret_from_env
+# #98: vendored copy of tradingbot-bots/trading/market_hours.py — the same
+# session rules the bots' command handlers use, so the dashboard's refusal
+# can never disagree with the bot's.
+from market_hours import is_market_hours
 from threading import Lock
 import logging
 
@@ -526,7 +530,12 @@ def resolve_bot_target(payload: dict) -> dict:
     mismatch is refused.
 
     Returns:
-        {"client_id": int, "symbol": str, "bot_name": str, "source": str}
+        {"client_id": int, "symbol": str, "bot_name": str, "source": str,
+         "market_region": str, "allow_extended_hours": bool}
+
+        The market_* keys feed the market-hours gate (``_require_market_open``);
+        they are optional per-bot overrides in ``bots.json`` and default to the
+        same values the bots' ``TradingConfig`` uses ("US" / False).
 
     Raises:
         HTTPException: 400 when the request cannot be resolved to a known bot or
@@ -583,7 +592,70 @@ def resolve_bot_target(payload: dict) -> dict:
         "symbol": configured_symbol,
         "bot_name": match.get("name"),
         "source": source,
+        # Session-calendar inputs for the market-hours gate (#98). Defaults
+        # mirror the bots' TradingConfig (tradingbot-bots trading/config.py:
+        # market_region "US", allow_extended_hours False) so the dashboard
+        # refuses exactly when the bot's own is_market_hours would refuse.
+        "market_region": match.get("market_region", "US"),
+        "allow_extended_hours": bool(match.get("allow_extended_hours", False)),
     }
+
+def _require_market_open(target: dict, refusal: str,
+                         now: Optional[datetime] = None) -> None:
+    """
+    Refuse an order-routing command while the resolved bot's market is closed (#98).
+
+    The dashboard used to queue create/close commands into
+    ``bots/bot_<client_id>.pending_command`` and answer ``success: true`` at
+    any hour. The bot's handlers refuse those commands outside market hours
+    (``trading/base.py::_process_create_position_command``), and with
+    ``dashboard_command_dispatch_when_closed_enabled`` off (shipped default,
+    bots #375) they are instead held until the open — measured 47m44s, up to
+    ~61h from a Friday — by which time the UI's command poll has already
+    given up with "bot may be offline or delayed". Either way the HTTP
+    response lied about acceptance, so the operator's only outcomes were a
+    false positive at submit and a misdiagnosis at timeout.
+
+    Refusing at submit is the honest choice in both configurations: with
+    dispatch-when-closed ON the bot would refuse it anyway; with it OFF the
+    command would execute unmonitored after the UI stopped listening — an
+    order the operator believes failed.
+
+    The session rules come from the vendored ``market_hours`` module (a
+    verbatim copy of the bots' single source of truth), evaluated with the
+    resolved bot's ``market_region`` / ``allow_extended_hours``.
+
+    Args:
+        target: a ``resolve_bot_target`` result.
+        refusal: leading phrase of the detail message, e.g.
+            "Cannot create position" — the same wording the bot's
+            ``last_command_result`` would carry, so operators see one
+            consistent message whichever side refuses.
+        now: evaluation instant (UTC); defaults to now. Injectable for tests.
+
+    Raises:
+        HTTPException: 409 when the market is closed — raised *before* any
+            Firestore write, so a refused command leaves no
+            ``pending_command`` behind. 409 rather than 400 because the
+            request itself is well-formed; it conflicts with market state.
+    """
+    region = target.get("market_region") or "US"
+    allow_extended = bool(target.get("allow_extended_hours", False))
+    now = now or datetime.now(timezone.utc)
+    if is_market_hours(now, region, allow_extended):
+        return
+
+    if region == "EU":
+        session = "08:00–18:30 CET" if allow_extended else "09:00–17:30 CET"
+    else:
+        session = "04:00–20:00 ET" if allow_extended else "09:30–16:00 ET"
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            f"Market is closed. {refusal} outside market hours "
+            f"(trading session {session}). Nothing was queued — re-send during market hours."
+        ),
+    )
 
 def get_valid_access_code():
     """Get today's access code.
@@ -2758,7 +2830,8 @@ async def close_position(request: Request):
         }
 
     Returns:
-        JSON with success status and message
+        JSON with success status and message. 409 when the market is closed
+        (#98) — nothing is queued in that case.
     """
     try:
         body = await request.json()
@@ -2775,6 +2848,11 @@ async def close_position(request: Request):
         # instead of writing the command to the wrong bot.
         target = resolve_bot_target(body)
         client_id = target["client_id"]
+
+        # #98: refuse outside market hours before any Firestore write, so
+        # the response can no longer claim success for a command the bot
+        # will refuse (or silently hold until the open).
+        _require_market_open(target, "Position cannot be closed")
 
         db = firestore.Client()
         bot_ref = db.collection('bots').document(f'bot_{client_id}')
@@ -2826,7 +2904,8 @@ async def create_position(request: Request):
         }
 
     Returns:
-        JSON with success status and message
+        JSON with success status and message. 409 when the market is closed
+        (#98) — nothing is queued in that case.
     """
     try:
         body = await request.json()
@@ -2837,6 +2916,11 @@ async def create_position(request: Request):
         target = resolve_bot_target(body)
         client_id = target["client_id"]
         symbol = target["symbol"]
+
+        # #98: refuse outside market hours before any Firestore write, so
+        # the response can no longer claim success for a command the bot
+        # will refuse (or silently hold until the open).
+        _require_market_open(target, "Cannot create position")
 
         # Update Firestore to trigger bot to create position
         db = firestore.Client()
