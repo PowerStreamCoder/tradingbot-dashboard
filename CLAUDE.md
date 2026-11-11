@@ -36,6 +36,7 @@
 - Stock picks: `GET /api/stock-picks`, `POST /api/stock-picks/run`
 - Bot control (stop/start/reset): `POST /api/bot-control/stop|restart|reset/{bot_name}`
 - Profile switching: `GET /api/bot-control/current-profile`, `POST /api/bot-control/switch-profile`
+- Position orders: `POST /api/create-position|close-position` — refuse with 409 outside the resolved bot's market hours (#98); session rules come from the vendored `market_hours.py` (verbatim copy of `tradingbot-bots/trading/market_hours.py`; per-bot `market_region`/`allow_extended_hours` optional in `bots.json`, defaults US/RTH)
 - P&L statement: `GET /api/pnl-statement`
 - Authentication: `POST /authenticate` (access code = today's date in ddmmyy format)
 

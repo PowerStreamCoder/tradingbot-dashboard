@@ -204,7 +204,7 @@
         "trading/adaptive_pnl_agent.py",
         "trading/config.py"
       ],
-      "root_cause": "Target bucket resolved with 'getattr(config, 'effective_thresholds', None) or {}'. An empty (falsy) effective_thresholds takes the 'or {}' branch, allocating a throwaway dict; setdefault() mutations are written to that temp dict, not the config \u2014 nudge silently lost.",
+      "root_cause": "Target bucket resolved with 'getattr(config, 'effective_thresholds', None) or {}'. An empty (falsy) effective_thresholds takes the 'or {}' branch, allocating a throwaway dict; setdefault() mutations are written to that temp dict, not the config - nudge silently lost.",
       "resolution": "Use an explicit None check instead of 'or {}': buckets = getattr(config, 'effective_thresholds', None); if buckets is None: buckets = {}. Reattach buckets to the config attrs so setdefault() mutates the live dict.",
       "verification_cmd": "python3 -m pytest tradingbot-bots/tests/test_adaptive_feedback_engine.py tradingbot-bots/tests/test_adaptive_pnl_agent.py"
     },
@@ -314,6 +314,26 @@
       "root_cause": "1) IBKRHealthMonitor hardcoded a 120s staleness threshold which is shorter than the 300s (5-min) bar cadence, falsely blocking execution for 60% of the session. 2) The bot pending command check was tied to the 60s heartbeat while dashboard polling timed out after 45s.",
       "resolution": "Scale IBKRHealthMonitor stale data threshold dynamically based on bar_size/stale_data_timeout (450s-600s). Decouple pending command polling to run every 3s in the heartbeat loop. Increase dashboard UI maxAttempts from 30 (45s) to 50 (75s).",
       "verification_cmd": "pytest tests/test_execution_manager_coverage.py tests/test_base_coverage.py -v --no-cov"
+    },
+    {
+      "id": "ERR_ORDER_API_SUCCESS_OUTSIDE_MARKET_HOURS",
+      "patterns": [
+        "Create position command sent for",
+        "Bot will process it on next update cycle",
+        "Market is closed. Cannot create position outside market hours",
+        "Position creation timed out waiting for bot response",
+        "Market is closed. Position cannot be closed outside market hours"
+      ],
+      "symptom": "Dashboard POST /api/create-position (or /api/close-position) answers HTTP 200 success:true at any hour including pre-open; the bot later refuses the command outside market hours (or, with dashboard_command_dispatch_when_closed_enabled off, holds it until the open) and the UI command poll times out reporting 'bot may be offline or delayed'.",
+      "affected_files": [
+        "tradingbot-dashboard/main.py",
+        "tradingbot-dashboard/market_hours.py",
+        "tradingbot-bots/trading/base.py",
+        "tradingbot-dashboard/static/js/bot_focus.js"
+      ],
+      "root_cause": "The order-routing endpoints queued bots/bot_<client_id>.pending_command and returned success:true without any market-hours gate. The bot-side handlers (_process_create_position_command / _process_close_position_command in trading/base.py) refuse commands outside is_market_hours, and with dispatch-when-closed disabled (shipped default) the queued command is held until the open (measured 47m44s) - so the HTTP response never reflected what the bot would do.",
+      "resolution": "main.py::_require_market_open refuses both endpoints with HTTP 409 'Market is closed. ...' before any Firestore write, using the vendored market_hours module (verbatim copy of tradingbot-bots/trading/market_hours.py) evaluated with the resolved bot's market_region/allow_extended_hours (bots.json overrides, defaults US / no extended hours). The UI already routes non-OK responses to its existing failure handlers, so the closed-market outcome renders at submit instead of at the poll timeout.",
+      "verification_cmd": "python3 -m pytest tests/test_coverage_98_dashboard.py -k market -q && python3 -m pytest tests/test_market_hours.py -q"
     }
   ]
 }

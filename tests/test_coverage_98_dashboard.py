@@ -22,6 +22,7 @@ except ImportError:
 from io import BytesIO
 from unittest.mock import Mock, MagicMock, patch, mock_open
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 # Ensure root directory is on pythonpath
@@ -935,37 +936,40 @@ class TestBotControlEndpoints:
         assert res.status_code == 400
         assert "Symbol mismatch" in res.json()["detail"]
 
-        # Success with an explicit client_id
-        with patch("google.cloud.firestore.Client") as mock_fs:
-            mock_db = MagicMock()
-            mock_fs.return_value = mock_db
-            res = client.post("/api/close-position", json={
-                "client_id": 4, "symbol": "NVDA", "bucket_group": "upward", "bucket_id": 0
-            })
-            assert res.status_code == 200
-            assert res.json()["success"] is True
-            # routed to bot_4 (NVDA), not bot_5 (position 4 in bots.json)
-            assert mock_db.collection().document.call_args[0][0] == "bot_4"
+        # Success with an explicit client_id (market open — #98 gate bypassed
+        # so this test is independent of wall-clock time)
+        with patch("main.is_market_hours", return_value=True):
+            with patch("google.cloud.firestore.Client") as mock_fs:
+                mock_db = MagicMock()
+                mock_fs.return_value = mock_db
+                res = client.post("/api/close-position", json={
+                    "client_id": 4, "symbol": "NVDA", "bucket_group": "upward", "bucket_id": 0
+                })
+                assert res.status_code == 200
+                assert res.json()["success"] is True
+                # routed to bot_4 (NVDA), not bot_5 (position 4 in bots.json)
+                assert mock_db.collection().document.call_args[0][0] == "bot_4"
 
-            # Error
-            mock_db.collection().document().update.side_effect = Exception("firestore fail")
-            res = client.post("/api/close-position", json={
-                "client_id": 4, "symbol": "NVDA", "bucket_group": "upward", "bucket_id": 0
-            })
-            assert res.status_code == 500
+                # Error
+                mock_db.collection().document().update.side_effect = Exception("firestore fail")
+                res = client.post("/api/close-position", json={
+                    "client_id": 4, "symbol": "NVDA", "bucket_group": "upward", "bucket_id": 0
+                })
+                assert res.status_code == 500
 
     def test_close_position_legacy_bot_id(self, auth_client):
         """The legacy 1-indexed bot_id form still works when the symbol matches."""
         client, _ = auth_client
-        with patch("google.cloud.firestore.Client") as mock_fs:
-            mock_db = MagicMock()
-            mock_fs.return_value = mock_db
-            # bot_id=2 is the 2nd bot in bots.json -> NVDA (client_id 4)
-            res = client.post("/api/close-position", json={
-                "bot_id": 2, "symbol": "NVDA", "bucket_group": "upward", "bucket_id": 0
-            })
-            assert res.status_code == 200
-            assert mock_db.collection().document.call_args[0][0] == "bot_4"
+        with patch("main.is_market_hours", return_value=True):
+            with patch("google.cloud.firestore.Client") as mock_fs:
+                mock_db = MagicMock()
+                mock_fs.return_value = mock_db
+                # bot_id=2 is the 2nd bot in bots.json -> NVDA (client_id 4)
+                res = client.post("/api/close-position", json={
+                    "bot_id": 2, "symbol": "NVDA", "bucket_group": "upward", "bucket_id": 0
+                })
+                assert res.status_code == 200
+                assert mock_db.collection().document.call_args[0][0] == "bot_4"
 
     def test_create_position(self, auth_client):
         client, _ = auth_client
@@ -984,38 +988,134 @@ class TestBotControlEndpoints:
         assert res.status_code == 400
         assert "Symbol mismatch" in res.json()["detail"]
 
-        # Success when bot doc does not exist
-        with patch("google.cloud.firestore.Client") as mock_fs:
-            mock_db = MagicMock()
-            mock_fs.return_value = mock_db
-            mock_doc = MagicMock()
-            mock_doc.exists = False
-            mock_db.collection().document().get.return_value = mock_doc
+        # Success when bot doc does not exist (market open — #98 gate bypassed
+        # so this test is independent of wall-clock time)
+        with patch("main.is_market_hours", return_value=True):
+            with patch("google.cloud.firestore.Client") as mock_fs:
+                mock_db = MagicMock()
+                mock_fs.return_value = mock_db
+                mock_doc = MagicMock()
+                mock_doc.exists = False
+                mock_db.collection().document().get.return_value = mock_doc
 
-            res = client.post("/api/create-position", json={"client_id": 4, "symbol": "NVDA"})
-            assert res.status_code == 200
-            assert res.json()["success"] is True
-            assert mock_db.collection().document.call_args[0][0] == "bot_4"
+                res = client.post("/api/create-position", json={"client_id": 4, "symbol": "NVDA"})
+                assert res.status_code == 200
+                assert res.json()["success"] is True
+                assert mock_db.collection().document.call_args[0][0] == "bot_4"
 
-            # Error
-            mock_db.collection().document().set.side_effect = Exception("create fail")
-            res = client.post("/api/create-position", json={"client_id": 4, "symbol": "NVDA"})
-            assert res.status_code == 500
+                # Error
+                mock_db.collection().document().set.side_effect = Exception("create fail")
+                res = client.post("/api/create-position", json={"client_id": 4, "symbol": "NVDA"})
+                assert res.status_code == 500
+
+    def test_create_position_refused_outside_market_hours(self, auth_client):
+        """#98: outside market hours the command is refused, never queued.
+
+        The old behaviour answered ``success: true`` at any hour while the
+        bot would refuse the command (or hold it until the open), leaving the
+        operator with a false positive at submit and a misdiagnosis at the
+        poll timeout. The refusal must happen *before* any Firestore write.
+        """
+        client, _ = auth_client
+        with patch("main.is_market_hours", return_value=False):
+            with patch("google.cloud.firestore.Client") as mock_fs:
+                res = client.post("/api/create-position", json={"client_id": 4, "symbol": "NVDA"})
+        assert res.status_code == 409
+        assert "Market is closed" in res.json()["detail"]
+        assert "Cannot create position outside market hours" in res.json()["detail"]
+        # Nothing was queued for the bot to pick up later.
+        mock_fs.assert_not_called()
+
+    def test_close_position_refused_outside_market_hours(self, auth_client):
+        """#98: same refusal for /api/close-position — nothing is queued."""
+        client, _ = auth_client
+        with patch("main.is_market_hours", return_value=False):
+            with patch("google.cloud.firestore.Client") as mock_fs:
+                res = client.post("/api/close-position", json={
+                    "client_id": 4, "symbol": "NVDA", "bucket_group": "upward", "bucket_id": 0
+                })
+        assert res.status_code == 409
+        assert "Market is closed" in res.json()["detail"]
+        assert "Position cannot be closed outside market hours" in res.json()["detail"]
+        mock_fs.assert_not_called()
+
+    def test_create_position_during_market_hours_succeeds(self, auth_client):
+        """#98: the gate passes during market hours and the command is queued."""
+        client, _ = auth_client
+        with patch("main.is_market_hours", return_value=True):
+            with patch("google.cloud.firestore.Client") as mock_fs:
+                mock_db = MagicMock()
+                mock_fs.return_value = mock_db
+                mock_doc = MagicMock()
+                mock_doc.exists = True
+                mock_db.collection().document().get.return_value = mock_doc
+
+                res = client.post("/api/create-position", json={"client_id": 4, "symbol": "NVDA"})
+        assert res.status_code == 200
+        assert res.json()["success"] is True
+        assert mock_db.collection().document.call_args[0][0] == "bot_4"
+
+    def test_require_market_open_both_directions(self):
+        """#98: the gate passes in hours and refuses outside them (real calendar).
+
+        Uses the vendored market_hours rules through a fixed instant, so the
+        dashboard gate and the bot-side refusal are exercised on the same
+        dates: Saturday 2026-11-14 10:00 ET is closed; Tuesday 2026-11-10
+        15:00 UTC (10:00 ET) is open.
+        """
+        closed = datetime(2026, 11, 14, 15, 0, tzinfo=timezone.utc)
+        with pytest.raises(HTTPException) as exc:
+            main._require_market_open({"client_id": 4}, "Cannot create position", now=closed)
+        assert exc.value.status_code == 409
+        assert "Market is closed" in exc.value.detail
+        assert "09:30–16:00 ET" in exc.value.detail
+        assert "Nothing was queued" in exc.value.detail
+
+        # In hours: returns None (no refusal)
+        open_ = datetime(2026, 11, 10, 15, 0, tzinfo=timezone.utc)
+        assert main._require_market_open({"client_id": 4}, "Cannot create position", now=open_) is None
+
+    def test_require_market_open_session_message_variants(self):
+        """The refusal names the resolved bot's actual session window."""
+        saturday = datetime(2026, 11, 14, 15, 0, tzinfo=timezone.utc)
+
+        with pytest.raises(HTTPException) as exc:
+            main._require_market_open(
+                {"market_region": "EU"}, "Position cannot be closed", now=saturday)
+        assert "09:00–17:30 CET" in exc.value.detail
+
+        with pytest.raises(HTTPException) as exc:
+            main._require_market_open(
+                {"allow_extended_hours": True}, "Cannot create position", now=saturday)
+        assert "04:00–20:00 ET" in exc.value.detail
+
+        with pytest.raises(HTTPException) as exc:
+            main._require_market_open(
+                {"market_region": "EU", "allow_extended_hours": True},
+                "Cannot create position", now=saturday)
+        assert "08:00–18:30 CET" in exc.value.detail
+
+    def test_resolve_bot_target_market_session_defaults(self):
+        """#98: resolution carries the session inputs; defaults mirror the bots."""
+        target = main.resolve_bot_target({"client_id": 4, "symbol": "NVDA"})
+        assert target["market_region"] == "US"
+        assert target["allow_extended_hours"] is False
 
     def test_create_position_omitted_symbol_defaults_to_configured(self, auth_client):
         """Omitting symbol uses the resolved bot's configured symbol."""
         client, _ = auth_client
-        with patch("google.cloud.firestore.Client") as mock_fs:
-            mock_db = MagicMock()
-            mock_fs.return_value = mock_db
-            mock_doc = MagicMock()
-            mock_doc.exists = True
-            mock_db.collection().document().get.return_value = mock_doc
+        with patch("main.is_market_hours", return_value=True):
+            with patch("google.cloud.firestore.Client") as mock_fs:
+                mock_db = MagicMock()
+                mock_fs.return_value = mock_db
+                mock_doc = MagicMock()
+                mock_doc.exists = True
+                mock_db.collection().document().get.return_value = mock_doc
 
-            res = client.post("/api/create-position", json={"client_id": 4})
-            assert res.status_code == 200
-            assert "NVDA" in res.json()["message"]
-            assert "command_timestamp" in res.json()
+                res = client.post("/api/create-position", json={"client_id": 4})
+                assert res.status_code == 200
+                assert "NVDA" in res.json()["message"]
+                assert "command_timestamp" in res.json()
 
     def test_get_bot_command_status(self, auth_client):
         """Test GET /api/bot-command-status/{client_id} endpoint."""
