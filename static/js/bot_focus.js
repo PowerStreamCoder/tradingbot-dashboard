@@ -2131,12 +2131,6 @@ function updateModeIndicator(profile) {
         customModePill.textContent = (profile || 'paper').toUpperCase();
     }
 
-    // Update all mode badges in the custom bot dropdown menu
-    document.querySelectorAll('.custom-bot-option-mode').forEach(el => {
-        el.className = `custom-bot-option-mode ${profile}`;
-        el.textContent = (profile || 'paper').toUpperCase();
-    });
-
     console.log(`[MODE-INDICATOR] Updating badge to: ${profile}`);
 }
 
@@ -2605,7 +2599,7 @@ async function updateSwitchButtonText() {
 
         // Update mode indicator badge (respecting focused bot profile)
         const effectiveMode = (CONFIG?.profile || CONFIG?.trading_mode || currentProfile || 'paper').toLowerCase();
-        updateModeIndicator(_profileCache.isOffline ? 'offline' : (effectiveMode === 'live' ? 'live' : currentProfile));
+        updateModeIndicator(_profileCache.isOffline ? 'offline' : effectiveMode);
 
         console.log(`[MODE-INDICATOR] Current profile: ${currentProfile}, Button shows: Switch to ${targetProfile}`);
 
