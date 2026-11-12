@@ -1136,14 +1136,20 @@ class TestBotControlEndpoints:
             assert data["success"] is True
             assert data["client_id"] == 4
             assert data["pending_command"] is None
+            assert data["last_command_received"] is None
             assert data["last_command_result"] is None
             assert data["has_active_position"] is False
 
-            # Case 2: Bot doc exists with pending command and last_command_result
+            # Case 2: Bot doc exists with pending command, last_command_received, and last_command_result
             mock_doc.exists = True
             mock_doc.to_dict.return_value = {
                 "bot_id": 4,
                 "pending_command": {"command": "create_position"},
+                "last_command_received": {
+                    "command": "create_position",
+                    "command_timestamp": "2026-10-20T12:47:00",
+                    "received_at": "2026-10-20T12:47:01"
+                },
                 "last_command_result": {"success": True, "message": "Position created"},
                 "bucket1": {"entryPrice": 140.0, "quantity": 100}
             }
@@ -1152,6 +1158,7 @@ class TestBotControlEndpoints:
             data = res.json()
             assert data["success"] is True
             assert data["pending_command"]["command"] == "create_position"
+            assert data["last_command_received"]["command"] == "create_position"
             assert data["last_command_result"]["success"] is True
             assert data["has_active_position"] is True
 
