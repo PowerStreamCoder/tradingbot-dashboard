@@ -3042,7 +3042,8 @@ async def get_current_profile():
     Returns:
         JSON: {"profile": "paper" or "live"}
 
-    Fallback: If VM is unreachable, defaults to "paper" (safer default)
+    Raises:
+        HTTPException(502): If VM is unreachable (Issue #97 / AC2 fail-closed contract)
     """
     try:
         import httpx

@@ -20,6 +20,7 @@
 - Run API tests only: `pytest tests/api -q`
 - Deploy: `git push origin main` → GitHub Actions → Cloud Run (~3 min, automatic)
 - Production URL: https://trading-dashboard-w2n5czslna-uc.a.run.app
+- Update Cloud Run env vars: ALWAYS use `gcloud run services update trading-dashboard --update-env-vars KEY=VAL` (merges). NEVER use partial `--set-env-vars` as it deletes all other 6 env vars (Issue #97 / Finding D25).
 
 ## Common mappings
 - All API route definitions: `main.py` (search for `@app.get` / `@app.post`)
