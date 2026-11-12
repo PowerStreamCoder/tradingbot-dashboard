@@ -2982,13 +2982,14 @@ async def create_position(request: Request):
 async def get_bot_command_status(client_id: int):
     """
     Get the pending command and last command execution status for a bot.
-    Used by the dashboard UI to monitor real-time command processing.
+    Used by the dashboard UI to monitor real-time command processing (bots #342).
 
     Returns:
         {
             "success": True,
             "client_id": client_id,
             "pending_command": dict or None,
+            "last_command_received": dict or None,
             "last_command_result": dict or None,
             "has_active_position": bool
         }
@@ -3002,6 +3003,7 @@ async def get_bot_command_status(client_id: int):
                 "success": True,
                 "client_id": client_id,
                 "pending_command": None,
+                "last_command_received": None,
                 "last_command_result": None,
                 "has_active_position": False
             }
@@ -3019,6 +3021,7 @@ async def get_bot_command_status(client_id: int):
             "success": True,
             "client_id": client_id,
             "pending_command": data.get("pending_command"),
+            "last_command_received": data.get("last_command_received"),
             "last_command_result": data.get("last_command_result"),
             "has_active_position": has_active_position
         }

@@ -2827,6 +2827,8 @@ function pollPositionCommandStatus(botId, symbol, startTime) {
 
     let pollAttempts = 0;
     const maxAttempts = 50; // 50 * 1.5s = 75 seconds (v4.6: increased from 45s to allow for broker fills)
+    let commandAcknowledged = false;
+    let lastPollData = null;
 
     positionCommandPollTimer = setInterval(async () => {
         pollAttempts++;
@@ -2845,7 +2847,13 @@ function pollPositionCommandStatus(botId, symbol, startTime) {
                 btn.title = 'Create a new position for this bot';
             }
 
-            const timeoutMsg = 'Position creation timed out waiting for bot response. The bot may be offline or delayed. Please check bot logs and status.';
+            let timeoutMsg = 'Position creation timed out waiting for bot response. The bot may be offline or delayed. Please check bot logs and status.';
+            if (commandAcknowledged) {
+                timeoutMsg = 'Position creation timed out: command was acknowledged by the bot, but order completion was not confirmed within 75s. The bot may have restarted or encountered a broker fill delay. Please check bot logs.';
+            } else if (lastPollData && lastPollData.pending_command) {
+                timeoutMsg = 'Position creation timed out: command was never picked up by the bot. The bot heartbeat thread may be offline.';
+            }
+
             showNotification(`⚠️ ${timeoutMsg}`, 'warning');
             showPositionOperationAlert(`⚠️ ${timeoutMsg}`, 'warning');
 
@@ -2863,6 +2871,17 @@ function pollPositionCommandStatus(botId, symbol, startTime) {
 
             const data = await response.json();
             if (!data.success) return;
+            lastPollData = data;
+
+            // Check if bot acknowledged receipt of the command (bots #342)
+            if (data.last_command_received && !commandAcknowledged) {
+                const cmdReceived = data.last_command_received;
+                const receivedTime = cmdReceived.received_at ? new Date(cmdReceived.received_at).getTime() : 0;
+                if (receivedTime >= startTime - 5000 || (cmdReceived.command === 'create_position' && !data.pending_command)) {
+                    commandAcknowledged = true;
+                    showPositionOperationAlert(`⚡ Command acknowledged by bot (${symbol}) — executing in main loop and awaiting broker fill...`, 'info');
+                }
+            }
 
             // Check if bot document has last_command_result
             if (data.last_command_result) {
