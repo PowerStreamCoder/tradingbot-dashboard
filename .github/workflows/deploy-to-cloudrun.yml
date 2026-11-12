@@ -188,17 +188,28 @@ jobs:
       - name: Smoke test - Bot Control Profile Proxy (Issue #97 / #113)
         run: |
           echo "Testing bot-control proxy at ${{ steps.service_url.outputs.url }}/api/bot-control/current-profile..."
-          RES=$(curl -s ${{ steps.service_url.outputs.url }}/api/bot-control/current-profile || true)
-          echo "Response: $RES"
-          if echo "$RES" | grep -q "vm_unreachable"; then
+          HTTP_STATUS=$(curl -s -o /tmp/profile_resp.json -w "%{http_code}" "${{ steps.service_url.outputs.url }}/api/bot-control/current-profile")
+          echo "HTTP Status: $HTTP_STATUS"
+          echo "Response body:"
+          cat /tmp/profile_resp.json
+          echo ""
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "❌ Bot control proxy returned HTTP $HTTP_STATUS instead of 200!"
+            exit 1
+          fi
+          if grep -q "vm_unreachable" /tmp/profile_resp.json; then
             echo "❌ Bot control returned silent fallback vm_unreachable!"
             exit 1
           fi
-          if echo "$RES" | grep -q "\"fallback\""; then
+          if grep -q "\"fallback\"" /tmp/profile_resp.json; then
             echo "❌ Bot control returned silent fallback profile!"
             exit 1
           fi
-          echo "✅ Bot control profile response verified (no silent fallback)."
+          if ! grep -q '"profile"' /tmp/profile_resp.json; then
+            echo "❌ Bot control response missing 'profile' key!"
+            exit 1
+          fi
+          echo "✅ Bot control profile response verified (HTTP 200, valid profile, no fallback)."
 
       - name: Check response time
         run: |
