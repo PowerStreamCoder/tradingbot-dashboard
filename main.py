@@ -3712,11 +3712,24 @@ async def get_learning_stats(response: Response = None):
             if finding_type in stats["by_type"]:
                 stats["by_type"][finding_type] += 1
 
-            # Calculate potential savings from backtest results
+            # Calculate potential savings from backtest results.
+            # Supports both shapes: the #269 async backtest worker writes
+            # backtest_results.deltas.delta_pnl; fleet observations write
+            # backtest_results.potential_savings directly. The legacy
+            # pnl_improvement key is still honored for pre-#269 documents.
+            # Only positive contributions count as "potential savings".
             if status == "pending_review":
-                backtest = data.get("backtest_results", {})
-                improvement = backtest.get("pnl_improvement", 0)
-                stats["potential_savings"] += improvement
+                backtest = data.get("backtest_results", {}) or {}
+                deltas = backtest.get("deltas", {}) or {}
+                improvement = 0.0
+                if isinstance(deltas.get("delta_pnl"), (int, float)):
+                    improvement = deltas["delta_pnl"]
+                elif isinstance(backtest.get("potential_savings"), (int, float)):
+                    improvement = backtest["potential_savings"]
+                elif isinstance(backtest.get("pnl_improvement"), (int, float)):
+                    improvement = backtest["pnl_improvement"]
+                if improvement > 0:
+                    stats["potential_savings"] += improvement
 
         if response:
             response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
