@@ -889,6 +889,14 @@ const ACTION_METADATA = {
         thresholdType: 'days',
         badgeClass: 'badge-timedecay'
     },
+    'gap_fade_shield': {
+        label: 'Gap-Fade / ORB Shield',
+        shortLabel: 'Gap-Fade Shield',
+        icon: '🛡️',
+        desc: 'Loss-cutter: flattens a trade fading an opening gap / ORB breakout',
+        thresholdType: 'r_multiple',
+        badgeClass: 'badge-timedecay'
+    },
     'trailing_stop': {
         label: 'Trailing Stop Loss',
         shortLabel: 'Trailing Stop',
@@ -1174,6 +1182,18 @@ function renderAdaptiveTable(actions = null) {
             const isPos = num >= 0;
             const rVal = outcome.realized_r !== undefined && outcome.realized_r !== null ? ` (${Number(outcome.realized_r) >= 0 ? '+' : ''}${Number(outcome.realized_r).toFixed(2)}R)` : '';
             pnlHtml = `<span class="${isPos ? 'pnl-pos' : 'pnl-neg'}">${isPos ? '+' : ''}$${num.toFixed(2)}${rVal}</span>`;
+            // #268.2: this action's OWN counterfactual contribution (what it did,
+            // not the blended trade result). Coupled (cf_confidence < 1) when
+            // another intervention fired within a few bars of this one.
+            const cfR = outcome.counterfactual_r;
+            if (cfR !== undefined && cfR !== null) {
+                const cfPos = Number(cfR) >= 0;
+                const conf = outcome.cf_confidence;
+                const coupled = (conf !== undefined && conf !== null && Number(conf) < 1)
+                    ? ` <span class="text-muted" title="Coupled attribution: another intervention fired nearby (confidence ${Number(conf).toFixed(2)})">⚯</span>`
+                    : '';
+                pnlHtml += `<br><span class="${cfPos ? 'pnl-pos' : 'pnl-neg'}" style="font-size: 11px;" title="Counterfactual R: this action's own differential contribution vs not firing">CF ${cfPos ? '+' : ''}${Number(cfR).toFixed(2)}R${coupled}</span>`;
+            }
         } else if (!resolved) {
             pnlHtml = `<span class="text-muted" style="font-size: 11px;">In-Flight</span>`;
         }
