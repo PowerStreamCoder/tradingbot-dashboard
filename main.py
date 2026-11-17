@@ -4660,9 +4660,6 @@ async def provision_bot_from_pick(request: Request):
         target_dirs = [
             os.path.join(os.path.dirname(bots_config_path), "bots")
         ]
-        alt_bot_dir = os.path.join(os.path.dirname(__file__), "config", "bots")
-        if os.path.exists(alt_bot_dir) and alt_bot_dir not in target_dirs:
-            target_dirs.append(alt_bot_dir)
 
         from stockpicker.parameter_advisor import generate_expert_parameter_advice
 
