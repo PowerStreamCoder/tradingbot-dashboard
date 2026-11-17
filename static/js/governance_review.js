@@ -889,6 +889,14 @@ const ACTION_METADATA = {
         thresholdType: 'days',
         badgeClass: 'badge-timedecay'
     },
+    'gap_fade_shield': {
+        label: 'Gap-Fade / ORB Shield',
+        shortLabel: 'Gap-Fade Shield',
+        icon: '🛡️',
+        desc: 'Loss-cutter: flattens a trade fading an opening gap / ORB breakout',
+        thresholdType: 'r_multiple',
+        badgeClass: 'badge-shield'
+    },
     'trailing_stop': {
         label: 'Trailing Stop Loss',
         shortLabel: 'Trailing Stop',
@@ -1169,11 +1177,35 @@ function renderAdaptiveTable(actions = null) {
 
         // Outcome P&L formatting
         let pnlHtml = '—';
+        // #268.2: this action's OWN counterfactual contribution (what it did, not
+        // the blended trade result). Built independently of final_pnl so it shows
+        // for any resolved action carrying a counterfactual, even one with a
+        // null/flat final_pnl. Coupled (cf_confidence < 1) when another
+        // intervention fired within a few bars of this one.
+        let cfHtml = '';
+        if (resolved) {
+            const cfR = outcome.counterfactual_r;
+            if (cfR !== undefined && cfR !== null && !Number.isNaN(Number(cfR))) {
+                const cfNum = Number(cfR);
+                const cfPos = cfNum >= 0;
+                const conf = Number(outcome.cf_confidence);
+                // Coupled whenever confidence is a real number below 1 (a NaN/absent
+                // confidence is treated as coupled, not silently clean, so a
+                // low-confidence attribution is never shown as a clean result).
+                const coupled = (outcome.cf_confidence === undefined || outcome.cf_confidence === null || Number.isNaN(conf) || conf < 1)
+                    ? ` <span class="text-muted" title="Coupled / low-confidence attribution: another intervention fired nearby${Number.isNaN(conf) ? '' : ` (confidence ${conf.toFixed(2)})`}">⚯</span>`
+                    : '';
+                cfHtml = `<br><span class="${cfPos ? 'pnl-pos' : 'pnl-neg'}" style="font-size: 11px;" title="Counterfactual R: this action's own differential contribution vs not firing">CF ${cfPos ? '+' : ''}${cfNum.toFixed(2)}R${coupled}</span>`;
+            }
+        }
         if (resolved && outcome.final_pnl !== undefined && outcome.final_pnl !== null) {
             const num = Number(outcome.final_pnl);
             const isPos = num >= 0;
             const rVal = outcome.realized_r !== undefined && outcome.realized_r !== null ? ` (${Number(outcome.realized_r) >= 0 ? '+' : ''}${Number(outcome.realized_r).toFixed(2)}R)` : '';
-            pnlHtml = `<span class="${isPos ? 'pnl-pos' : 'pnl-neg'}">${isPos ? '+' : ''}$${num.toFixed(2)}${rVal}</span>`;
+            pnlHtml = `<span class="${isPos ? 'pnl-pos' : 'pnl-neg'}">${isPos ? '+' : ''}$${num.toFixed(2)}${rVal}</span>${cfHtml}`;
+        } else if (resolved && cfHtml) {
+            // Resolved but no final_pnl figure — still surface the CF contribution.
+            pnlHtml = cfHtml.replace(/^<br>/, '');
         } else if (!resolved) {
             pnlHtml = `<span class="text-muted" style="font-size: 11px;">In-Flight</span>`;
         }

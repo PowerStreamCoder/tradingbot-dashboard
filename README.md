@@ -127,3 +127,9 @@ Open [http://localhost:8000](http://localhost:8000) in your browser.
 - [tradingbot-documentation](file:///Users/i030983/Library/CloudStorage/GoogleDrive-sudhirmakam@gmail.com/My%20Drive/TradingBots/tradingbot-documentation/README.md): Documentation, runbooks, and governance guides.
 - [tradingbot-tools](file:///Users/i030983/Library/CloudStorage/GoogleDrive-sudhirmakam@gmail.com/My%20Drive/TradingBots/tradingbot-tools/README.md): Tooling, backtesting framework, and analysis scripts.
 - [tradingbot-services](file:///Users/i030983/Library/CloudStorage/GoogleDrive-sudhirmakam@gmail.com/My%20Drive/TradingBots/tradingbot-services/README.md): Systemd service definitions and API daemon units.
+
+---
+
+## 📖 Specifications & Roadmap
+
+- [Agent Efficiency Measurement & Regular Monitoring Spec](file:///Users/i030983/Library/CloudStorage/GoogleDrive-sudhirmakam@gmail.com/My%20Drive/TradingBots/tradingbot-dashboard/docs/AGENT_EFFICIENCY_MONITORING.md): Architecture and implementation plan for multi-agent efficiency tracking, SLA monitoring, and recurring digests.

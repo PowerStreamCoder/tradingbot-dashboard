@@ -9,7 +9,7 @@ Covers: /api/exit-governance, /api/applied-changes,
 
 import datetime
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -39,6 +39,9 @@ class _FakeDb:
                 self._keys = keys
                 self._limit = limit
 
+            def where(self, *args, **kwargs):
+                return self
+
             def order_by(self, field, direction=None):
                 rev = direction == "DESCENDING" or direction == "DESC"
                 self._keys.sort(
@@ -65,6 +68,9 @@ class _FakeDb:
                 return _Query(list(store.collections.get(name, {}).keys())).order_by(
                     field, direction=direction
                 )
+
+            def where(self, *args, **kwargs):
+                return _Query(list(store.collections.get(name, {}).keys())).where(*args, **kwargs)
 
         return _Collection()
 
@@ -106,12 +112,15 @@ class TestGovernanceApi(unittest.TestCase):
 
         self.client_patch = patch("main.firestore.Client", return_value=self.db)
         self.client_patch.start()
+        self.db_patch = patch.object(main.dashboard_data, "db", self.db)
+        self.db_patch.start()
         self.client = TestClient(main.app)
         main.authenticated_sessions[SESSION_ID] = FUTURE
         self.headers = {"Cookie": f"dashboard_session={SESSION_ID}"}
 
     def tearDown(self):
         main.authenticated_sessions.pop(SESSION_ID, None)
+        self.db_patch.stop()
         self.client_patch.stop()
 
     def _get(self, path, **kwargs):
