@@ -11,6 +11,112 @@ function escapeHtml(value) {
     }[ch]));
 }
 
+/**
+ * Extract the estimated potential savings/P&L impact of a finding.
+ *
+ * Handles both shapes written to Firestore:
+ *  - Backtested candidates: backtest_results.deltas.delta_pnl (the #269 async
+ *    backtest worker). A positive delta_pnl is an estimated gain.
+ *  - Fleet observations: backtest_results.potential_savings (written directly
+ *    by _analyze_fleet_portfolio_exposure).
+ * The legacy pnl_improvement key is still honored for any pre-#269 documents.
+ * Only positive contributions count toward the "potential savings" tile.
+ */
+function extractPotentialSavings(finding) {
+    const bt = finding && finding.backtest_results;
+    if (!bt || typeof bt !== 'object') return 0;
+    let v = 0;
+    if (bt.deltas && typeof bt.deltas.delta_pnl === 'number') {
+        v = bt.deltas.delta_pnl;
+    } else if (typeof bt.potential_savings === 'number') {
+        v = bt.potential_savings;
+    } else if (typeof bt.pnl_improvement === 'number') {
+        v = bt.pnl_improvement;
+    }
+    return v > 0 ? v : 0;
+}
+
+const TIER_META = {
+    clamped_micro: { label: '🟢 Clamped Micro', cls: 'tier-micro', title: 'Conservative (≤5%) learning-owned change within hard clamps — express review.' },
+    standard:      { label: '🟠 Standard Review', cls: 'tier-standard', title: 'Standard governance review required.' },
+    observation:   { label: '👁 Observation', cls: 'tier-observation', title: 'Informational — no config change to apply.' },
+};
+
+const BACKTEST_META = {
+    queued:    { label: '⏳ Backtest queued', cls: 'bt-queued' },
+    running:   { label: '⚙️ Backtest running', cls: 'bt-running' },
+    completed: { label: '✅ Backtested', cls: 'bt-completed' },
+    failed:    { label: '⚠️ Backtest failed', cls: 'bt-failed' },
+    not_applicable: { label: '', cls: '' },
+};
+
+/**
+ * Render the #269 review-tier badge, backtest status, ΔSharpe/ΔPnL deltas, and
+ * the natural-language macro brief for a finding.
+ */
+function renderTierAndBacktest(finding) {
+    const tier = TIER_META[finding.review_tier] || null;
+    const bt = finding.backtest_results || {};
+    const btStatus = finding.backtest_status || 'not_applicable';
+    const btMeta = BACKTEST_META[btStatus] || null;
+
+    let badges = '';
+    if (tier) {
+        badges += `<span class="tier-pill ${tier.cls}" title="${escapeHtml(tier.title)}">${escapeHtml(tier.label)}</span>`;
+    }
+    if (btMeta && btMeta.label) {
+        badges += `<span class="bt-pill ${btMeta.cls}">${escapeHtml(btMeta.label)}</span>`;
+    }
+
+    // Backtest delta grid (only when a completed backtest carries deltas).
+    let deltaHtml = '';
+    if (btStatus === 'completed' && bt.deltas && typeof bt.deltas === 'object') {
+        const d = bt.deltas;
+        const advisory = bt.advisory === true;
+        const fmt = (v, suffix = '', dp = 2) => {
+            if (typeof v !== 'number') return '—';
+            const sign = v > 0 ? '+' : '';
+            return `${sign}${v.toFixed(dp)}${suffix}`;
+        };
+        const cell = (label, v, suffix, goodWhenPositive) => {
+            let cls = 'delta-neutral';
+            if (typeof v === 'number' && v !== 0) {
+                const good = goodWhenPositive ? v > 0 : v < 0;
+                cls = good ? 'delta-good' : 'delta-bad';
+            }
+            return `<div class="bt-delta ${cls}"><span class="bt-delta-label">${label}</span><span class="bt-delta-val">${fmt(v, suffix)}</span></div>`;
+        };
+        deltaHtml = `
+            <div class="backtest-deltas">
+                <div class="bt-deltas-head">
+                    ${advisory ? '<span class="bt-advisory" title="Heuristic estimate — not a full backtest; not used for tier gating.">Heuristic estimate (advisory)</span>' : '<span class="bt-authoritative">Backtest (90d)</span>'}
+                    <span class="bt-engine">engine: <code>${escapeHtml(String(bt.engine || 'unknown'))}</code></span>
+                </div>
+                <div class="bt-delta-grid">
+                    ${cell('Δ Sharpe', d.delta_sharpe, '', true)}
+                    ${cell('Δ Win Rate', d.delta_win_rate_pct, '%', true)}
+                    ${cell('Δ Max DD', d.delta_max_drawdown_pct, '%', false)}
+                    ${cell('Δ P&amp;L', d.delta_pnl, '', true)}
+                </div>
+            </div>
+        `;
+    }
+
+    // Natural-language macro brief (#269 Pillar 4).
+    let macroHtml = '';
+    if (finding.macro_context) {
+        macroHtml = `
+            <div class="macro-brief">
+                <span class="macro-icon">🧠</span>
+                <div class="macro-body"><strong>Macro brief:</strong> ${escapeHtml(finding.macro_context)}</div>
+            </div>
+        `;
+    }
+
+    if (!badges && !deltaHtml && !macroHtml) return { badges: '', body: '' };
+    return { badges, body: deltaHtml + macroHtml };
+}
+
 function formatFindingTitle(title) {
     if (!title) return 'Learning Insight';
     let t = String(title).trim();
@@ -105,9 +211,7 @@ function updateStats(findings) {
 
     let potentialSavings = 0;
     findings.forEach(f => {
-        if (f.backtest_results && f.backtest_results.pnl_improvement) {
-            potentialSavings += f.backtest_results.pnl_improvement;
-        }
+        potentialSavings += extractPotentialSavings(f);
     });
 
     document.getElementById('stat-pending').textContent = pending;
@@ -215,7 +319,9 @@ function renderFindings(findings) {
     const priorityOrder = { high: 0, medium: 1, low: 2 };
     filtered.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
 
-    container.innerHTML = filtered.map(finding => `
+    container.innerHTML = filtered.map(finding => {
+        const tierBt = renderTierAndBacktest(finding);
+        return `
         <div class="finding-card">
             <div class="finding-header">
                 <div class="finding-title">
@@ -228,12 +334,15 @@ function renderFindings(findings) {
                         ${escapeHtml(finding.priority.toUpperCase())}
                     </span>
                     <span class="dash-status-pill neutral">${escapeHtml(String(finding.type || '').replace(/_/g, ' ').toUpperCase())}</span>
+                    ${tierBt.badges}
                 </div>
             </div>
 
             <div class="finding-description">
                 ${escapeHtml(finding.description)}
             </div>
+
+            ${tierBt.body}
 
             <div class="evidence-section">
                 <h3>📊 Telemetry &amp; Backtest Evidence</h3>
@@ -264,7 +373,8 @@ function renderFindings(findings) {
                 </button>
             </div>
         </div>
-    `).join('');
+    `;
+    }).join('');
 }
 
 const BRANCH_LABELS = {

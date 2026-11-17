@@ -1349,17 +1349,34 @@ class TestLearningAndGovernanceEndpoints:
             res = client.post("/api/learning-candidates/decision", json=decision_payload)
             assert res.status_code == 404
 
-            # GET stats
+            # GET stats (#269 delta_pnl, potential_savings, and legacy pnl_improvement)
             doc1 = MagicMock()
-            doc1.to_dict.return_value = {"status": "pending_review", "priority": "high"}
+            doc1.to_dict.return_value = {
+                "status": "pending_review",
+                "priority": "high",
+                "backtest_results": {"deltas": {"delta_pnl": 50.0}}
+            }
             doc2 = MagicMock()
-            doc2.to_dict.return_value = {"status": "approved", "priority": "medium"}
-            mock_db.collection("learning_candidates").stream.return_value = [doc1, doc2]
+            doc2.to_dict.return_value = {
+                "status": "pending_review",
+                "priority": "medium",
+                "backtest_results": {"potential_savings": 30.0}
+            }
+            doc3 = MagicMock()
+            doc3.to_dict.return_value = {
+                "status": "pending_review",
+                "priority": "low",
+                "backtest_results": {"pnl_improvement": 20.0}
+            }
+            doc4 = MagicMock()
+            doc4.to_dict.return_value = {"status": "approved", "priority": "medium"}
+            mock_db.collection("learning_candidates").stream.return_value = [doc1, doc2, doc3, doc4]
 
             res_stats = client.get("/api/learning-candidates/stats")
             assert res_stats.status_code == 200
-            assert res_stats.json()["total_pending"] == 1
+            assert res_stats.json()["total_pending"] == 3
             assert res_stats.json()["total_approved"] == 1
+            assert res_stats.json()["potential_savings"] == 100.0
 
             # Exceptions
             mock_db.collection.side_effect = Exception("fs fail")
