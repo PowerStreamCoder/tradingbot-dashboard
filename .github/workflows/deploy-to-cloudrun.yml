@@ -278,3 +278,21 @@ jobs:
             -H "Accept: application/vnd.github.v3+json" \
             https://api.github.com/repos/PowerStreamCoder/tradingbot-tools/dispatches \
             -d '{"event_type":"code-changed"}'
+
+      - name: Prune old Cloud Run revisions
+        if: success()
+        run: |
+          echo "🧹 Pruning old non-serving Cloud Run revisions (keeping last 5)..."
+          REVISIONS=$(gcloud run revisions list \
+            --service=${{ env.SERVICE_NAME }} \
+            --region=${{ env.REGION }} \
+            --format='value(metadata.name)')
+          
+          # Skip the 5 newest revisions, delete anything older
+          echo "$REVISIONS" | tail -n +6 | while read -r REV; do
+            if [ -n "$REV" ]; then
+              echo "Deleting revision $REV..."
+              gcloud run revisions delete "$REV" --region=${{ env.REGION }} --quiet --async || true
+            fi
+          done
+          echo "✅ Revision pruning complete."
