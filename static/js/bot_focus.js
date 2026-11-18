@@ -2611,7 +2611,9 @@ async function updateSwitchButtonText() {
 }
 
 /**
- * Handle Close Position button click
+ * Handle Close Position button click.
+ * Parses positionId format: "botId-symbol-bucketGroup-bucketId"
+ * Posts to /api/close-position with scoped group and bucket identifier.
  */
 async function handleClosePosition() {
     const btn = document.getElementById('closePositionBtn');
@@ -2634,12 +2636,19 @@ async function handleClosePosition() {
     }
 
     const botId = parseInt(parts[0], 10);
-    const symbol = parts[1];
-    const bucketGroup = parts[2];
-    const bucketId = parseInt(parts[3], 10);
+    const bucketId = parseInt(parts[parts.length - 1], 10);
+    const bucketGroup = parts[parts.length - 2];
+    const symbol = parts.slice(1, parts.length - 2).join('-');
+
+    if (isNaN(botId) || isNaN(bucketId)) {
+        showNotification('Invalid position ID format: non-numeric ID', 'error');
+        return;
+    }
 
     // Confirm action
-    if (!confirm(`Close the selected ${CONFIG.symbol} position?\n\nThis will:\n• Sell all shares at market price\n• Close any associated orders (stop loss, profit target)\n• Buy back any sold covered calls\n\nContinue?`)) {
+    const targetSymbol = symbol || CONFIG.symbol;
+    const actionText = (bucketGroup === 'downward') ? 'Buy to cover all short shares' : 'Sell all shares';
+    if (!confirm(`Close the selected ${targetSymbol} position (Bucket #${bucketId} [${bucketGroup}])?\n\nThis will:\n• ${actionText} at market price\n• Close any associated orders (stop loss, profit target)\n• Buy back any sold covered calls\n\nContinue?`)) {
         return;
     }
 
@@ -5000,10 +5009,10 @@ function getActiveBuckets(botData) {
         if (bucket && bucket.entryPrice && bucket.quantity) {
             bucket.bucketNumber = i;
             if (bucket.bucket_id === undefined || bucket.bucket_id === null) {
-                bucket.bucket_id = i;
+                bucket.bucket_id = (i <= 5) ? i : (i - 5);
             }
-            if (!bucket.group) {
-                bucket.group = 'default';
+            if (!bucket.group || bucket.group === 'default' || bucket.group === 'unknown') {
+                bucket.group = (i <= 5) ? 'upward' : 'downward';
             }
             activeBuckets.push(bucket);
         }
@@ -5246,7 +5255,8 @@ function updatePositionOrdersTable(botData) {
         const pnlIndicator = unrealizedPnL >= 0 ? '↑' : '↓';
 
         // Generate unique position ID
-        const positionId = `${botData.botId || 1}-${symbol}-${activeBucket.group || 'unknown'}-${activeBucket.bucket_id || bucketNum}`;
+        const currentBotId = CONFIG?.botId || botData?.botId || 1;
+        const positionId = `${currentBotId}-${symbol}-${activeBucket.group || 'unknown'}-${activeBucket.bucket_id || bucketNum}`;
         const isChecked = previouslySelectedId === positionId ? 'checked' : '';
 
         const residenceActive = activeBucket.residence_active || activeBucket.residenceActive;

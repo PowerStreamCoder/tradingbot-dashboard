@@ -2834,7 +2834,7 @@ async def close_position(request: Request):
             "bot_id": 2,             # legacy alternative: 1-indexed position in bots.json
             "symbol": "NVDA",        # must match the resolved bot's config
             "bucket_group": "upward",
-            "bucket_id": 0,
+            "bucket_id": 1,          # 1-indexed bucket ID (1-5, or 6-10 display for downward)
             "close_covered_calls": true
         }
 

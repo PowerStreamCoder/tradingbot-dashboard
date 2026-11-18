@@ -19,7 +19,7 @@
 - Run API tests only: `pytest tests/api -q`
 - Deploy: `git push origin main` → GitHub Actions → Cloud Run (~3 min, automatic)
 - Production URL: https://trading-dashboard-w2n5czslna-uc.a.run.app
-- Update Cloud Run env vars: ALWAYS use `gcloud run services update trading-dashboard --update-env-vars KEY=VAL` (merges). NEVER use partial `--set-env-vars` as it deletes all other 6 env vars (Issue #97 / Finding D25).
+- Update Cloud Run env vars & secrets: Sensitive credentials (BOT_CONTROL_API_KEY, DASHBOARD_ACCESS_SECRET, NEWSAPI_KEY, FINNHUB_API_KEY, ALPHAVANTAGE_API_KEY, SEC_USER_AGENT) are managed in Google Cloud Secret Manager (project `project-dfe26779-9849-4c97-9b6`) and mounted in Cloud Run via `--update-secrets`. Plain configuration variables (like `BOT_CONTROL_API_URL`) use `--update-env-vars KEY=VAL` (merges). NEVER use partial `--set-env-vars` as it deletes all other literal env vars (Issue #97 / Finding D25).
 
 ## Common mappings
 - All API route definitions: `main.py` (search for `@app.get` / `@app.post`)
@@ -36,7 +36,7 @@
 - Stock picks: `GET /api/stock-picks`, `POST /api/stock-picks/run`
 - Bot control (stop/start/reset): `POST /api/bot-control/stop|restart|reset/{bot_name}`
 - Profile switching: `GET /api/bot-control/current-profile`, `POST /api/bot-control/switch-profile`
-- Position orders: `POST /api/create-position|close-position` — refuse with 409 outside the resolved bot's market hours (#98); session rules come from the vendored `market_hours.py` (verbatim copy of `tradingbot-bots/trading/market_hours.py`; per-bot `market_region`/`allow_extended_hours` optional in `bots.json`, defaults US/RTH)
+- Position orders: `POST /api/create-position|close-position` — refuse with 409 outside the resolved bot's market hours (#98); close-position routes scoped `(bucket_group, bucket_id)` pairs to disambiguate upward vs downward buckets (#65); session rules come from the vendored `market_hours.py` (verbatim copy of `tradingbot-bots/trading/market_hours.py`; per-bot `market_region`/`allow_extended_hours` optional in `bots.json`, defaults US/RTH)
 - P&L statement: `GET /api/pnl-statement`
 - Authentication: `POST /authenticate` (access code = today's date in ddmmyy format)
 
