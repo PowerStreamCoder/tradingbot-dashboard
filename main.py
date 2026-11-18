@@ -4,7 +4,7 @@ FastAPI application serving dashboard data with Firestore persistence
 
 Version: 2.0.0 - Code review fixes applied
 Features:
-  - Bot and bucket overview (dynamic, up to 10 buckets per bot)
+  - Bot and bucket overview (on-demand position slots; no fixed bucket count)
   - Trade history with bot names and bucket types
   - P&L statements (calculated client-side from trade data)
   - Date selector support for historical P&L analysis
@@ -935,13 +935,6 @@ class RegimeData(BaseModel):
     regime: Optional[str] = None
     volatility: Optional[float] = None
     confidence: Optional[float] = None
-
-class BotData(BaseModel):
-    bucket1: BucketData
-    bucket2: BucketData
-    bucket3: BucketData
-    bucket4: BucketData
-    bucket5: BucketData
 
 class Trade(BaseModel):
     """Trade record model with bot identification and metadata."""
@@ -2834,7 +2827,8 @@ async def close_position(request: Request):
             "bot_id": 2,             # legacy alternative: 1-indexed position in bots.json
             "symbol": "NVDA",        # must match the resolved bot's config
             "bucket_group": "upward",
-            "bucket_id": 1,          # 1-indexed bucket ID (1-5, or 6-10 display for downward)
+            "bucket_id": 1,          # raw, positive bucket id from the bucket's
+                                     # `bucket_id` field; group holds the direction
             "close_covered_calls": true
         }
 
@@ -2870,6 +2864,9 @@ async def close_position(request: Request):
             f"(source={target['source']}, requested symbol={symbol})"
         )
 
+        # Pass the engine's raw bucket_group / bucket_id straight through: the
+        # group carries the direction, so no display-offset conversion is needed
+        # and there is no fixed bucket-id range.
         # Create a close_position command
         close_command = {
             'command': 'close_position',

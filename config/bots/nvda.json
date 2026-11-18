@@ -3,8 +3,7 @@
   "description": "NVDA-specific parameters - aggressive growth strategy with covered calls",
   "capital": {
     "capital_per_bucket_long": 25000.0,
-    "capital_per_bucket_short": 2000.0,
-    "buckets_per_group": 2
+    "capital_per_bucket_short": 2000.0
   },
   "atr_parameters": {
     "atr_period": 14,

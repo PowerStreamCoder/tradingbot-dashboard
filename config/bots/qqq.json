@@ -3,8 +3,7 @@
   "description": "QQQ income: SMA 5/20 long base + covered-call premium harvest (INCOME mode, no rolls); .5k clears the 100-share contract floor",
   "capital": {
     "capital_per_bucket_long": 82500.0,
-    "capital_per_bucket_short": 2000.0,
-    "buckets_per_group": 1
+    "capital_per_bucket_short": 2000.0
   },
   "atr_parameters": {
     "atr_period": 14,
