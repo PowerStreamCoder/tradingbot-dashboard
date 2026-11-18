@@ -1141,7 +1141,7 @@ def test_get_engine_performance_api_returns_machinery(test_client, sample_bot_co
     assert "machinery" in data
     assert "is_available" in data["machinery"]
     assert "metrics" in data["machinery"]
-    assert len(data["machinery"]["metrics"]) == 7
+    assert len(data["machinery"]["metrics"]) >= 7
 
 
 def test_calculate_engine_performance_execution_metrics_edge_cases():

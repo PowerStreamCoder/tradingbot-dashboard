@@ -2892,6 +2892,31 @@ function pollPositionCommandStatus(botId, symbol, startTime) {
                 }
             }
 
+            // Check if active position is already detected
+            if (data.has_active_position) {
+                clearInterval(positionCommandPollTimer);
+                positionCommandPollTimer = null;
+                isCreatingPosition = false;
+                creatingBotId = null;
+
+                const btn = document.getElementById('createPositionBtn');
+                if (btn && CONFIG.botId === botId) {
+                    btn.classList.remove('loading');
+                    btn.disabled = true;
+                    btn.title = 'Position already exists for this bot. Close it first before creating a new one.';
+                    btn.innerHTML = '<span>+</span> Create Position';
+                }
+
+                showNotification(`✅ Position Created for ${symbol}!`, 'success');
+                showPositionOperationAlert(`✅ Position Active: ${symbol} (100 shares)`, 'success', 8000);
+
+                if (CONFIG.botId === botId) {
+                    await updateBotOverview();
+                    await fetchInitialData();
+                }
+                return;
+            }
+
             // Check if bot document has last_command_result
             if (data.last_command_result) {
                 const cmdResult = data.last_command_result;
@@ -2899,12 +2924,12 @@ function pollPositionCommandStatus(botId, symbol, startTime) {
 
                 // Ensure result corresponds to this command
                 if (resultTime >= startTime) {
-                    clearInterval(positionCommandPollTimer);
-                    positionCommandPollTimer = null;
-                    isCreatingPosition = false;
-                    creatingBotId = null;
-
                     if (cmdResult.success) {
+                        clearInterval(positionCommandPollTimer);
+                        positionCommandPollTimer = null;
+                        isCreatingPosition = false;
+                        creatingBotId = null;
+
                         // Success!
                         const btn = document.getElementById('createPositionBtn');
                         if (btn && CONFIG.botId === botId) {
@@ -2928,38 +2953,21 @@ function pollPositionCommandStatus(botId, symbol, startTime) {
                             await fetchInitialData();
                         }
                         return;
+                    } else if (cmdResult.pending_async_fill) {
+                        // Order timed out synchronously at broker but bot is actively monitoring for late fill
+                        showPositionOperationAlert('⏳ Broker order timed out synchronously; monitoring for late fill / active position...', 'info');
                     } else {
                         // Error reported by the trading bot!
+                        clearInterval(positionCommandPollTimer);
+                        positionCommandPollTimer = null;
+                        isCreatingPosition = false;
+                        creatingBotId = null;
+
                         const errorMsg = cmdResult.message || 'Bot was unable to create position';
                         handlePositionCreationFailure(errorMsg);
                         return;
                     }
                 }
-            }
-
-            // Also check if active position is already detected
-            if (data.has_active_position) {
-                clearInterval(positionCommandPollTimer);
-                positionCommandPollTimer = null;
-                isCreatingPosition = false;
-                creatingBotId = null;
-
-                const btn = document.getElementById('createPositionBtn');
-                if (btn && CONFIG.botId === botId) {
-                    btn.classList.remove('loading');
-                    btn.disabled = true;
-                    btn.title = 'Position already exists for this bot. Close it first before creating a new one.';
-                    btn.innerHTML = '<span>+</span> Create Position';
-                }
-
-                showNotification(`✅ Position Created for ${symbol}!`, 'success');
-                showPositionOperationAlert(`✅ Position Active: ${symbol} (100 shares)`, 'success', 8000);
-
-                if (CONFIG.botId === botId) {
-                    await updateBotOverview();
-                    await fetchInitialData();
-                }
-                return;
             }
         } catch (pollErr) {
             console.debug('Error polling bot command status (retrying):', pollErr);
