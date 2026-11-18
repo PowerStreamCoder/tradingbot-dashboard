@@ -19,7 +19,7 @@
 - Run API tests only: `pytest tests/api -q`
 - Deploy: `git push origin main` → GitHub Actions → Cloud Run (~3 min, automatic)
 - Production URL: https://trading-dashboard-w2n5czslna-uc.a.run.app
-- Update Cloud Run env vars & secrets: Sensitive credentials (BOT_CONTROL_API_KEY, DASHBOARD_ACCESS_SECRET, NEWSAPI_KEY, FINNHUB_API_KEY, ALPHAVANTAGE_API_KEY, SEC_USER_AGENT) are managed in Google Cloud Secret Manager (project `project-dfe26779-9849-4c97-9b6`) and mounted in Cloud Run via `--update-secrets`. Plain configuration variables (like `BOT_CONTROL_API_URL`) use `--update-env-vars KEY=VAL` (merges). NEVER use partial `--set-env-vars` as it deletes all other literal env vars (Issue #97 / Finding D25).
+- Update Cloud Run env vars & secrets: Sensitive credentials (`BOT_CONTROL_API_KEY`, `DASHBOARD_ACCESS_SECRET`, `NEWSAPI_KEY`, `FINNHUB_API_KEY`, `ALPHAVANTAGE_API_KEY`, `SEC_USER_AGENT`) are managed in Google Cloud Secret Manager (project `project-dfe26779-9849-4c97-9b6`) and mounted in Cloud Run via `--update-secrets`. Plain configuration variables (like `BOT_CONTROL_API_URL`) use `--update-env-vars KEY=VAL` (merges). NEVER use partial `--set-env-vars` as it deletes all other literal env vars (Issue #97 / Finding D25).
 
 ## Common mappings
 - All API route definitions: `main.py` (search for `@app.get` / `@app.post`)
@@ -117,7 +117,7 @@
 - Changelog: `../tradingbot-documentation/CHANGELOG.md`
 
 ## Code Knowledge Graph
-_Auto-updated 2026-11-17. Full graph: `tradingbot-tools/knowledge-graph/output/`_
+_Auto-updated 2026-11-18. Full graph: `tradingbot-tools/knowledge-graph/output/`_
 
 ### Key Classes
 | Class | File | Role |
