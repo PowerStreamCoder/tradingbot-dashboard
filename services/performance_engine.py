@@ -197,7 +197,7 @@ class EngineMachineryReport(BaseModel):
     exit_blocked_by_entry: Optional[int] = None
     event_loop_errors: Optional[int] = None
     broker_quote_calls: Optional[int] = None
-    cascade_p95_us: Optional[float] = None
+    cascade_p90_us: Optional[float] = None
     cascade_evaluations: Optional[int] = None
     metrics: List[BenchmarkComparisonMetric] = Field(default_factory=list)
 
@@ -826,8 +826,10 @@ def _summarize_execution_metrics(
 
 
     # 7. Decision-Path Cost
-    cascade_p95_ns = cascade_info.get("p90")
-    cascade_p95_us = round(cascade_p95_ns / 1000.0, 1) if cascade_p95_ns is not None else None
+    # The logged cascade summary exposes p90 (not p95); keep the field name
+    # honest instead of implying a percentile we cannot measure (Issue #146 F11).
+    cascade_p90_ns = cascade_info.get("p90")
+    cascade_p90_us = round(cascade_p90_ns / 1000.0, 1) if cascade_p90_ns is not None else None
     cascade_evals = _get_counter("cascade_evaluations")
 
     metrics_list: List[BenchmarkComparisonMetric] = []
@@ -957,17 +959,17 @@ def _summarize_execution_metrics(
     dec_str = "--"
     dec_status = "UNMEASURED"
     dec_basis = "unavailable"
-    if cascade_p95_us is not None or (cascade_evals is not None and cascade_evals > 0):
-        c_p = f"{cascade_p95_us:.1f} µs (p90)" if cascade_p95_us is not None else "N/A"
+    if cascade_p90_us is not None or (cascade_evals is not None and cascade_evals > 0):
+        c_p = f"{cascade_p90_us:.1f} µs (p90)" if cascade_p90_us is not None else "N/A"
         ev_s = f"{cascade_evals:,} evals" if cascade_evals is not None else "0 evals"
         dec_str = f"{c_p} | {ev_s}"
-        dec_status = "BEATING" if (cascade_p95_us is None or cascade_p95_us <= 150.0) else "LAGGING"
+        dec_status = "BEATING" if (cascade_p90_us is None or cascade_p90_us <= 150.0) else "LAGGING"
         dec_basis = "measured"
 
     metrics_list.append(BenchmarkComparisonMetric(
         name="Decision-Path Cost",
         category="DECISION_COST",
-        engine_value=cascade_p95_us,
+        engine_value=cascade_p90_us,
         engine_formatted=dec_str,
         benchmark_name="Sub-Millisecond Cascade (F5)",
         benchmark_value=150.0,
@@ -1041,7 +1043,7 @@ def _summarize_execution_metrics(
         exit_blocked_by_entry=exit_blocked,
         event_loop_errors=loop_errors,
         broker_quote_calls=broker_quotes,
-        cascade_p95_us=cascade_p95_us,
+        cascade_p90_us=cascade_p90_us,
         cascade_evaluations=cascade_evals,
         metrics=metrics_list,
     )

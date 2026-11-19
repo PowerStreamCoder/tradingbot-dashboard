@@ -1262,6 +1262,10 @@ def test_calculate_engine_performance_with_populated_execution_metrics():
     assert res.machinery.is_available is True
     assert res.machinery.data_basis == "measured"
     assert res.machinery.cascade_p99_us == 250.0
+    # Issue #146 F11: the field is p90 (the only percentile logged), not a
+    # mislabelled p95.
+    assert res.machinery.cascade_p90_us == 110.0
+    assert not hasattr(res.machinery, "cascade_p95_us")
     assert res.machinery.queue_wait_p99_ms == 25.0
     assert res.machinery.markout_30s_bps == 3.1
     assert res.machinery.reconciliation_events == 0
