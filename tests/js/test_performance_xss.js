@@ -31,8 +31,16 @@ const elements = {};
 const ids = [
     'tableSec605', 'tableInstCta', 'tableBuyHold', 'tableMachinery',
     'botsTableBody', 'botScopePills', 'activeBots', 'diagnosticsGrid',
+    'benchmarkRadarChart',
 ];
 ids.forEach(id => { elements[id] = makeEl(); });
+
+// Capture Chart.js configs without pulling in the library.
+let lastChartConfig = null;
+global.Chart = class {
+    constructor(ctx, config) { lastChartConfig = config; }
+    destroy() {}
+};
 
 global.document = {
     getElementById: id => elements[id] || null,
@@ -89,6 +97,20 @@ assert(html.includes('&lt;img'), 'diagnostic strings escaped');
 assert(!html.includes('<img'), 'diagnostics have no raw <img>');
 assert(!html.includes('onerror=alert(1)"'), 'diagnostic href has no attribute breakout');
 
+// 4. F14 - unavailable radar pillars must be null (gap), not 0 (looks failing).
+renderBenchmarkChart({
+    execution_score: 82,
+    risk_adjusted_score: null,
+    expectancy_score: null,
+    capital_preservation_score: 55,
+});
+const engineData = lastChartConfig.data.datasets[0].data;
+assert(engineData[0] === 82, 'measured pillar keeps its score');
+assert(engineData[1] === null, 'unavailable risk pillar is null');
+assert(engineData[2] === null, 'unavailable expectancy pillar is null');
+assert(engineData[3] === 55, 'measured capital pillar keeps its score');
+assert(!engineData.includes(0), 'no unavailable pillar plotted as 0');
+
 if (!process.exitCode) {
-    console.log('F13 XSS regression: all checks passed');
+    console.log('F13 XSS + F14 radar regression: all checks passed');
 }

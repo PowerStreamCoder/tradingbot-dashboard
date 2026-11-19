@@ -1000,8 +1000,9 @@ function renderBenchmarkChart(scorecard) {
         performanceChart.destroy();
     }
 
-    // Only the four measurable pillars; unavailable pillars are plotted as 0
-    // and are not silently replaced with assumed values.
+    // Only the four measurable pillars. An unavailable pillar is passed as
+    // null so Chart.js leaves a gap; plotting it as 0 makes "unmeasured" look
+    // like a failing score (Issue #146 F14).
     const labels = [
         'Execution Quality',
         'Risk-Adjusted Alpha',
@@ -1010,10 +1011,10 @@ function renderBenchmarkChart(scorecard) {
     ];
 
     const engineData = [
-        scorecard.execution_score != null ? scorecard.execution_score : 0,
-        scorecard.risk_adjusted_score != null ? scorecard.risk_adjusted_score : 0,
-        scorecard.expectancy_score != null ? scorecard.expectancy_score : 0,
-        scorecard.capital_preservation_score != null ? scorecard.capital_preservation_score : 0
+        scorecard.execution_score != null ? scorecard.execution_score : null,
+        scorecard.risk_adjusted_score != null ? scorecard.risk_adjusted_score : null,
+        scorecard.expectancy_score != null ? scorecard.expectancy_score : null,
+        scorecard.capital_preservation_score != null ? scorecard.capital_preservation_score : null
     ];
 
     // Static published institutional reference baseline (clearly labelled).
