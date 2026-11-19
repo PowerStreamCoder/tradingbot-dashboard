@@ -505,6 +505,20 @@ def test_scoped_bot_aggregation_and_summary():
     assert res.scorecard.overall_score is not None
 
 
+def test_performance_js_escapes_untrusted_strings():
+    """Issue #146 F13: run the Node XSS regression for the JS renderers."""
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not available")
+    script = Path(__file__).parent / "js" / "test_performance_xss.js"
+    result = subprocess.run([node, str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_guide_reference_anchors_resolve_to_headings():
     """Issue #146 F10: no diagnostic may link to a non-existent guide section."""
     import re
