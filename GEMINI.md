@@ -1,6 +1,29 @@
 <!-- Auto-generated from AGENT_CONTEXT.md — do not edit manually -->
 # Dashboard — AI Agent Context
 
+## Strategy Objective (Goal Contract)
+
+**Canonical contract:** `.agents/rules/agent_orchestration_spec.md` at the workspace root;
+identical copy at `tradingbot-documentation/architecture/AGENT_ORCHESTRATION_SPEC.md`.
+Load it before reasoning about entries, exits or risk.
+
+Two distinct modes — do not conflate them:
+
+- `cc_mode = INCOME` (covered-call income): target **7–14 calendar day** stock holds
+  aligned to the written option tenor. Primary aim is harvested net premium/theta; capital
+  appreciation is secondary. Covered calls are the profit engine, not a defensive overlay.
+- `cc_mode = TOTAL_RETURN` (default, growth): maximize risk-adjusted net return (Sharpe)
+  versus per-symbol buy-and-hold. **No fixed holding period** — winners run under trailing /
+  trend-residence / ATR-target rules. Covered calls are a defensive yield overlay only.
+
+Regime (`BULL` / `NEUTRAL` / `BEAR`) determines *posture*; `cc_mode` determines the
+*objective*. The 7–14 day rule applies **only** to INCOME bots and must never be imposed
+on growth bots.
+
+**Return aim (both modes, §10 of the contract):** 15–18% p.a. in bull, 12–15% p.a. in
+neutral, net of costs. These are aims backed by binding measurement and miss-review
+duties — not guaranteed returns. Current status: not achieved.
+
 ## Main entry points
 - API routes: `main.py` (FastAPI app, ~2800 lines — all routes defined here)
 - Frontend (NVDA/bot focus view): `static/js/bot_focus.js` (primary UI logic)

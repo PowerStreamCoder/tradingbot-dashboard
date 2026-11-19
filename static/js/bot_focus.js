@@ -1419,7 +1419,24 @@ function renderBotParameters(params) {
                 { key: 'Pyramiding on Trend', val: fmtParamPill(params.adaptive_pnl?.enable_pyramiding, `TRIG ${params.adaptive_pnl?.pyramid_trigger_r_multiple ?? 1.2}R (+${fmtParamPercent(params.adaptive_pnl?.pyramid_add_pct ?? 0.5)})`, 'DISABLED') },
                 { key: 'Peak Giveback Shield', val: fmtParamPill(params.adaptive_pnl?.peak_giveback_shield_enabled, `@ ${params.adaptive_pnl?.peak_giveback_min_r ?? 2.0}R (LOCK ${fmtParamPercent(params.adaptive_pnl?.peak_giveback_protect_pct ?? 0.75)})`, 'DISABLED') },
                 { key: 'Re-Entry Suppression', val: fmtParamPill(params.adaptive_pnl?.re_entry_suppression_enabled, `${params.adaptive_pnl?.re_entry_cooldown_bars ?? 4} BARS COOLDOWN`, 'DISABLED') },
-                { key: 'Time Decay Stop', val: fmtParamPill(params.adaptive_pnl?.time_decay_enabled, `${params.adaptive_pnl?.time_decay_max_days ?? 10}d (TIGHTEN ${fmtParamPercent(params.adaptive_pnl?.time_decay_tighten_pct ?? 0.5)})`, 'DISABLED') }
+                { key: 'Time Decay Stop', val: fmtParamPill(params.adaptive_pnl?.time_decay_enabled, `${params.adaptive_pnl?.time_decay_max_days ?? 10}d (TIGHTEN ${fmtParamPercent(params.adaptive_pnl?.time_decay_tighten_pct ?? 0.5)})`, 'DISABLED') },
+                { key: 'Learned Regimes (Effective)', val: (() => {
+                    const eff = params.adaptive_pnl?.effective_thresholds;
+                    if (!eff || typeof eff !== 'object' || Object.keys(eff).length === 0) {
+                        return '<span class="param-pill tag">Baseline Scalars Active</span>';
+                    }
+                    const summary = [];
+                    for (const [attr, regMap] of Object.entries(eff)) {
+                        if (regMap && typeof regMap === 'object' && Object.keys(regMap).length > 0) {
+                            const shortAttr = attr.replace('_r_multiple', '').replace('_target_r', '').replace('_min_r', '').replace('max_days', 'days');
+                            for (const [reg, val] of Object.entries(regMap)) {
+                                summary.push(`${shortAttr}[${reg}]: ${val}`);
+                            }
+                        }
+                    }
+                    if (summary.length === 0) return '<span class="param-pill tag">Baseline Scalars Active</span>';
+                    return `<div class="param-pills-wrap">${summary.map(s => `<span class="param-pill tag highlight-blue">${escapeHtml(s)}</span>`).join('')}</div>`;
+                })() }
             ]
         },
         // 7. Exits & Threshold Coordination

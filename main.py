@@ -405,9 +405,21 @@ def load_bot_configs():
             logger.error(f"Invalid JSON in bots.json: {e}")
             raise
 
+def _deep_merge_dict(base: dict, overlay: dict) -> dict:
+    """Non-mutating deep merge of overlay dictionary on top of base dictionary."""
+    result = dict(base)
+    for k, v in overlay.items():
+        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
+            result[k] = _deep_merge_dict(result[k], v)
+        else:
+            result[k] = v
+    return result
+
+
 def load_bot_parameters(symbol: str) -> Optional[dict]:
     """
-    Load bot parameters for a given symbol (e.g. 'IWM' or 'NVDA') from bots/{symbol.lower()}.json.
+    Load bot parameters for a given symbol (e.g. 'IWM' or 'NVDA') from bots/{symbol.lower()}.json,
+    merging runtime adaptive overrides from {symbol.lower()}.adaptive.json if present.
     Tries canonical config repo first, then production bundled copy.
     """
     if not symbol:
@@ -451,15 +463,28 @@ def load_bot_parameters(symbol: str) -> Optional[dict]:
     with _bot_params_cache['lock']:
         try:
             mtime = os.stat(file_path).st_mtime
+            adaptive_path = os.path.join(os.path.dirname(file_path), f"{symbol_clean}.adaptive.json")
+            adaptive_mtime = os.stat(adaptive_path).st_mtime if os.path.exists(adaptive_path) else 0.0
+            cache_key = (mtime, adaptive_mtime)
+
             if (symbol_clean in _bot_params_cache['params'] and
-                _bot_params_cache['mtimes'].get(symbol_clean) == mtime):
+                _bot_params_cache['mtimes'].get(symbol_clean) == cache_key):
                 return _bot_params_cache['params'][symbol_clean]
 
             with open(file_path, 'r') as f:
                 data = json.load(f)
 
+            if os.path.exists(adaptive_path):
+                try:
+                    with open(adaptive_path, 'r') as f:
+                        adaptive_data = json.load(f)
+                    if isinstance(adaptive_data, dict):
+                        data = _deep_merge_dict(data, adaptive_data)
+                except Exception as ex:
+                    logger.warning(f"Failed to merge adaptive overrides from {adaptive_path}: {ex}")
+
             _bot_params_cache['params'][symbol_clean] = data
-            _bot_params_cache['mtimes'][symbol_clean] = mtime
+            _bot_params_cache['mtimes'][symbol_clean] = cache_key
             logger.info(f"Loaded bot parameters for {symbol_clean.upper()} from {file_path}")
             return data
         except Exception as e:
