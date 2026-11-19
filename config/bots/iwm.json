@@ -3,8 +3,7 @@
   "description": "IWM-specific parameters - conservative small-cap with selective covered calls",
   "capital": {
     "capital_per_bucket_long": 32500.0,
-    "capital_per_bucket_short": 1000.0,
-    "buckets_per_group": 2
+    "capital_per_bucket_short": 1000.0
   },
   "atr_parameters": {
     "atr_period": 20,

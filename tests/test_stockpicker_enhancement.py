@@ -270,7 +270,11 @@ def test_generate_expert_parameter_advice_growth_and_income():
     assert params_g["atr_parameters"]["position_min_shares"] == 100
     assert params_g["covered_calls"]["cc_mode"] == "TOTAL_RETURN"
     assert params_g["covered_calls"]["call_expiration_days"] == 7
-    assert len(advice_growth["expert_rationale"]) == 4
+    assert len(advice_growth["expert_rationale"]) == 5
+    assert any(
+        "capital-gated" in r and "SHORT" in r
+        for r in advice_growth["expert_rationale"]
+    )
 
     # 2. Low Volatility Income Asset with High Share Price
     advice_income = generate_expert_parameter_advice(

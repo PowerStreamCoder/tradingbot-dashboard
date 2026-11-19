@@ -1302,7 +1302,6 @@ function renderBotParameters(params) {
             rows: [
                 { key: 'Long Bucket Capital', val: `<span class="param-val number highlight-green">${fmtParamCurrency(params.capital?.capital_per_bucket_long ?? 30000)}</span>` },
                 { key: 'Short Bucket Capital', val: `<span class="param-val number">${fmtParamCurrency(params.capital?.capital_per_bucket_short ?? 1000)}</span>` },
-                { key: 'Buckets per Group', val: `<span class="param-val number">${params.capital?.buckets_per_group ?? 1} bucket(s)</span>` },
                 { key: 'Max Position Capital', val: (() => {
                     const cap = params.atr_parameters?.position_max_capital ?? params.capital?.capital_per_bucket_long ?? 30000;
                     return `<span class="param-val number highlight-blue">${fmtParamCurrency(cap)} <small style="font-size:10px;opacity:.7;">(auto-clamped)</small></span>`;
@@ -2709,14 +2708,8 @@ async function handleCreatePosition() {
         return;
     }
 
-    // Check if active position already exists for this bot
-    const currentBotData = window.latestBotData || {};
-    const existingPosition = getActiveBucket(currentBotData);
-    if (existingPosition && existingPosition.quantity) {
-        showNotification(`A position already exists for ${CONFIG.symbol}. Close the existing position first before creating a new one.`, 'warning');
-        showPositionOperationAlert(`A position already exists for ${CONFIG.symbol}. Close it first before creating a new position.`, 'warning', 6000);
-        return;
-    }
+    // Multiple concurrent positions are allowed — the engine gates new LONGs
+    // on available capital, so there is no client-side one-position limit.
 
     // Confirm action
     if (!confirm(`Create a new LONG position for ${CONFIG.symbol}?\n\n• Buy 100 shares at current market price\n• Sell covered call immediately\n• Uses SMA crossover config (2.0x ATR target, 5% stop loss)\n\nThis will bypass all strategy checks. Continue?`)) {
@@ -2892,6 +2885,31 @@ function pollPositionCommandStatus(botId, symbol, startTime) {
                 }
             }
 
+            // Check if active position is already detected
+            if (data.has_active_position) {
+                clearInterval(positionCommandPollTimer);
+                positionCommandPollTimer = null;
+                isCreatingPosition = false;
+                creatingBotId = null;
+
+                const btn = document.getElementById('createPositionBtn');
+                if (btn && CONFIG.botId === botId) {
+                    btn.classList.remove('loading');
+                    btn.disabled = false;
+                    btn.title = 'Create another position for this bot (subject to available capital)';
+                    btn.innerHTML = '<span>+</span> Create Position';
+                }
+
+                showNotification(`✅ Position Created for ${symbol}!`, 'success');
+                showPositionOperationAlert(`✅ Position Active: ${symbol} (100 shares)`, 'success', 8000);
+
+                if (CONFIG.botId === botId) {
+                    await updateBotOverview();
+                    await fetchInitialData();
+                }
+                return;
+            }
+
             // Check if bot document has last_command_result
             if (data.last_command_result) {
                 const cmdResult = data.last_command_result;
@@ -2899,18 +2917,18 @@ function pollPositionCommandStatus(botId, symbol, startTime) {
 
                 // Ensure result corresponds to this command
                 if (resultTime >= startTime) {
-                    clearInterval(positionCommandPollTimer);
-                    positionCommandPollTimer = null;
-                    isCreatingPosition = false;
-                    creatingBotId = null;
-
                     if (cmdResult.success) {
+                        clearInterval(positionCommandPollTimer);
+                        positionCommandPollTimer = null;
+                        isCreatingPosition = false;
+                        creatingBotId = null;
+
                         // Success!
                         const btn = document.getElementById('createPositionBtn');
                         if (btn && CONFIG.botId === botId) {
                             btn.classList.remove('loading');
-                            btn.disabled = true; // Disabled until position is closed
-                            btn.title = 'Position already exists for this bot. Close it first before creating a new one.';
+                            btn.disabled = false; // More positions can be added while capital allows
+                            btn.title = 'Create another position for this bot (subject to available capital)';
                             btn.innerHTML = '<span>+</span> Create Position';
                         }
 
@@ -2928,38 +2946,21 @@ function pollPositionCommandStatus(botId, symbol, startTime) {
                             await fetchInitialData();
                         }
                         return;
+                    } else if (cmdResult.pending_async_fill) {
+                        // Order timed out synchronously at broker but bot is actively monitoring for late fill
+                        showPositionOperationAlert('⏳ Broker order timed out synchronously; monitoring for late fill / active position...', 'info');
                     } else {
                         // Error reported by the trading bot!
+                        clearInterval(positionCommandPollTimer);
+                        positionCommandPollTimer = null;
+                        isCreatingPosition = false;
+                        creatingBotId = null;
+
                         const errorMsg = cmdResult.message || 'Bot was unable to create position';
                         handlePositionCreationFailure(errorMsg);
                         return;
                     }
                 }
-            }
-
-            // Also check if active position is already detected
-            if (data.has_active_position) {
-                clearInterval(positionCommandPollTimer);
-                positionCommandPollTimer = null;
-                isCreatingPosition = false;
-                creatingBotId = null;
-
-                const btn = document.getElementById('createPositionBtn');
-                if (btn && CONFIG.botId === botId) {
-                    btn.classList.remove('loading');
-                    btn.disabled = true;
-                    btn.title = 'Position already exists for this bot. Close it first before creating a new one.';
-                    btn.innerHTML = '<span>+</span> Create Position';
-                }
-
-                showNotification(`✅ Position Created for ${symbol}!`, 'success');
-                showPositionOperationAlert(`✅ Position Active: ${symbol} (100 shares)`, 'success', 8000);
-
-                if (CONFIG.botId === botId) {
-                    await updateBotOverview();
-                    await fetchInitialData();
-                }
-                return;
             }
         } catch (pollErr) {
             console.debug('Error polling bot command status (retrying):', pollErr);
@@ -3565,15 +3566,10 @@ async function updateBotOverview() {
         // Priority: 1) botData.currentPrice, 2) active bucket currentPrice, 3) sma5 from bot-status
         let currentPrice = botData.currentPrice;
 
-        // Check active bucket for current price if not in botData
+        // Check any bucket payload for current price if not in botData
         if (!currentPrice) {
-            for (let i = 1; i <= 10; i++) {
-                const bucket = botData[`bucket${i}`];
-                if (bucket && bucket.currentPrice) {
-                    currentPrice = bucket.currentPrice;
-                    break;
-                }
-            }
+            const pricedBucket = getAllBuckets(botData).find(b => b.currentPrice);
+            if (pricedBucket) currentPrice = pricedBucket.currentPrice;
         }
 
         // Store current price in botData for other functions
@@ -4048,14 +4044,9 @@ function updatePositionData(botData) {
     let activeBucket = activeBuckets.length > 0 ? activeBuckets[0] : null;
 
     if (!activeBucket) {
-        for (let i = 1; i <= 10; i++) {
-            const bucket = botData[`bucket${i}`];
-            if (bucket && bucket.entryPrice) {
-                activeBucket = bucket;
-                activeBucket.bucketNumber = i;
-                break;
-            }
-        }
+        // Partially-written bucket (e.g. entry without quantity) — normalize
+        // it the same way as fully active buckets, without a fixed id range.
+        activeBucket = getAllBuckets(botData).find(b => b.entryPrice) || null;
     }
 
     if (activeBucket) {
@@ -4996,28 +4987,60 @@ async function updateLogsData() {
     }
 }
 
+// Downward (SHORT) buckets are stored with this key offset so they can never
+// collide with upward (LONG) bucket keys at any scale (see config.py in the engine).
+const DOWNWARD_BUCKET_DISPLAY_OFFSET = 1000;
+
+/**
+ * Discover every bucket<N> payload on a bot document and normalize the display
+ * attributes. Returns shallow copies so the Firestore-backed payloads are not
+ * mutated. `group` / `bucket_id` written by the engine are authoritative; the
+ * numeric key suffix is only a fallback for older/partial records.
+ */
+function getAllBuckets(botData) {
+    if (!botData) return [];
+
+    return Object.keys(botData)
+        .filter(key => /^bucket\d+$/.test(key))
+        .map(key => {
+            const bucket = botData[key];
+            if (!bucket) return null;
+
+            const keyNumber = parseInt(key.slice('bucket'.length), 10);
+            const rawId = bucket.bucket_id;
+            const bucketId = (rawId !== undefined && rawId !== null &&
+                              Number.isFinite(Number(rawId)) && Number(rawId) > 0)
+                ? Number(rawId)
+                : (keyNumber > DOWNWARD_BUCKET_DISPLAY_OFFSET
+                    ? keyNumber - DOWNWARD_BUCKET_DISPLAY_OFFSET
+                    : keyNumber);
+            const group = (bucket.group === 'upward' || bucket.group === 'downward')
+                ? bucket.group
+                : (keyNumber > DOWNWARD_BUCKET_DISPLAY_OFFSET ? 'downward' : 'upward');
+
+            return {
+                ...bucket,
+                // Display badge uses the raw id (1..N per direction); the
+                // numeric Firestore key is only a collision-free storage key.
+                bucketNumber: bucketId,
+                bucketKeyNumber: keyNumber,
+                bucket_id: bucketId,
+                group
+            };
+        })
+        .filter(Boolean);
+}
+
 /**
  * Helper function to get all active buckets from bot data
  */
 function getActiveBuckets(botData) {
-    if (!botData) return [];
-
-    const activeBuckets = [];
-    // Check buckets 1-10 for active ones
-    for (let i = 1; i <= 10; i++) {
-        const bucket = botData[`bucket${i}`];
-        if (bucket && bucket.entryPrice && bucket.quantity) {
-            bucket.bucketNumber = i;
-            if (bucket.bucket_id === undefined || bucket.bucket_id === null) {
-                bucket.bucket_id = (i <= 5) ? i : (i - 5);
-            }
-            if (!bucket.group || bucket.group === 'default' || bucket.group === 'unknown') {
-                bucket.group = (i <= 5) ? 'upward' : 'downward';
-            }
-            activeBuckets.push(bucket);
-        }
-    }
-    return activeBuckets;
+    return getAllBuckets(botData)
+        .filter(bucket => bucket.entryPrice && bucket.quantity)
+        .sort((a, b) => {
+            if (a.group !== b.group) return a.group < b.group ? -1 : 1;
+            return a.bucket_id - b.bucket_id;
+        });
 }
 
 /**
@@ -5061,8 +5084,8 @@ function updatePositionOrdersTable(botData) {
             return;
         }
 
-        // Enable create position button when no active position exists and not creating
-        if (createBtn && !isCreatingPosition) {
+        // Keep the button available; only an in-flight creation for THIS bot holds it.
+        if (createBtn && !(isCreatingPosition && creatingBotId === CONFIG.botId)) {
             createBtn.disabled = false;
             createBtn.classList.remove('loading');
             createBtn.innerHTML = '<span>+</span> Create Position';
@@ -5097,23 +5120,23 @@ function updatePositionOrdersTable(botData) {
         }
     }
 
-    // Disable create position button while an active position exists
-    if (createBtn) {
-        createBtn.disabled = true;
+    // Multiple concurrent positions are allowed; capital is gated by the engine.
+    // Only an in-flight creation for THIS bot keeps the button disabled.
+    if (createBtn && !(isCreatingPosition && creatingBotId === CONFIG.botId)) {
+        createBtn.disabled = false;
         createBtn.classList.remove('loading');
         createBtn.innerHTML = '<span>+</span> Create Position';
-        createBtn.title = 'Position already exists for this bot. Close it first before creating a new one.';
+        createBtn.title = 'Create another position for this bot (subject to available capital)';
     }
 
     // Check for unrecoverable/reconcile-failed buckets across all bot buckets (#199)
     let unrecoverableWarning = '';
-    for (let i = 1; i <= 10; i++) {
-        const b = botData[`bucket${i}`];
-        if (b && b.optionState === 'UNRECOVERABLE') {
-            unrecoverableWarning = `⚠️ Bucket #${i} option UNRECOVERABLE — entry blocked!`;
+    for (const b of getAllBuckets(botData)) {
+        if (b.optionState === 'UNRECOVERABLE') {
+            unrecoverableWarning = `⚠️ Bucket #${b.bucketNumber} option UNRECOVERABLE — entry blocked!`;
             break;
-        } else if (b && b.optionState === 'RECONCILE_FAILED') {
-            unrecoverableWarning = `⚠️ Bucket #${i} option RECONCILE_FAILED — broker audit pending.`;
+        } else if (b.optionState === 'RECONCILE_FAILED') {
+            unrecoverableWarning = `⚠️ Bucket #${b.bucketNumber} option RECONCILE_FAILED — broker audit pending.`;
             break;
         }
     }

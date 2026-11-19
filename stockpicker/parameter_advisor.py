@@ -51,10 +51,15 @@ def generate_expert_parameter_advice(
     solvency = solvency_rating or "Adequate"
 
     # 1. Capital Allocation & Bucket Sizing
-    # Typically 2 long buckets per group
+    # Long slots are created on demand and gated by available capital (no fixed
+    # bucket count); size each slot at half the allocation to leave room for more.
+    # Short exposure stays one position at a time.
     long_bucket_capital = round(capital / 2.0, 2)
     short_bucket_capital = 1000.0 if track == "GROWTH" else 0.0
-    buckets_per_group = 2
+    position_concurrency_guidance = (
+        "LONG positions are capital-gated and unbounded (slots are created on demand); "
+        "SHORT is one-at-a-time."
+    )
 
     # Dynamic minimum shares: ensure single bucket can purchase at least min_shares
     # If stock is $400 and bucket is $5,000, 100 shares is impossible. Min shares should be max(1, bucket // price)
@@ -123,6 +128,7 @@ def generate_expert_parameter_advice(
 
     rationale_bullets: List[str] = [
         f"Position Sizing: Position min shares calibrated to {position_min_shares} shares (${position_min_shares * price:,.0f} min order) to match ${long_bucket_capital:,.0f} bucket limit at ${price:.2f}/share.",
+        f"Position Concurrency: {position_concurrency_guidance}",
         f"Volatility Risk ({atr_pct * 100:.1f}% ATR): {stop_desc}",
         f"Strategy Architecture: {sma_desc}",
         f"Covered Call Execution: {cc_desc}",
@@ -149,7 +155,6 @@ def generate_expert_parameter_advice(
             "capital": {
                 "capital_per_bucket_long": long_bucket_capital,
                 "capital_per_bucket_short": short_bucket_capital,
-                "buckets_per_group": buckets_per_group,
             },
             "atr_parameters": {
                 "atr_period": 14,
@@ -172,7 +177,7 @@ def generate_expert_parameter_advice(
             }
         },
         "expert_rationale": rationale_bullets,
-        "advisory_summary": f"Quant recommendation for {sym}: Deploy ${capital:,.0f} across {buckets_per_group} buckets ({position_min_shares} min shares/order) with a {trailing_stop_multiplier}x ATR stop and {advisory_mode_phrase}." + (
+        "advisory_summary": f"Quant recommendation for {sym}: Deploy ${capital:,.0f} across capital-gated, unbounded LONG slots (${long_bucket_capital:,.0f} per slot, {position_min_shares} min shares/order); SHORT is one-at-a-time, with a {trailing_stop_multiplier}x ATR stop and {advisory_mode_phrase}." + (
             f" (⚠️ Note: inputs degraded due to missing {missing_text})" if is_degraded else ""
         )
     }
