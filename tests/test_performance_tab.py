@@ -867,6 +867,54 @@ def test_cache_key_fingerprints_payload_contents():
     assert third.cached is True
 
 
+def test_perf_cache_prunes_expired_entries():
+    """Payload-fingerprinted keys must not accumulate stale responses."""
+    now = datetime(2026, 11, 19, 12, 0, tzinfo=timezone.utc)
+    cfg = [{"name": "nvda_sma", "symbol": "NVDA", "allocated_capital": 60000.0}]
+    pe.clear_performance_cache()
+
+    def call(unrealized, at):
+        return calculate_engine_performance(
+            trades=[], bot_overview_data={"NVDA": {"unrealizedPnl": unrealized}},
+            bot_configs=cfg, period="1M", bot_scope="ALL", mode="live", now=at,
+        )
+
+    call(100.0, now)
+    assert len(pe._perf_cache) == 1
+    old_keys = set(pe._perf_cache)
+
+    # A different payload after the TTL prunes the expired entry on write.
+    call(200.0, now + timedelta(seconds=61))
+    assert set(pe._perf_cache).isdisjoint(old_keys)
+    assert len(pe._perf_cache) == 1
+
+    # Reading the same key after the TTL drops the stale entry and recomputes.
+    call(200.0, now + timedelta(seconds=122))
+    assert len(pe._perf_cache) == 1
+
+
+def test_perf_cache_bounded_by_max_entries():
+    """Distinct payloads within one TTL must not grow the cache without limit."""
+    now = datetime(2026, 11, 19, 12, 0, tzinfo=timezone.utc)
+    cfg = [{"name": "nvda_sma", "symbol": "NVDA", "allocated_capital": 60000.0}]
+    pe.clear_performance_cache()
+    cap = pe.MAX_PERFORMANCE_CACHE_ENTRIES
+
+    for i in range(cap + 10):
+        calculate_engine_performance(
+            trades=[], bot_overview_data={"NVDA": {"unrealizedPnl": float(i)}},
+            bot_configs=cfg, period="1M", bot_scope="ALL", mode="live", now=now,
+        )
+    assert len(pe._perf_cache) == cap
+
+    # The newest entry is retained (LRU by timestamp), older ones evicted first.
+    last = calculate_engine_performance(
+        trades=[], bot_overview_data={"NVDA": {"unrealizedPnl": float(cap + 9)}},
+        bot_configs=cfg, period="1M", bot_scope="ALL", mode="live", now=now,
+    )
+    assert last.cached is True
+
+
 def test_ratio_suppression_below_min_observations():
     # 12 trades but spread over only 12 days -> daily obs < MIN_OBSERVATIONS_FOR_RATIOS
     trades = _make_adequate_trades(n=12, days=12)
