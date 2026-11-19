@@ -233,10 +233,15 @@ def estimate_trade_commission(trade: Dict[str, Any]) -> float:
 
 
 def calculate_profit_factor(gross_wins: float, gross_losses: float) -> Optional[float]:
-    """Calculate Profit Factor safely with division by zero guard."""
+    """Calculate Profit Factor safely with division by zero guard.
+
+    Profit factor is undefined when there are no realized losses: returning a
+    large sentinel (e.g. 99.99) would fabricate a measurably infinite edge and
+    inflate any downstream score. Callers must treat ``None`` as UNMEASURED.
+    """
     abs_losses = abs(gross_losses)
     if abs_losses == 0:
-        return 99.99 if gross_wins > 0 else None
+        return None
     return round(gross_wins / abs_losses, 2)
 
 

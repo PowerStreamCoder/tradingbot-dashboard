@@ -61,8 +61,8 @@ class TestPnLStatementEngine(unittest.TestCase):
     def test_profit_factor_calculation(self):
         # Normal
         self.assertEqual(calculate_profit_factor(1000.0, -500.0), 2.0)
-        # Division by zero: 100% win rate
-        self.assertEqual(calculate_profit_factor(1000.0, 0.0), 99.99)
+        # Division by zero: 100% win rate -> undefined, never a fabricated sentinel
+        self.assertIsNone(calculate_profit_factor(1000.0, 0.0))
         # No wins or losses
         self.assertIsNone(calculate_profit_factor(0.0, 0.0))
 

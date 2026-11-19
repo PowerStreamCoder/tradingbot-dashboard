@@ -310,6 +310,29 @@ def test_small_sample_is_not_graded(sample_trades, sample_bot_configs):
             assert b.status_badge == "LOW_SAMPLE"
 
 
+def test_all_winning_trades_do_not_fabricate_pf_or_payoff():
+    """Issue #146 F1: undefined ratios must stay None, not sentinel constants."""
+    trades = [
+        {
+            "timestamp": (FIXED_NOW - timedelta(days=i)).isoformat(),
+            "symbol": "NVDA",
+            "profitLoss": 100.0,
+            "trading_mode": "live",
+        }
+        for i in range(6)
+    ]
+    cfg = [{"name": "nvda_sma", "symbol": "NVDA", "allocated_capital": 10000.0}]
+    res = calculate_engine_performance(
+        trades=trades, bot_overview_data={}, bot_configs=cfg,
+        period="1W", bot_scope="ALL", mode="live", now=FIXED_NOW,
+    )
+    bot = res.bots[0]
+    assert bot.profit_factor is None
+    assert bot.payoff_ratio is None
+    assert res.executive_kpis.profit_factor is None
+    assert res.executive_kpis.payoff_ratio is None
+
+
 def test_adequate_sample_is_graded():
     trades = _make_adequate_trades(n=45, days=30)
     cfg = [{"name": "nvda_sma", "symbol": "NVDA", "strategy": "sma_crossover", "enabled": True, "allocated_capital": 60000.0}]

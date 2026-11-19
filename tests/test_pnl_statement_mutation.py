@@ -33,8 +33,8 @@ def test_mutation_kill_profit_factor_zero_division():
     KILLS MUTANT 1: An unprotected division `gross_wins / abs(gross_losses)`
     which crashes with ZeroDivisionError when gross_losses == 0.0.
     """
-    # Baseline: Protected function returns 99.99 for 100% win sessions
-    assert calculate_profit_factor(1500.0, 0.0) == 99.99
+    # Baseline: 100% win sessions have no defined profit factor (no sentinel)
+    assert calculate_profit_factor(1500.0, 0.0) is None
     assert calculate_profit_factor(0.0, 0.0) is None
 
     # Mutant: Unprotected naive division

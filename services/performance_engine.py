@@ -1196,7 +1196,9 @@ def calculate_engine_performance(
 
         avg_win = (gross_wins / wins) if wins > 0 else 0.0
         avg_loss = (abs(gross_losses) / losses) if losses > 0 else 0.0
-        payoff = round(avg_win / avg_loss, 2) if avg_loss > 0 else (9.99 if avg_win > 0 else None)
+        # Payoff ratio is undefined without realized losses. A sentinel here
+        # would fabricate an edge, so leave it unmeasured instead.
+        payoff = round(avg_win / avg_loss, 2) if avg_loss > 0 else None
 
         p_win = wins / trades_count if trades_count > 0 else 0.0
         p_loss = losses / trades_count if trades_count > 0 else 0.0
