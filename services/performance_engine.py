@@ -48,8 +48,31 @@ from services.pnl_statement_engine import (
 logger = logging.getLogger(__name__)
 
 CACHE_TTL_SECONDS = 60.0
+# Bound the cache: the full-payload fingerprint (Issue #146 F12) changes on
+# every data update, so without pruning one response would be retained forever.
+MAX_PERFORMANCE_CACHE_ENTRIES = 128
 _perf_cache: Dict[str, Dict[str, Any]] = {}
 _perf_cache_lock = Lock()
+
+
+def _prune_perf_cache(now: datetime) -> None:
+    """Drop expired entries and cap the cache size. Caller holds the lock.
+
+    Issue #146 F12 follow-up: the payload fingerprint prevents stale hits but
+    makes keys effectively unique per data change. Entries must therefore be
+    evicted on write, otherwise a long-running dashboard accumulates them.
+    """
+    expired = [
+        key for key, entry in _perf_cache.items()
+        if (now - entry["timestamp"]).total_seconds() >= CACHE_TTL_SECONDS
+    ]
+    for key in expired:
+        del _perf_cache[key]
+    if len(_perf_cache) >= MAX_PERFORMANCE_CACHE_ENTRIES:
+        oldest = sorted(_perf_cache, key=lambda key: _perf_cache[key]["timestamp"])
+        overflow = len(_perf_cache) - MAX_PERFORMANCE_CACHE_ENTRIES + 1
+        for key in oldest[:overflow]:
+            del _perf_cache[key]
 
 
 def _payload_fingerprint(*values: Any) -> str:
@@ -1121,6 +1144,8 @@ def calculate_engine_performance(
                 cached_resp.cached = True
                 cached_resp.cache_age_seconds = round(age, 1)
                 return cached_resp
+            # Stale entry: remove it now so it cannot accumulate indefinitely.
+            del _perf_cache[cache_key]
 
     period_start = get_period_start_date(period, now)
 
@@ -2084,6 +2109,7 @@ def calculate_engine_performance(
     )
 
     with _perf_cache_lock:
+        _prune_perf_cache(now)
         _perf_cache[cache_key] = {"data": response, "timestamp": now}
 
     return response
