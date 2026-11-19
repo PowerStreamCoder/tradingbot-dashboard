@@ -1957,8 +1957,13 @@ def calculate_engine_performance(
             )
         )
 
-    # Opportunity: idle configured bots / thin signal funnel (data-driven)
-    idle_symbols = [b.symbol for b in bot_records if b.trades_count == 0]
+    # Opportunity: idle *active* bots / thin signal funnel (data-driven).
+    # PAUSED and REMOVED bots are not expected to trade, so recommending filter
+    # tuning for them is misleading (Issue #146 F9).
+    idle_symbols = [
+        b.symbol for b in bot_records
+        if b.trades_count == 0 and b.status == "ACTIVE"
+    ]
     if idle_symbols:
         diagnostics.append(
             EngineDiagnosticFinding(

@@ -686,6 +686,39 @@ def test_capital_underperformance_warning_and_idle_bots():
     assert "diag-idle-bots" in ids
 
 
+def test_idle_bot_diagnostic_only_targets_active_bots():
+    """Issue #146 F9: paused/removed bots must not get filter-tuning advice."""
+    trades = _make_adequate_trades(symbol="NVDA", n=12, days=12)
+    cfg = [
+        {"name": "nvda_sma", "symbol": "NVDA", "allocated_capital": 60000.0, "enabled": True},
+        {"name": "paused_sma", "symbol": "IWM", "allocated_capital": 20000.0, "enabled": False},
+        # XYZ traded historically but is no longer configured -> REMOVED.
+    ]
+    pe.clear_performance_cache()
+    res = calculate_engine_performance(
+        trades=trades + [{"timestamp": (FIXED_NOW - timedelta(days=5)).isoformat(),
+                          "symbol": "XYZ", "profitLoss": 10.0, "trading_mode": "live"}],
+        bot_overview_data={}, bot_configs=cfg,
+        period="1M", bot_scope="ALL", mode="live", now=FIXED_NOW,
+    )
+    ids = {d.id for d in res.diagnostics}
+    assert "diag-idle-bots" not in ids  # only IWM (PAUSED) and XYZ (REMOVED) are idle
+
+    # Adding an active idle bot does surface the diagnostic.
+    cfg.append({"name": "active_idle", "symbol": "QQQ", "allocated_capital": 20000.0, "enabled": True})
+    pe.clear_performance_cache()
+    res2 = calculate_engine_performance(
+        trades=trades + [{"timestamp": (FIXED_NOW - timedelta(days=5)).isoformat(),
+                          "symbol": "XYZ", "profitLoss": 10.0, "trading_mode": "live"}],
+        bot_overview_data={}, bot_configs=cfg,
+        period="1M", bot_scope="ALL", mode="live", now=FIXED_NOW,
+    )
+    diag = next(d for d in res2.diagnostics if d.id == "diag-idle-bots")
+    assert "QQQ" in diag.detail
+    assert "IWM" not in diag.detail
+    assert "XYZ" not in diag.detail
+
+
 def test_capital_preservation_success_diagnostic():
     # Engine nearly flat while benchmark sells off hard -> big DD reduction
     trades = []
