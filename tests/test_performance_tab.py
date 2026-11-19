@@ -688,6 +688,27 @@ def test_ratio_suppression_below_min_observations():
                                        period="1M", bot_scope="ALL", mode="live", now=FIXED_NOW)
     assert res.executive_kpis.annualized_sharpe is None
     assert res.executive_kpis.sortino_ratio is None
+    # Issue #146 F3: bot/portfolio Calmar must obey the same observation guard.
+    assert res.executive_kpis.calmar_ratio is None
+    assert res.bots[0].calmar_ratio is None
+
+
+def test_bot_calmar_guard_with_sparse_trades():
+    """Issue #146 F3: 5 trades over 2 days must not produce a bot Calmar."""
+    trades = [
+        {"timestamp": (FIXED_NOW - timedelta(days=1)).isoformat(), "symbol": "NVDA",
+         "profitLoss": p, "trading_mode": "live", "exitPriceSource": "ibkr_execution"}
+        for p in (-500.0, 600.0, -100.0, 100.0, 100.0)
+    ]
+    cfg = [{"name": "nvda_sma", "symbol": "NVDA", "allocated_capital": 10000.0}]
+    res = calculate_engine_performance(
+        trades=trades, bot_overview_data={}, bot_configs=cfg,
+        period="1W", bot_scope="ALL", mode="live", now=FIXED_NOW,
+    )
+    bot = res.bots[0]
+    assert bot.sharpe_ratio is None
+    assert bot.calmar_ratio is None
+    assert res.executive_kpis.calmar_ratio is None
 
 
 # ---------------------------------------------------------------------------

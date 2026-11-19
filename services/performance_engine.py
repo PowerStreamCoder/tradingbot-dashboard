@@ -1242,9 +1242,14 @@ def calculate_engine_performance(
                 curr_nav *= (1.0 + r)
                 nav_curve.append(curr_nav)
             sym_mdd = calculate_max_drawdown(nav_curve)
-            ann_return = compute_annualized_return_pct(daily_returns)
-            if ann_return is not None and abs(sym_mdd) > 0:
-                sym_calmar = round(ann_return / abs(sym_mdd), 2)
+            # Calmar combines an annualized return with drawdown; annualizing
+            # from a handful of observations produces meaningless values. Apply
+            # the same observation guard used for Sharpe/Sortino and the
+            # portfolio-level Calmar (Issue #146 F3).
+            if len(daily_returns) >= MIN_OBSERVATIONS_FOR_RATIOS:
+                ann_return = compute_annualized_return_pct(daily_returns)
+                if ann_return is not None and abs(sym_mdd) > 0:
+                    sym_calmar = round(ann_return / abs(sym_mdd), 2)
 
         avg_slippage_sh: Optional[float] = None
         if sym_slippage_shares > 0:
