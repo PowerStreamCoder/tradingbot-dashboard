@@ -774,6 +774,32 @@ def test_cache_returns_deep_copy_and_marks_cached():
     assert first.cached is False
 
 
+def test_cache_key_fingerprints_payload_contents():
+    """Issue #146 F12: same-length but different data must not share a cache entry."""
+    trades = _make_adequate_trades(n=12, days=12)
+    cfg = [{"name": "nvda_sma", "symbol": "NVDA", "allocated_capital": 60000.0}]
+    pe.clear_performance_cache()
+    first = calculate_engine_performance(
+        trades=trades, bot_overview_data={}, bot_configs=cfg, period="1M",
+        mode="live", benchmark_symbol="SPY",
+        benchmark_price_series=[100.0, 101.0, 99.0, 102.0], now=FIXED_NOW,
+    )
+    second = calculate_engine_performance(
+        trades=trades, bot_overview_data={}, bot_configs=cfg, period="1M",
+        mode="live", benchmark_symbol="SPY",
+        benchmark_price_series=[100.0, 300.0, 50.0, 90.0], now=FIXED_NOW,
+    )
+    assert second.cached is False
+    assert first.executive_kpis.benchmark_mdd_pct != second.executive_kpis.benchmark_mdd_pct
+    # An identical repeat still hits the cache.
+    third = calculate_engine_performance(
+        trades=trades, bot_overview_data={}, bot_configs=cfg, period="1M",
+        mode="live", benchmark_symbol="SPY",
+        benchmark_price_series=[100.0, 101.0, 99.0, 102.0], now=FIXED_NOW,
+    )
+    assert third.cached is True
+
+
 def test_ratio_suppression_below_min_observations():
     # 12 trades but spread over only 12 days -> daily obs < MIN_OBSERVATIONS_FOR_RATIOS
     trades = _make_adequate_trades(n=12, days=12)

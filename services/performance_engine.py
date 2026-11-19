@@ -29,6 +29,8 @@ from typing import List, Dict, Any, Optional, Tuple
 from pydantic import BaseModel, Field
 from datetime import date, datetime, timedelta, timezone
 from threading import Lock
+import hashlib
+import json
 import math
 import logging
 
@@ -48,6 +50,16 @@ logger = logging.getLogger(__name__)
 CACHE_TTL_SECONDS = 60.0
 _perf_cache: Dict[str, Dict[str, Any]] = {}
 _perf_cache_lock = Lock()
+
+
+def _payload_fingerprint(*values: Any) -> str:
+    """Stable short digest of cache-relevant inputs (Issue #146 F12).
+
+    Length-only keys collide whenever data changes without changing shape,
+    silently returning a stale scorecard within the TTL window.
+    """
+    encoded = json.dumps(values, sort_keys=True, default=str, ensure_ascii=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
 
 
 def clear_performance_cache() -> None:
@@ -1089,10 +1101,17 @@ def calculate_engine_performance(
     if norm_mode == "both":
         norm_mode = "all"
 
-    series_key = len(benchmark_price_series) if benchmark_price_series else 0
-    metrics_key = len(execution_metrics_data) if isinstance(execution_metrics_data, (list, dict)) else (1 if execution_metrics_data else 0)
-    # Check cache
-    cache_key = f"perf_{period}_{bot_scope}_{benchmark_symbol}_{norm_mode}_{series_key}_{metrics_key}"
+    # Fingerprint every input that affects the result. Length-only keys (the
+    # old behaviour) return stale scorecards when data changes without changing
+    # shape within the TTL window (Issue #146 F12). ``now`` is deliberately
+    # excluded: it advances every request and would defeat the cache.
+    payload_key = _payload_fingerprint(
+        trades, bot_overview_data, bot_configs, account_overview_data,
+        benchmark_price_series, history_limit, execution_metrics_data,
+    )
+    cache_key = (
+        f"perf_{period}_{bot_scope}_{benchmark_symbol}_{norm_mode}_{payload_key}"
+    )
     with _perf_cache_lock:
         if cache_key in _perf_cache:
             entry = _perf_cache[cache_key]
