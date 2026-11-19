@@ -76,7 +76,7 @@ tradingbot-dashboard/
 - `GET /api/bot-overview`: Comprehensive multi-bot status, open positions, buckets, and P&L.
 - `GET /api/bot-status/{symbol}`: Granular metrics, active SMA values, regime, and heartbeat time.
 - `GET /api/historical-bars/{symbol}`: Historical price bars for chart rendering.
-- `GET /api/performance/summary`: Aggregate execution metrics, markout, slippage, and Sharpe ratios.
+- `GET /api/engine-performance?period=YTD&bot=ALL&mode=all&benchmark=SPY`: Full performance scorecard, executive KPIs, public benchmarks, per-bot attribution, and diagnostic findings. Add `&force=true` to bypass the caches.
 - `GET /api/logs?bot={symbol}&level={lvl}&limit={n}`: Filtered real-time log streaming.
 
 ### Governance & Adaptive Logs
