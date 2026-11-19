@@ -26,6 +26,7 @@ from services.performance_engine import (
     score_capital_preservation,
     compute_annualized_return_pct,
     compute_annualized_volatility_pct,
+    build_continuous_daily_returns,
     _extract_slippage,
     _extract_quantity,
     _is_fill_confirmed,
@@ -691,6 +692,59 @@ def test_ratio_suppression_below_min_observations():
     # Issue #146 F3: bot/portfolio Calmar must obey the same observation guard.
     assert res.executive_kpis.calmar_ratio is None
     assert res.bots[0].calmar_ratio is None
+
+
+def test_continuous_daily_returns_fill_zero_sessions():
+    """Issue #146 F4: quiet days must be sessions, not skipped days."""
+    # Five weekday sessions in a short window, each +$100 on $10,000.
+    daily_pnl = {
+        "2026-10-07": 100.0, "2026-10-08": 100.0, "2026-10-09": 100.0,
+        "2026-10-12": 100.0, "2026-10-13": 100.0,
+    }
+    start = datetime(2026, 10, 7, tzinfo=timezone.utc)
+    end = datetime(2026, 10, 13, 18, 0, tzinfo=timezone.utc)
+    returns, active = build_continuous_daily_returns(daily_pnl, 10000.0, start, end)
+    # 7th..13th = 5 weekdays (10/10, 10/11 are weekend) -> all five are active.
+    assert len(returns) == 5
+    assert active == 5
+    assert all(r == 0.01 for r in returns)
+
+    # Weekend-dated P&L rolls onto the next weekday instead of being dropped.
+    weekend = {"2026-10-10": 100.0, "2026-10-11": 50.0}
+    returns2, active2 = build_continuous_daily_returns(weekend, 10000.0, start, end)
+    assert active2 == 1
+    # Mon 10/12 is the second-to-last session (Tue 10/13 is last).
+    assert returns2[-2] == 0.015  # 150/10000
+
+
+def test_sparse_window_annualization_is_diluted():
+    """Issue #146 F4: annualizing only trade days inflates returns."""
+    start = datetime(2026, 9, 20, tzinfo=timezone.utc)
+    end = datetime(2026, 10, 13, 18, 0, tzinfo=timezone.utc)
+    daily_pnl = {f"2026-10-{d:02d}": 100.0 for d in range(5, 10)}
+    returns, active = build_continuous_daily_returns(daily_pnl, 10000.0, start, end)
+    assert active == 5
+    # Full window has ~17 weekdays; sparse-only series would use n=5.
+    sparse_annual = compute_annualized_return_pct([0.01] * 5)
+    full_annual = compute_annualized_return_pct(returns)
+    assert len(returns) > 5
+    assert full_annual is not None and sparse_annual is not None
+    assert full_annual < sparse_annual
+
+
+def test_unrealized_pnl_marks_final_session():
+    """Issue #146 F4: open P&L must be reflected in drawdown, not dropped."""
+    cfg = [{"name": "nvda_sma", "symbol": "NVDA", "allocated_capital": 10000.0}]
+    res = calculate_engine_performance(
+        trades=[], bot_overview_data={"NVDA": {"unrealizedPnl": -2000.0}},
+        bot_configs=cfg, period="1W", bot_scope="ALL", mode="live", now=FIXED_NOW,
+    )
+    bot = res.bots[0]
+    assert bot.unrealized_pnl == -2000.0
+    assert bot.max_drawdown_pct is not None and bot.max_drawdown_pct < 0
+    # No closed trades -> no real observations, so ratios/grade stay suppressed.
+    assert bot.calmar_ratio is None
+    assert bot.rating_grade == "N/A"
 
 
 def test_bot_calmar_guard_with_sparse_trades():

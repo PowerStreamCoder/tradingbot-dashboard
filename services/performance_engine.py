@@ -27,7 +27,7 @@ Data integrity principles (v2.0.0):
 
 from typing import List, Dict, Any, Optional, Tuple
 from pydantic import BaseModel, Field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from threading import Lock
 import math
 import logging
@@ -385,6 +385,59 @@ def compute_annualized_volatility_pct(daily_returns: List[float]) -> Optional[fl
     if variance <= 0:
         return None
     return round(math.sqrt(variance) * math.sqrt(TRADING_DAYS_PER_YEAR) * 100.0, 2)
+
+
+def build_continuous_daily_returns(
+    daily_pnl: Dict[str, float],
+    capital: float,
+    period_start: datetime,
+    now: datetime,
+) -> Tuple[List[float], int]:
+    """Build a continuous weekday return series across the whole period window.
+
+    Days without realized P&L are represented as zero-return sessions instead
+    of being dropped. Otherwise a few active days get annualized as if they
+    were the entire window, inflating Sharpe/Calmar and misstating drawdown
+    (Issue #146 F4). Weekends are skipped so the series aligns with the 252
+    trading-day annualization factor used by the ratio helpers.
+
+    Returns ``(returns, active_days)`` where ``active_days`` counts only days
+    that actually had realized P&L; that count gates ratio computation.
+    """
+    if capital <= 0:
+        return [], 0
+    start_date = period_start.date()
+    end_date = now.date()
+    if end_date < start_date:
+        return [], 0
+
+    # Map realized P&L onto weekday sessions. Weekend-dated fills (paper mode /
+    # crypto) roll onto the next weekday so their P&L is not silently dropped.
+    pnl_by_session: Dict[str, float] = {}
+    for key, value in daily_pnl.items():
+        try:
+            day = date.fromisoformat(key)
+        except (ValueError, TypeError):
+            continue
+        if day < start_date or day > end_date:
+            continue
+        while day.weekday() >= 5:
+            day += timedelta(days=1)
+        if day > end_date:
+            day = end_date
+            while day.weekday() >= 5:
+                day -= timedelta(days=1)
+        session_key = day.isoformat()
+        pnl_by_session[session_key] = pnl_by_session.get(session_key, 0.0) + value
+
+    returns: List[float] = []
+    current = start_date
+    while current <= end_date:
+        if current.weekday() < 5:  # Monday .. Friday
+            returns.append(pnl_by_session.get(current.isoformat(), 0.0) / capital)
+        current += timedelta(days=1)
+
+    return returns, len(pnl_by_session)
 
 
 def _extract_slippage(trade: Dict[str, Any]) -> Optional[float]:
@@ -1197,6 +1250,7 @@ def calculate_engine_performance(
             "gross_losses": gross_losses,
             "commissions": sym_commissions,
             "net_pnl": net_pnl,
+            "unrealized_pnl": unrealized_pnl,
             "slippage": sym_slippage,
             "slippage_shares": sym_slippage_shares,
             "fill_confirmed": sym_fill_confirmed,
@@ -1224,30 +1278,38 @@ def calculate_engine_performance(
         )
         expectancy_pct = round((expectancy_dollars / alloc_cap) * 100.0, 2) if alloc_cap > 0 else 0.0
 
-        # Sharpe & Sortino (only with enough distinct daily observations)
-        sorted_days = sorted(daily_sym_pnl.keys())
-        daily_returns = [daily_sym_pnl[d] / alloc_cap for d in sorted_days] if alloc_cap > 0 else []
-        if len(daily_returns) >= MIN_OBSERVATIONS_FOR_RATIOS:
-            sym_sharpe, sym_sortino = calculate_sharpe_and_sortino(daily_returns)
+        # Continuous daily series across the whole window (zero days included)
+        # so annualization uses the real number of sessions, not just the days
+        # that happened to contain a trade (Issue #146 F4). Mark open positions
+        # to market on the final session so NAV reflects unrealized P&L too.
+        sym_daily_returns, sym_active_days = build_continuous_daily_returns(
+            daily_sym_pnl, alloc_cap, period_start, now
+        )
+        if sym_daily_returns and unrealized_pnl:
+            sym_daily_returns[-1] += unrealized_pnl / alloc_cap
+
+        # Sharpe & Sortino: gate on real (trade-bearing) observations, not the
+        # zero-filled series length.
+        if sym_active_days >= MIN_OBSERVATIONS_FOR_RATIOS:
+            sym_sharpe, sym_sortino = calculate_sharpe_and_sortino(sym_daily_returns)
         else:
             sym_sharpe, sym_sortino = None, None
 
         # Drawdown (needs at least one return observation)
         sym_mdd: Optional[float] = None
         sym_calmar: Optional[float] = None
-        if daily_returns:
+        if sym_daily_returns:
             nav_curve = [alloc_cap]
             curr_nav = alloc_cap
-            for r in daily_returns:
+            for r in sym_daily_returns:
                 curr_nav *= (1.0 + r)
                 nav_curve.append(curr_nav)
             sym_mdd = calculate_max_drawdown(nav_curve)
             # Calmar combines an annualized return with drawdown; annualizing
-            # from a handful of observations produces meaningless values. Apply
-            # the same observation guard used for Sharpe/Sortino and the
-            # portfolio-level Calmar (Issue #146 F3).
-            if len(daily_returns) >= MIN_OBSERVATIONS_FOR_RATIOS:
-                ann_return = compute_annualized_return_pct(daily_returns)
+            # from a handful of trade-bearing days produces meaningless values
+            # (Issue #146 F3). Use the real observation count for the guard.
+            if sym_active_days >= MIN_OBSERVATIONS_FOR_RATIOS:
+                ann_return = compute_annualized_return_pct(sym_daily_returns)
                 if ann_return is not None and abs(sym_mdd) > 0:
                     sym_calmar = round(ann_return / abs(sym_mdd), 2)
 
@@ -1376,6 +1438,7 @@ def calculate_engine_performance(
     total_gross_losses = 0.0
     total_commissions = 0.0
     total_net_pnl = 0.0
+    total_unrealized = 0.0
     total_slippage_dollars = 0.0
     total_slippage_shares = 0.0
     total_fill_confirmed = 0
@@ -1393,6 +1456,7 @@ def calculate_engine_performance(
         total_gross_losses += agg.get("gross_losses", 0.0)
         total_commissions += agg.get("commissions", 0.0)
         total_net_pnl += agg.get("net_pnl", 0.0)
+        total_unrealized += agg.get("unrealized_pnl", 0.0)
         total_slippage_dollars += agg.get("slippage", 0.0)
         total_slippage_shares += agg.get("slippage_shares", 0.0)
         total_fill_confirmed += agg.get("fill_confirmed", 0)
@@ -1430,16 +1494,19 @@ def calculate_engine_performance(
         except (ValueError, TypeError):
             pass
 
-    # Daily observation count (for confidence + ratio gating)
-    sorted_all_days = sorted(daily_portfolio_pnl.keys())
-    portfolio_daily_returns = (
-        [daily_portfolio_pnl[d] / total_allocated for d in sorted_all_days]
-        if total_allocated > 0 else []
+    # Continuous daily series across the whole window (zero days included),
+    # with open positions marked to market on the final session (#146 F4).
+    # ``distinct_days`` keeps its original meaning: calendar days that traded,
+    # used for sample confidence. Ratio gating uses the weekday-session count.
+    portfolio_daily_returns, active_sessions = build_continuous_daily_returns(
+        daily_portfolio_pnl, total_allocated, period_start, now
     )
-    distinct_days = len(portfolio_daily_returns)
+    distinct_days = len(daily_portfolio_pnl)
+    if portfolio_daily_returns and total_unrealized:
+        portfolio_daily_returns[-1] += total_unrealized / total_allocated
 
-    # Portfolio Sharpe & Sortino - only with enough observations (no fallbacks)
-    if distinct_days >= MIN_OBSERVATIONS_FOR_RATIOS:
+    # Portfolio Sharpe & Sortino - only with enough real observations (no fallbacks)
+    if active_sessions >= MIN_OBSERVATIONS_FOR_RATIOS:
         overall_sharpe, overall_sortino = calculate_sharpe_and_sortino(portfolio_daily_returns)
     else:
         overall_sharpe, overall_sortino = None, None
@@ -1456,7 +1523,7 @@ def calculate_engine_performance(
 
     # Overall Calmar
     overall_calmar: Optional[float] = None
-    if overall_mdd is not None and abs(overall_mdd) > 0 and distinct_days >= MIN_OBSERVATIONS_FOR_RATIOS:
+    if overall_mdd is not None and abs(overall_mdd) > 0 and active_sessions >= MIN_OBSERVATIONS_FOR_RATIOS:
         ann_portfolio_return = compute_annualized_return_pct(portfolio_daily_returns)
         if ann_portfolio_return is not None:
             overall_calmar = round(ann_portfolio_return / abs(overall_mdd), 2)
