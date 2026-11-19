@@ -880,6 +880,23 @@ def test_ratio_suppression_below_min_observations():
     assert res.bots[0].calmar_ratio is None
 
 
+def test_calmar_computed_when_observations_and_drawdown_exist():
+    """Issue #146 F3: Calmar must be reported once the guard is satisfied."""
+    now = datetime(2026, 10, 31, 18, 0, tzinfo=timezone.utc)
+    trades = _make_adequate_trades(n=40, days=30, base=now)
+    cfg = [{"name": "nvda_sma", "symbol": "NVDA", "client_id": 4,
+            "allocated_capital": 60000.0}]
+    pe.clear_performance_cache()
+    res = calculate_engine_performance(
+        trades=trades, bot_overview_data={}, bot_configs=cfg, period="1M",
+        bot_scope="ALL", mode="live", now=now,
+    )
+    # Positive annualized return plus a real drawdown -> Calmar is measured.
+    assert res.bots[0].calmar_ratio is not None
+    assert res.bots[0].calmar_ratio > 0
+    assert res.executive_kpis.calmar_ratio == res.bots[0].calmar_ratio
+
+
 def test_continuous_daily_returns_fill_zero_sessions():
     """Issue #146 F4: quiet days must be sessions, not skipped days."""
     # Five weekday sessions in a short window, each +$100 on $10,000.
@@ -901,6 +918,30 @@ def test_continuous_daily_returns_fill_zero_sessions():
     assert active2 == 1
     # Mon 10/12 is the second-to-last session (Tue 10/13 is last).
     assert returns2[-2] == 0.015  # 150/10000
+
+
+def test_continuous_daily_returns_defensive_branches():
+    """Issue #146 F4: invalid/out-of-range/weekend-tail P&L must be handled."""
+    # Inverted window yields no sessions.
+    end = datetime(2026, 10, 5, tzinfo=timezone.utc)
+    start = datetime(2026, 10, 9, tzinfo=timezone.utc)
+    assert build_continuous_daily_returns({}, 10000.0, start, end) == ([], 0)
+
+    # Malformed and out-of-window date keys are ignored; a weekend P&L that
+    # rolls past the window is clamped back onto the last weekday session.
+    start = datetime(2026, 10, 5, tzinfo=timezone.utc)
+    end = datetime(2026, 10, 10, tzinfo=timezone.utc)  # Saturday
+    daily_pnl = {
+        "not-a-date": 500.0,
+        "2026-09-01": 500.0,
+        "2026-10-10": 250.0,  # Saturday -> rolls to Mon 10/12 > end -> Friday 10/09
+    }
+    returns, active = build_continuous_daily_returns(daily_pnl, 10000.0, start, end)
+    assert active == 1
+    # 10/05..10/10 has five weekday sessions; the clamped P&L lands on the last.
+    assert len(returns) == 5
+    assert returns[-1] == 0.025
+    assert all(r == 0.0 for r in returns[:-1])
 
 
 def test_sparse_window_annualization_is_diluted():

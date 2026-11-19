@@ -135,6 +135,37 @@ class TestPnLStatementEngine(unittest.TestCase):
         )
         self.assertEqual(wf.net_cash_generated, expected_net_cash)
 
+    def test_malformed_timestamp_is_skipped_in_daily_aggregation(self):
+        """An unparseable trade timestamp must not break the daily heatmap."""
+        baseline = aggregate_portfolio_pnl(
+            trades=self.mock_trades,
+            bot_overview_data=self.mock_bot_overview,
+            bot_configs=self.mock_configs,
+            period="YTD",
+            bot_scope="ALL",
+            now=self.now,
+        )
+        trades = self.mock_trades + [{
+            "timestamp": "not-a-timestamp",
+            "symbol": "NVDA",
+            "botId": 4,
+            "profitLoss": 999.0,
+            "trading_mode": "live",
+        }]
+        with_bad = aggregate_portfolio_pnl(
+            trades=trades,
+            bot_overview_data=self.mock_bot_overview,
+            bot_configs=self.mock_configs,
+            period="YTD",
+            bot_scope="ALL",
+            now=self.now,
+        )
+        self.assertIsInstance(with_bad, PortfolioStatementResponse)
+        self.assertEqual(
+            [d.date for d in with_bad.calendar_heatmap],
+            [d.date for d in baseline.calendar_heatmap],
+        )
+
     def test_single_bot_scope(self):
         statement = aggregate_portfolio_pnl(
             trades=self.mock_trades,
