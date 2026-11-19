@@ -416,21 +416,32 @@ def _extract_quantity(trade: Dict[str, Any]) -> Optional[float]:
     return None
 
 
-def _is_fill_confirmed(trade: Dict[str, Any]) -> bool:
-    """True when the exit price is backed by a real IBKR execution.
+def _is_fill_confirmed(trade: Dict[str, Any]) -> Optional[bool]:
+    """Return whether the exit price is backed by a real IBKR execution.
 
-    Trades flagged as estimated from the signal price (``unconfirmedFill`` /
-    ``exitPriceSource == "signal_fallback"``) count as unconfirmed. Legacy
-    trades that never carried these fields are treated as confirmed.
+    ``True``  -> explicit ``ibkr_execution`` provenance (confirmed).
+    ``False`` -> explicitly flagged as a signal-price fallback (unconfirmed).
+    ``None``  -> no provenance recorded (legacy trade / unmeasured).
+
+    Only explicit broker provenance counts. Treating a missing field as
+    confirmed would fabricate a 100% fill-confirmation rate for trades the
+    engine cannot actually verify (Issue #146 F2).
     """
     if trade.get("unconfirmedFill") is True:
         return False
     meta = trade.get("analysis_metadata")
     if isinstance(meta, dict) and meta.get("unconfirmed_fill") is True:
         return False
-    if trade.get("exitPriceSource") == "signal_price" or trade.get("exitPriceSource") == "signal_fallback":
+
+    source = trade.get("exitPriceSource")
+    if source is None and isinstance(meta, dict):
+        source = meta.get("exit_price_source")
+    if source == "signal_price" or source == "signal_fallback":
         return False
-    return True
+    if source == "ibkr_execution":
+        return True
+    # No recorded provenance -> genuinely unmeasured.
+    return None
 
 
 def _first_present(trade: Dict[str, Any], keys: Tuple[str, ...]) -> Optional[Dict[str, Any]]:
@@ -1127,6 +1138,7 @@ def calculate_engine_performance(
         sym_slippage_shares = 0.0
         sym_reported_slippage_trades = 0
         sym_fill_confirmed = 0
+        sym_fill_provenance_known = 0
         sym_validated = 0
         sym_matched = 0
         daily_sym_pnl: Dict[str, float] = {}
@@ -1147,9 +1159,13 @@ def calculate_engine_performance(
                 sym_slippage_shares += shares
                 sym_reported_slippage_trades += 1
 
-            # Execution integrity
-            if _is_fill_confirmed(tr):
-                sym_fill_confirmed += 1
+            # Execution integrity: only trades with recorded provenance enter
+            # the fill-confirmation denominator (Issue #146 F2).
+            fill_status = _is_fill_confirmed(tr)
+            if fill_status is not None:
+                sym_fill_provenance_known += 1
+                if fill_status:
+                    sym_fill_confirmed += 1
             validation = _first_present(tr, ("validation",))
             if validation and validation.get("validated"):
                 sym_validated += 1
@@ -1184,6 +1200,7 @@ def calculate_engine_performance(
             "slippage": sym_slippage,
             "slippage_shares": sym_slippage_shares,
             "fill_confirmed": sym_fill_confirmed,
+            "fill_provenance_known": sym_fill_provenance_known,
             "validated": sym_validated,
             "matched": sym_matched,
             "trades_count": trades_count,
@@ -1237,7 +1254,10 @@ def calculate_engine_performance(
         if gross_wins > 0:
             cost_drag = round(((sym_commissions + sym_slippage) / gross_wins) * 100.0, 1)
 
-        fill_conf_rate = round((sym_fill_confirmed / trades_count) * 100.0, 1) if trades_count > 0 else None
+        fill_conf_rate = (
+            round((sym_fill_confirmed / sym_fill_provenance_known) * 100.0, 1)
+            if sym_fill_provenance_known > 0 else None
+        )
         recon_rate = round((sym_matched / sym_validated) * 100.0, 1) if sym_validated > 0 else None
 
         sym_mdd_reduction: Optional[float] = None
@@ -1354,6 +1374,7 @@ def calculate_engine_performance(
     total_slippage_dollars = 0.0
     total_slippage_shares = 0.0
     total_fill_confirmed = 0
+    total_fill_provenance_known = 0
     total_validated = 0
     total_matched = 0
     total_trades_count = 0
@@ -1370,6 +1391,7 @@ def calculate_engine_performance(
         total_slippage_dollars += agg.get("slippage", 0.0)
         total_slippage_shares += agg.get("slippage_shares", 0.0)
         total_fill_confirmed += agg.get("fill_confirmed", 0)
+        total_fill_provenance_known += agg.get("fill_provenance_known", 0)
         total_validated += agg.get("validated", 0)
         total_matched += agg.get("matched", 0)
         total_trades_count += agg.get("trades_count", 0)
@@ -1443,8 +1465,8 @@ def calculate_engine_performance(
 
     # Overall execution metrics (measured)
     overall_fill_confirmation: Optional[float] = None
-    if total_trades_count > 0:
-        overall_fill_confirmation = round((total_fill_confirmed / total_trades_count) * 100.0, 1)
+    if total_fill_provenance_known > 0:
+        overall_fill_confirmation = round((total_fill_confirmed / total_fill_provenance_known) * 100.0, 1)
     overall_reconciliation: Optional[float] = None
     if total_validated > 0:
         overall_reconciliation = round((total_matched / total_validated) * 100.0, 1)

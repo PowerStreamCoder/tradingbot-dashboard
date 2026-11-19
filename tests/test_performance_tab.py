@@ -142,6 +142,8 @@ def _make_adequate_trades(symbol="NVDA", n=40, days=30, base=FIXED_NOW, unconfir
             "trading_mode": "live",
             "commission": 2.0,
             "analysis_metadata": {"quantity": 100},
+            # Modern bots always record broker provenance (Issue #146 F2).
+            "exitPriceSource": "ibkr_execution",
         }
         if include_slippage:
             trade["slippage"] = 0.01
@@ -251,12 +253,34 @@ def test_extract_quantity_variants():
 
 
 def test_is_fill_confirmed_variants():
-    assert _is_fill_confirmed({}) is True
+    # Issue #146 F2: no provenance -> unmeasured, never fabricated as confirmed.
+    assert _is_fill_confirmed({}) is None
     assert _is_fill_confirmed({"unconfirmedFill": True}) is False
     assert _is_fill_confirmed({"analysis_metadata": {"unconfirmed_fill": True}}) is False
     assert _is_fill_confirmed({"exitPriceSource": "signal_fallback"}) is False
     assert _is_fill_confirmed({"exitPriceSource": "signal_price"}) is False
     assert _is_fill_confirmed({"exitPriceSource": "ibkr_execution"}) is True
+    assert _is_fill_confirmed({"analysis_metadata": {"exit_price_source": "ibkr_execution"}}) is True
+
+
+def test_fill_confirmation_unmeasured_without_provenance():
+    """Issue #146 F2: legacy trades must not yield a fabricated 100% rate."""
+    trades = [
+        {
+            "timestamp": (FIXED_NOW - timedelta(days=i)).isoformat(),
+            "symbol": "NVDA",
+            "profitLoss": 100.0,
+            "trading_mode": "live",
+        }
+        for i in range(6)
+    ]
+    cfg = [{"name": "nvda_sma", "symbol": "NVDA", "allocated_capital": 10000.0}]
+    res = calculate_engine_performance(
+        trades=trades, bot_overview_data={}, bot_configs=cfg,
+        period="1W", bot_scope="ALL", mode="live", now=FIXED_NOW,
+    )
+    assert res.executive_kpis.fill_confirmation_rate_pct is None
+    assert res.bots[0].fill_confirmation_rate_pct is None
 
 
 def test_first_present_and_format_and_compare():
