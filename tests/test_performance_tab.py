@@ -1408,7 +1408,7 @@ def test_calculate_engine_performance_execution_metrics_edge_cases():
 def test_cascade_phase_breakdown_names_the_f5_tail():
     """#372 / F5: cascade_phase_*_ns series surface as per-phase machinery rows.
 
-    A phase whose p99 blows the 500 ms budget is flagged LAGGING (it owns the
+    A phase whose p99 blows the 500 µs budget is flagged LAGGING (it owns the
     tail); cheap phases are BEATING. Scopes without phased data (pre-#394) add
     no phase rows at all.
     """
@@ -1425,7 +1425,7 @@ def test_cascade_phase_breakdown_names_the_f5_tail():
             "latency": {
                 "cascade_ns": _series(100, 36_000_000, 3_000_000_000),
                 "cascade_phase_marks_ns": _series(100, 30_000_000, 2_900_000_000),
-                "cascade_phase_adaptive_ns": _series(100, 4_000_000, 80_000_000),
+                "cascade_phase_adaptive_ns": _series(100, 60_000, 80_000),  # 80 µs -> within budget
                 "cascade_phase_guard_ns": _series(100, 50_000, 200_000),
             },
         },
@@ -1455,6 +1455,40 @@ def test_cascade_phase_breakdown_names_the_f5_tail():
     assert phase_rows["Cascade Phase · Adaptive P&L Agent"].status == "BEATING"
     assert phase_rows["Cascade Phase · Position Guard"].status == "BEATING"
     assert all(m.data_basis == "measured" for m in phase_rows.values())
+
+
+def test_cascade_phase_budget_is_microseconds_not_milliseconds():
+    """Issue #146 F5: 600 µs phase p99 must be LAGGING under a 500 µs budget."""
+    def _phase(p99_ns):
+        return [{
+            "type": "interval",
+            "ts": "2026-10-13T14:35:00Z",
+            "snapshot": {
+                "symbol": "NVDA",
+                "counters": {"cascade_evaluations": 10},
+                "latency": {"cascade_phase_marks_ns": {
+                    "count": 10, "mean": p99_ns, "p90": p99_ns, "p99": p99_ns,
+                }},
+            },
+        }]
+
+    def _row(p99_ns):
+        pe.clear_performance_cache()
+        res = calculate_engine_performance(
+            trades=[], bot_overview_data={},
+            bot_configs=[{"symbol": "NVDA", "name": "nvda_bot"}],
+            period="1M", bot_scope="NVDA", mode="all", now=FIXED_NOW,
+            execution_metrics_data=_phase(p99_ns),
+        )
+        return next(m for m in res.machinery.metrics
+                    if m.name == "Cascade Phase · Option Mark Refresh")
+
+    over = _row(600_000)  # 600 µs
+    under = _row(400_000)  # 400 µs
+    assert over.status == "LAGGING"
+    assert under.status == "BEATING"
+    assert over.benchmark_formatted == "< 500 µs p99"
+    assert over.benchmark_value == 500.0
 
     # A scope with no phased latency series adds zero phase rows.
     # Clear the module cache first: the call above cached a NVDA/1M response.

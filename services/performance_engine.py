@@ -1000,19 +1000,21 @@ def _summarize_execution_metrics(
             f"{_p99_us:,.1f} µs p99"
             + (f" | {_mean_us:,.1f} µs mean" if _mean_us is not None else "")
         ) if _p99_us is not None else "--"
-        # Target mirrors the whole-cascade p99 budget (500 ms); a single phase
-        # above it is, by construction, the one holding the tail.
+        # Target mirrors the whole-cascade p99 budget of 500 µs. A single phase
+        # above it is, by construction, the one holding the tail. The value is
+        # already in microseconds (ns / 1000), so comparing against 500_000
+        # would be 1000x too lenient (Issue #146 F5).
         _status = "UNMEASURED"
         if _p99_us is not None:
-            _status = "LAGGING" if _p99_us > 500_000.0 else "BEATING"
+            _status = "LAGGING" if _p99_us > 500.0 else "BEATING"
         metrics_list.append(BenchmarkComparisonMetric(
             name=_name,
             category="DECISION_COST",
             engine_value=_p99_us,
             engine_formatted=_val_str,
             benchmark_name="Phase p99 within budget (F5)",
-            benchmark_value=500_000.0,
-            benchmark_formatted="< 500 ms p99",
+            benchmark_value=500.0,
+            benchmark_formatted="< 500 µs p99",
             status=_status,
             data_basis="measured",
             description=_desc,
