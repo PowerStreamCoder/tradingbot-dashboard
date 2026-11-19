@@ -1960,6 +1960,43 @@ def calculate_engine_performance(
             )
         )
 
+    # I1: make the reconstructed-equity limitation explicit. Max Drawdown and
+    # the risk-adjusted ratios are derived from a daily series rebuilt from
+    # closed-trade P&L (+ the current unrealized mark), NOT from a per-tick
+    # equity snapshot, so they are approximations. Backtest proposal JSON files
+    # are produced by a separate subsystem and are never consumed here.
+    if overall_mdd is not None or overall_sharpe is not None:
+        _quality_notes = [
+            "the daily series is rebuilt from closed-trade P&L plus the latest "
+            "unrealized mark, not a per-tick equity snapshot"
+        ]
+        if history_truncated:
+            _quality_notes.append(
+                f"only the most recent {history_limit} trades were evaluated, so "
+                f"older trades may be missing"
+            )
+        diagnostics.append(
+            EngineDiagnosticFinding(
+                id="diag-reconstructed-equity",
+                level="INFO",
+                category="DATA_QUALITY",
+                title="Risk Ratios Use a Reconstructed Equity Curve",
+                detail=(
+                    "Max Drawdown, Sharpe, Sortino and Calmar are approximations: "
+                    + "; ".join(_quality_notes)
+                    + f". The series spans {len(portfolio_daily_returns)} session(s) "
+                    f"in {period}."
+                ),
+                recommended_action=(
+                    "Treat these figures as directional. For exchange-grade drawdown "
+                    "and volatility, snapshot the engine's per-tick equity to a bar "
+                    "series and feed it to this scorecard; backtest proposal files "
+                    "are not an input to this view."
+                ),
+                guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#data-integrity-measured-vs-unavailable-metrics",
+            )
+        )
+
     # Warning: the requested bot scope could not be resolved (bot removed or
     # renamed since the page was opened). Report the fallback explicitly.
     if unresolved_scope:

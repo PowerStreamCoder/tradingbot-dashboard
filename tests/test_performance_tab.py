@@ -563,6 +563,33 @@ def test_measured_warning_surfaces_as_ungraded_when_sample_thin():
     assert "Provisional" in fill_diag.detail
 
 
+def test_reconstructed_equity_data_quality_diagnostic():
+    """Issue #146 I1: operators must know risk ratios are approximations."""
+    trades = _make_adequate_trades(n=25, days=22)
+    cfg = [{"name": "nvda_sma", "symbol": "NVDA", "allocated_capital": 60000.0}]
+    pe.clear_performance_cache()
+    res = calculate_engine_performance(
+        trades=trades, bot_overview_data={}, bot_configs=cfg,
+        period="1M", bot_scope="ALL", mode="live", now=FIXED_NOW,
+    )
+    diag = next(d for d in res.diagnostics if d.id == "diag-reconstructed-equity")
+    assert diag.category == "DATA_QUALITY"
+    assert "approximations" in diag.detail
+    assert "not a per-tick equity snapshot" in diag.detail
+    assert "backtest proposal files" in diag.recommended_action
+
+    # When the trade-history cap truncates the window, the diagnostic says so.
+    pe.clear_performance_cache()
+    res2 = calculate_engine_performance(
+        trades=trades, bot_overview_data={}, bot_configs=cfg,
+        period="1M", bot_scope="ALL", mode="live", now=FIXED_NOW,
+        history_limit=10,
+    )
+    diag2 = next(d for d in res2.diagnostics if d.id == "diag-reconstructed-equity")
+    assert "most recent 10 trades" in diag2.detail
+    assert res2.history_truncated is True
+
+
 def test_scoped_hero_grade_matches_bot_table_threshold():
     """Issue #146 F7: a 6-trade bot is graded in the table and in the hero."""
     trades = _make_adequate_trades(symbol="NVDA", n=6, days=6)
