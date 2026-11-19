@@ -38,7 +38,8 @@ def test_navigation_bar_consistency_across_templates():
         "index.html",
         "performance.html",
         "learning_review.html",
-        "governance_review.html"
+        "governance_review.html",
+        "audit_review.html"
     ]
 
     expected_nav_order = [
@@ -47,6 +48,7 @@ def test_navigation_bar_consistency_across_templates():
         "/performance",
         "/learning-review",
         "/governance-review",
+        "/audit",
         "/bot-focus?show=stockpicker"
     ]
 

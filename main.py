@@ -852,7 +852,7 @@ async def check_access_code(request: Request, call_next):
 
     # If trying to access main page or dashboard without auth, show login
     if (
-        request.url.path in ["/", "/dashboard", "/bot-focus", "/nvda-focus", "/pnl-reporting", "/learning-review", "/governance-review"]
+        request.url.path in ["/", "/dashboard", "/bot-focus", "/nvda-focus", "/pnl-reporting", "/learning-review", "/governance-review", "/audit", "/audit-review"]
         or request.url.path.startswith("/bot/")
     ):
         return HTMLResponse(content=get_login_page(), status_code=200)
@@ -3909,6 +3909,154 @@ async def get_exit_telemetry_snapshots(symbol: str = "", limit: int = 50, includ
         return {"sessions": sessions}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch exit telemetry sessions: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# Trade Log Auditor: Audit runs and findings review (Phase 2/3 / Issue #132).
+# ---------------------------------------------------------------------------
+
+@app.get("/audit", response_class=HTMLResponse)
+@app.get("/audit-review", response_class=HTMLResponse)
+async def audit_review_page():
+    """Serve the Trade Log Auditor review dashboard page."""
+    audit_review_path = os.path.join(TEMPLATES_DIR, "audit_review.html")
+    if not os.path.exists(audit_review_path):
+        raise HTTPException(status_code=404, detail="Audit review page not found")
+    return FileResponse(audit_review_path)
+
+
+@app.get("/api/audit/runs")
+async def get_audit_runs(limit: int = 50, response: Response = None):
+    """
+    Get recent trade log audit runs from Firestore.
+
+    Args:
+        limit: max runs returned (newest first, 1..200)
+
+    Returns:
+        {"runs": [{"run_id": "...", "trade_date": "...", "status": "...", ...}]}
+    """
+    try:
+        limit = max(1, min(limit, 200))
+        db = getattr(dashboard_data, "db", None) or firestore.Client()
+        runs_ref = db.collection("audit_runs")
+
+        runs = []
+        try:
+            docs = runs_ref.order_by("created_at", direction=firestore.Query.DESCENDING).limit(limit).stream()
+            for doc in docs:
+                data = doc.to_dict() or {}
+                data.setdefault("run_id", doc.id)
+                runs.append(data)
+        except Exception:
+            # Fallback if composite index or order_by fails
+            docs = runs_ref.stream()
+            for doc in docs:
+                data = doc.to_dict() or {}
+                data.setdefault("run_id", doc.id)
+                runs.append(data)
+            runs.sort(key=lambda r: str(r.get("created_at") or r.get("trade_date") or ""), reverse=True)
+            runs = runs[:limit]
+
+        if response:
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+
+        return {"runs": runs}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch audit runs: {str(e)}")
+
+
+@app.get("/api/audit/runs/{run_id}")
+async def get_audit_run(run_id: str, response: Response = None):
+    """
+    Get detailed information and full report markdown for a specific audit run.
+
+    Args:
+        run_id: identifier of the audit run (e.g. audit_1795090543833)
+
+    Returns:
+        Full audit run document dictionary.
+    """
+    try:
+        db = getattr(dashboard_data, "db", None) or firestore.Client()
+        doc = db.collection("audit_runs").document(run_id).get()
+        if not doc.exists:
+            raise HTTPException(status_code=404, detail=f"Audit run '{run_id}' not found")
+        data = doc.to_dict() or {}
+        data.setdefault("run_id", doc.id)
+        if response:
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return data
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch audit run '{run_id}': {str(e)}")
+
+
+@app.get("/api/audit/findings")
+async def get_audit_findings(
+    status: str = "",
+    category: str = "",
+    symbol: str = "",
+    limit: int = 100,
+    response: Response = None
+):
+    """
+    Get audit findings from Firestore.
+
+    Args:
+        status: optional status filter ('open', 'recurring', 'resolved', 'dismissed', 'all')
+        category: optional category filter ('INTEGRITY', 'ANOMALY', 'TRADE_LOGIC', 'GOOD_PRACTICE')
+        symbol: optional symbol filter ('NVDA', 'IWM', 'MSFT', etc.)
+        limit: max findings returned (1..500)
+
+    Returns:
+        {"findings": [...]}
+    """
+    try:
+        limit = max(1, min(limit, 500))
+        db = getattr(dashboard_data, "db", None) or firestore.Client()
+        docs = db.collection("audit_findings").stream()
+
+        findings = []
+        status_norm = (status or "").strip().lower()
+        cat_norm = (category or "").strip().upper()
+        sym_norm = (symbol or "").strip().upper()
+
+        for doc in docs:
+            data = doc.to_dict() or {}
+            data.setdefault("key", doc.id)
+
+            f_status = str(data.get("status") or "").lower()
+            if status_norm and status_norm != "all":
+                if status_norm == "active" and f_status not in ("open", "recurring"):
+                    continue
+                elif status_norm != "active" and f_status != status_norm:
+                    continue
+
+            f_cat = str(data.get("category") or "").upper()
+            if cat_norm and cat_norm != "ALL" and f_cat != cat_norm:
+                continue
+
+            f_sym = str(data.get("symbol") or "").upper()
+            if sym_norm and sym_norm != "ALL" and f_sym != sym_norm:
+                continue
+
+            findings.append(data)
+
+        # Sort: severity first (critical -> high -> medium -> low -> opportunity), then newest
+        sev_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "opportunity": 4}
+        findings.sort(key=lambda x: (
+            sev_rank.get(str(x.get("severity", "low")).lower(), 5),
+            str(x.get("last_seen") or x.get("created_at") or "")
+        ), reverse=False)
+
+        if response:
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+
+        return {"findings": findings[:limit]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch audit findings: {str(e)}")
 
 
 @app.get("/api/historical-bars/{symbol}")
