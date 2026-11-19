@@ -17,6 +17,7 @@ The dashboard provides institutional-grade visibility into active bots, position
   - Closed-loop threshold adjustment ledger (`applied_changes` / `adaptive_action_log`).
   - Active adaptive agent states and ±35% drift safety limit monitoring.
 - **Learning Review (`/learning-review`)**: Reviewing candidate observations and dict-shaped escalation pairs from the nightly learning engine.
+- **Trade Log Audit Review (`/audit`)**: Supervisory audit review interface displaying post-close audit runs, rule invariants, open/resolved finding states, executed vs. skipped check telemetry, and generated markdown reports.
 - **StockPicker & Market Regime (`/stockpicker`)**: Multi-symbol screener displaying market regimes (Bullish, Bearish, Neutral, Volatile).
 - **Secure Bot Control REST API**: Remote controls to pause/resume trading, initiate graceful position exits, or adjust active parameters without SSH. Authenticated with `X-API-Key` (`BOT_CONTROL_API_KEY`).
 
@@ -32,7 +33,8 @@ tradingbot-dashboard/
 │   ├── bot_focus.html          # Symbol-focused deep dive (NVDA, IWM, MSFT, CAT, QQQ)
 │   ├── governance_review.html  # Governance review & adaptive action ledger
 │   ├── learning_review.html    # Nightly learning candidates & regime analysis
-│   └── performance.html        # Trading engine performance scorecard & benchmarking
+│   ├── performance.html        # Trading engine performance scorecard & benchmarking
+│   └── audit_review.html       # Trade Log Audit review & findings inspector
 ├── static/                     # High-performance static assets
 │   ├── css/                    # Glassmorphic dark-theme stylesheets
 │   │   ├── styles.css          # Core design system and tokens
@@ -44,6 +46,7 @@ tradingbot-dashboard/
 │       ├── governance_review.js# Governance proposal actions controller
 │       ├── learning_review.js  # Learning engine review controller
 │       ├── performance.js      # Performance metrics and chart renderer
+│       ├── audit_review.js     # Audit runs, findings & report viewer
 │       └── header_controls.js  # Shared auto-refresh, progress bar & status pills
 ├── stockpicker/                # Stock screening and regime classification subsystem
 ├── services/                   # Background telemetry readers and aggregators
@@ -71,6 +74,7 @@ tradingbot-dashboard/
 - `GET /learning-review`: Review nightly learning candidates.
 - `GET /performance`: Quantitative execution performance scorecard.
 - `GET /stockpicker`: Regime scanner and screener.
+- `GET /audit` (alias `/audit-review`): Trade Log Audit review and findings inspector.
 
 ### Telemetry & Data APIs
 - `GET /api/bot-overview`: Comprehensive multi-bot status, open positions, buckets, and P&L.
@@ -78,6 +82,11 @@ tradingbot-dashboard/
 - `GET /api/historical-bars/{symbol}`: Historical price bars for chart rendering.
 - `GET /api/engine-performance?period=YTD&bot=ALL&mode=all&benchmark=SPY`: Full performance scorecard, executive KPIs, public benchmarks, per-bot attribution, and diagnostic findings. Add `&force=true` to bypass the caches.
 - `GET /api/logs?bot={symbol}&level={lvl}&limit={n}`: Filtered real-time log streaming.
+
+### Trade Log Audit APIs
+- `GET /api/audit/runs`: Historical audit run history, status, checks executed vs. skipped, and finding counts.
+- `GET /api/audit/runs/{run_id}`: Full audit run detail, check statistics breakdown, and persisted report markdown.
+- `GET /api/audit/findings`: Audit findings filtered by status (`open`, `resolved`, `recurring`, `all`), severity, and category.
 
 ### Governance & Adaptive Logs
 - `GET /api/governance/proposals`: Pending and applied exit tuning proposals (`ExitDiff`).

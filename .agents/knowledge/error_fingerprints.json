@@ -15,9 +15,9 @@
         "tradingbot-tools/auditor/detectors.py",
         "tradingbot-tools/auditor/collectors.py"
       ],
-      "root_cause": "The Trade Log Auditor runs post-close with '--date latest' auditing the previous completed session (yesterday/Friday). IB Gateway execution reports (reqExecutions) only retain fills for the current calendar session and purge previous-day executions upon daily overnight reset (23:45 ET). When queried for a historical session, IB Gateway returns 0 fills. If broker collection does not skip historical sessions when 0 fills are returned, the auditor compares Firestore trades against an empty execution set, triggering false-positive broker_missing_fill findings.",
-      "resolution": "In auditor/pipeline.py::_collect_broker, check if the audited session is historical (session_date < today_et) and broker records are empty. If so, log an informational skip message and return None rather than marking the mode actively checked, preventing false-positive broker_missing_fill findings.",
-      "verification_cmd": "pytest tests/test_trade_log_auditor.py -k test_pipeline_collect_broker_skips_historical_sessions_when_empty"
+      "root_cause": "The Trade Log Auditor runs post-close with '--date latest' auditing the previous completed session (yesterday/Friday). IB Gateway execution reports (reqExecutions) only retain fills for the current calendar session and purge previous-day executions upon daily overnight reset (23:45 ET). When queried for a historical session without persistence, IB Gateway returns 0 fills, causing historical runs to permanently skip broker reconciliation (Issue #132 F1).",
+      "resolution": "In auditor/pipeline.py, capture same-day broker execution snapshots in Firestore 'broker_executions/{date}' and local snapshots directory. During historical or '--date latest' runs, restore executions from the snapshot. If no snapshot exists, emit 'broker_missing_fill: NOT CHECKED' and record explicit 'skipped_checks' telemetry rather than quietly bypassing the check.",
+      "verification_cmd": "python3 -m pytest tests/test_auditor_enhancements_132.py"
     },
     {
       "id": "ERR_IBKR_COMPETING_SESSION_10197",

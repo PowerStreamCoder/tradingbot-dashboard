@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trade Log Audit Review - Trading Bot Dashboard</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔍</text></svg>">
+    <link rel="stylesheet" href="/static/css/bot_focus.css?v=2.9.1">
+    <link rel="stylesheet" href="/static/css/learning_review.css?v=2.3.0">
+    <link rel="stylesheet" href="/static/css/governance_review.css?v=2.5.1">
+    <style>
+        .audit-markdown-report {
+            background: rgba(15, 23, 42, 0.85);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 24px;
+            margin-top: 16px;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            color: var(--text-primary, #e2e8f0);
+            line-height: 1.6;
+            overflow-x: auto;
+        }
+        .audit-markdown-report h1, .audit-markdown-report h2, .audit-markdown-report h3 {
+            color: #38bdf8;
+            margin-top: 1.2em;
+            margin-bottom: 0.6em;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            padding-bottom: 4px;
+        }
+        .audit-markdown-report table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 16px 0;
+            font-size: 0.9em;
+        }
+        .audit-markdown-report th, .audit-markdown-report td {
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            padding: 8px 12px;
+            text-align: left;
+        }
+        .audit-markdown-report th {
+            background: rgba(30, 41, 59, 0.9);
+            color: #94a3b8;
+            font-weight: 600;
+        }
+        .audit-markdown-report tr:nth-child(even) {
+            background: rgba(30, 41, 59, 0.4);
+        }
+        .audit-markdown-report code {
+            background: rgba(0, 0, 0, 0.35);
+            padding: 2px 6px;
+            border-radius: 4px;
+            color: #f43f5e;
+            font-size: 0.88em;
+        }
+        .audit-markdown-report pre {
+            background: rgba(0, 0, 0, 0.5);
+            padding: 12px;
+            border-radius: 6px;
+            overflow-x: auto;
+        }
+        .finding-card {
+            background: rgba(30, 41, 59, 0.7);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 10px;
+            padding: 16px 20px;
+            margin-bottom: 14px;
+            transition: border-color 0.2s ease, transform 0.2s ease;
+        }
+        .finding-card:hover {
+            border-color: rgba(56, 189, 248, 0.4);
+            transform: translateY(-1px);
+        }
+        .finding-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .finding-title {
+            font-size: 1.1em;
+            font-weight: 600;
+            color: #f8fafc;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .finding-meta {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .badge-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 8px;
+            border-radius: 6px;
+            font-size: 0.75em;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .badge-critical { background: rgba(239, 68, 68, 0.25); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); }
+        .badge-high { background: rgba(249, 115, 22, 0.25); color: #fb923c; border: 1px solid rgba(249, 115, 22, 0.4); }
+        .badge-medium { background: rgba(234, 179, 8, 0.25); color: #facc15; border: 1px solid rgba(234, 179, 8, 0.4); }
+        .badge-low { background: rgba(59, 130, 246, 0.25); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.4); }
+        .badge-opportunity { background: rgba(34, 197, 94, 0.25); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.4); }
+        .badge-open { background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
+        .badge-recurring { background: rgba(249, 115, 22, 0.18); color: #fdba74; }
+        .badge-resolved { background: rgba(34, 197, 94, 0.18); color: #86efac; }
+        .badge-dismissed { background: rgba(148, 163, 184, 0.18); color: #cbd5e1; }
+        .badge-category { background: rgba(99, 102, 241, 0.18); color: #a5b4fc; }
+        .badge-symbol { background: rgba(168, 85, 247, 0.18); color: #d8b4fe; }
+        .finding-evidence {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 6px;
+            padding: 10px 14px;
+            margin-top: 10px;
+            font-size: 0.85em;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            color: #cbd5e1;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .finding-footer {
+            margin-top: 12px;
+            font-size: 0.8em;
+            color: #94a3b8;
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .runs-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 14px;
+            font-size: 0.9em;
+        }
+        .runs-table th, .runs-table td {
+            padding: 10px 14px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            text-align: left;
+        }
+        .runs-table th {
+            background: rgba(15, 23, 42, 0.6);
+            color: #94a3b8;
+            font-weight: 600;
+        }
+        .runs-table tr:hover {
+            background: rgba(255, 255, 255, 0.03);
+        }
+        .status-pill-pass { color: #4ade80; font-weight: 600; }
+        .status-pill-defects { color: #fb923c; font-weight: 600; }
+        .status-pill-inconclusive { color: #cbd5e1; font-weight: 600; }
+    </style>
+</head>
+<body>
+    <div class="learning-container">
+        <!-- Header -->
+        <header class="bot-header">
+            <div class="header-left">
+                <h1>
+                    <span class="bot-icon">🔍</span>
+                    Trade Log Audit Review
+                    <span class="statement-account-pill">3-Source Reconciliation</span>
+                </h1>
+                <div class="bot-metadata">
+                    <div class="metadata-pill-badge governance-scope-badge" title="Reconciles Firestore, local state files, disk spools, and IBKR broker executions">
+                        <span class="badge-icon">🛡️</span>
+                        <span class="label">Scope:</span>
+                        <span class="value">Multi-Tier Data Reconciliation</span>
+                        <span class="badge-tooltip-icon" tabindex="0" role="tooltip" aria-label="Audit scope info" title="Deterministic verification across Firestore trades, trader_state, failsafe spool, and broker execution snapshots">ℹ️</span>
+                    </div>
+                    <span class="metadata-separator">|</span>
+                    <div class="metadata-pill-badge audit-badge" title="15 Deterministic Checks Engine">
+                        <span class="badge-icon">⚡</span>
+                        <span class="label">Engine:</span>
+                        <span class="value">15 Deterministic Checks</span>
+                    </div>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="header-sync-cluster">
+                    <div class="refresh-status" title="Auditor telemetry feed status">
+                        <span class="pulse-dot"></span>
+                        <span id="syncStatusText">Auditor Service Ready</span>
+                    </div>
+                </div>
+                <div class="header-actions-cluster">
+                    <button class="btn btn-action btn-refresh" id="btnRefreshAudit" onclick="loadAllAuditData()" title="Reload audit runs and findings">
+                        <span class="btn-icon">🔄</span>
+                        <span>Refresh</span>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Navigation Bar -->
+        <nav class="nav-bar">
+            <a href="/bot-focus" class="nav-link">
+                🎯 Bot Focus
+            </a>
+            <a href="/pnl-reporting" class="nav-link">
+                💰 P&L Reporting
+            </a>
+            <a href="/performance" class="nav-link">
+                ⚡ Performance
+            </a>
+            <a href="/learning-review" class="nav-link">
+                🧠 Learning &amp; Analysis
+            </a>
+            <a href="/governance-review" class="nav-link">
+                ⚖️ Governance Review
+            </a>
+            <a href="/audit" class="nav-link active">
+                🔍 Trade Log Audit
+            </a>
+            <a href="/bot-focus?show=stockpicker" class="nav-link">
+                📊 Stock Picker
+            </a>
+        </nav>
+
+        <!-- Stats Bar -->
+        <div class="stats-bar" id="stats">
+            <div class="stat-card">
+                <h3>Latest Run Status</h3>
+                <div class="value" id="stat-last-status" style="font-size: 1.25em;">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Checks Coverage</h3>
+                <div class="value" id="stat-coverage" style="font-size: 1.25em;">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Active Findings</h3>
+                <div class="value" id="stat-active-findings">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Auto-Resolved</h3>
+                <div class="value" id="stat-resolved-findings">-</div>
+            </div>
+        </div>
+
+        <!-- Auditor Guidance Banner -->
+        <div class="learning-hint-banner" style="background: rgba(56, 189, 248, 0.08); border-left: 4px solid #38bdf8; border-radius: var(--border-radius); padding: 12px 16px; font-size: 13px; color: var(--text-secondary); margin-bottom: 20px; line-height: 1.5;">
+            <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 4px;">
+                🔍 <strong>Trade Log Auditor (Issue #132 &amp; Efficiency Monitoring Phase 2/3)</strong>
+            </div>
+            <div>
+                Runs daily post-close to cross-reconcile trade records across <strong>Firestore</strong>, <strong>local state</strong> (<code>trader_state_{symbol}.json</code>), <strong>failsafe spool</strong> (<code>/home/i030983/tradingbots/data/spool</code>), and <strong>broker execution snapshots</strong>.
+                Issues are tracked using immutable fingerprint deduplication with auto-resolution after 2 clear runs (<code>close_after_runs=2</code>) and double penalty ($-2$) if audit-inspired rule changes are rolled back.
+            </div>
+        </div>
+
+        <!-- Section Navigation Tabs -->
+        <div class="dash-toolbar" style="margin-bottom: 16px;">
+            <div class="dash-filter-group" role="tablist">
+                <button class="dash-tab-btn active" id="tabBtnFindings" onclick="switchMainTab('findings')">
+                    <span class="dash-tab-icon">📋</span>
+                    <span>Audit Findings</span>
+                    <span class="dash-tab-badge" id="badge-findings-count">0</span>
+                </button>
+                <button class="dash-tab-btn" id="tabBtnLatestReport" onclick="switchMainTab('latestReport')">
+                    <span class="dash-tab-icon">📄</span>
+                    <span>Latest Run Report</span>
+                </button>
+                <button class="dash-tab-btn" id="tabBtnRunHistory" onclick="switchMainTab('runHistory')">
+                    <span class="dash-tab-icon">🕒</span>
+                    <span>Run History</span>
+                    <span class="dash-tab-badge" id="badge-runs-count">0</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- TAB 1: FINDINGS REVIEW -->
+        <div id="tabFindings" class="tab-content active">
+            <!-- Filter Toolbar -->
+            <div class="dash-toolbar">
+                <div class="dash-filter-group" role="tablist" id="audit-status-tabs">
+                    <button class="dash-tab-btn active" data-status="active" onclick="selectAuditStatusTab(this, 'active')">
+                        <span class="dash-tab-icon">🔥</span>
+                        <span>Active (Open/Recurring)</span>
+                        <span class="dash-tab-badge amber" id="badge-status-active">0</span>
+                    </button>
+                    <button class="dash-tab-btn" data-status="resolved" onclick="selectAuditStatusTab(this, 'resolved')">
+                        <span class="dash-tab-icon">✓</span>
+                        <span>Resolved</span>
+                        <span class="dash-tab-badge green" id="badge-status-resolved">0</span>
+                    </button>
+                    <button class="dash-tab-btn" data-status="all" onclick="selectAuditStatusTab(this, 'all')">
+                        <span class="dash-tab-icon">🌐</span>
+                        <span>All Findings</span>
+                        <span class="dash-tab-badge" id="badge-status-all">0</span>
+                    </button>
+                </div>
+
+                <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                    <div class="dash-search-box">
+                        <span class="dash-search-icon">🔍</span>
+                        <input type="text" id="audit-search" class="dash-search-input" placeholder="Search check, symbol, evidence..." oninput="handleAuditSearch(this.value)">
+                        <button id="audit-search-clear-btn" class="dash-search-clear" onclick="clearAuditSearch()" title="Clear search" style="display: none;">✕</button>
+                    </div>
+
+                    <select id="filter-audit-category" onchange="filterFindings()" style="padding: 8px 12px; border-radius: 8px; background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(255, 255, 255, 0.12); color: #f8fafc; font-size: 0.88em;">
+                        <option value="all">All Categories</option>
+                        <option value="INTEGRITY">Data Integrity (Critical)</option>
+                        <option value="ANOMALY">Execution Anomalies</option>
+                        <option value="TRADE_LOGIC">Trade Logic Patterns</option>
+                        <option value="GOOD_PRACTICE">Good Practice / Opportunity</option>
+                    </select>
+
+                    <select id="filter-audit-symbol" onchange="filterFindings()" style="padding: 8px 12px; border-radius: 8px; background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(255, 255, 255, 0.12); color: #f8fafc; font-size: 0.88em;">
+                        <option value="all">All Symbols</option>
+                        <option value="NVDA">NVDA</option>
+                        <option value="IWM">IWM</option>
+                        <option value="MSFT">MSFT</option>
+                        <option value="CAT">CAT</option>
+                        <option value="QQQ">QQQ</option>
+                        <option value="AFRM">AFRM</option>
+                        <option value="ALL">Fleet-Wide (ALL)</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Findings List Container -->
+            <div id="findings-container" style="margin-top: 14px;">
+                <div class="loading">Loading audit findings...</div>
+            </div>
+        </div>
+
+        <!-- TAB 2: LATEST RUN REPORT -->
+        <div id="tabLatestReport" class="tab-content">
+            <div id="latest-run-meta" style="margin-bottom: 12px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center;">
+                <!-- Run metadata populated dynamically -->
+            </div>
+            <div id="latest-run-report-container" class="audit-markdown-report">
+                <div class="loading">Loading latest run report...</div>
+            </div>
+        </div>
+
+        <!-- TAB 3: RUN HISTORY -->
+        <div id="tabRunHistory" class="tab-content">
+            <div style="background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px; padding: 16px 20px;">
+                <h3 style="margin-top: 0; color: #f8fafc; font-size: 1.1em;">Recent Audit Runs</h3>
+                <div style="overflow-x: auto;">
+                    <table class="runs-table">
+                        <thead>
+                            <tr>
+                                <th>Trade Date</th>
+                                <th>Run ID</th>
+                                <th>Status</th>
+                                <th>Checks Executed</th>
+                                <th>Checks Skipped</th>
+                                <th>Findings</th>
+                                <th>Created At</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="runs-table-body">
+                            <tr><td colspan="8" style="text-align: center; color: #94a3b8;">Loading audit runs...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <!-- Shared Utilities -->
+    <script src="/static/js/utils.js"></script>
+
+    <!-- Configuration (must load before other scripts) -->
+    <script src="/static/js/config.js?v=2.0.0"></script>
+
+    <!-- Audit Review Script -->
+    <script src="/static/js/audit_review.js?v=1.0.0"></script>
+</body>
+</html>
