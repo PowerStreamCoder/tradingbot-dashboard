@@ -1579,17 +1579,31 @@ def calculate_engine_performance(
         [(exec_score, 0.25), (risk_score, 0.25), (edge_score, 0.25), (cap_score, 0.25)]
     )
 
-    # Suppress a letter grade entirely when the sample is too thin.
+    # Suppress a letter grade entirely when the sample is too thin. A scoped
+    # bot uses the same 5-trade threshold as the per-bot table so the hero and
+    # the table never disagree (Issue #146 F7); when the stricter engine-wide
+    # sample is not met the grade is explicitly labelled provisional.
     scope_label = f"Bot {scoped_bot.symbol}" if scoped_bot else "Trading engine"
+    if scoped_bot:
+        has_grade_sample = total_trades_count >= MIN_TRADES_PER_BOT_FOR_GRADE
+        provisional_note = (
+            " (provisional - below the full-engine minimum of "
+            f"{MIN_TRADES_FOR_GRADE} trades / {MIN_DAYS_FOR_GRADE} days)"
+            if sample_confidence == "INSUFFICIENT" else ""
+        )
+    else:
+        has_grade_sample = sample_confidence != "INSUFFICIENT"
+        provisional_note = ""
 
-    if sample_confidence == "INSUFFICIENT" or overall_score is None:
+    if not has_grade_sample or overall_score is None:
         overall_grade = "N/A"
         overall_score = None
         summary_text = (
             f"Insufficient data to grade {scope_label.lower() if scoped_bot else 'the engine'}: "
             f"{total_trades_count} trade(s) across {distinct_days} trading day(s) in {period}. "
-            f"A rating requires at least {MIN_TRADES_FOR_GRADE} trades across "
-            f"{MIN_DAYS_FOR_GRADE} days. Metrics below are shown only where they could be measured."
+            f"A rating requires at least {MIN_TRADES_PER_BOT_FOR_GRADE} trade(s) in this scope "
+            f"and {MIN_TRADES_FOR_GRADE} trades across {MIN_DAYS_FOR_GRADE} days engine-wide. "
+            f"Metrics below are shown only where they could be measured."
         )
     else:
         overall_grade = compute_grade_from_score(overall_score)
@@ -1601,8 +1615,9 @@ def calculate_engine_performance(
         if scoped_bot:
             summary_text = (
                 f"Bot {scoped_bot.symbol} ({scoped_bot.strategy}) operating at Grade {overall_grade} "
-                f"({overall_score}/100) in {scoped_bot.trading_mode} mode on {total_trades_count} trade(s) "
-                f"across {distinct_days} days ({sample_confidence} confidence). {cap_clause}"
+                f"({overall_score}/100){provisional_note} in {scoped_bot.trading_mode} mode on "
+                f"{total_trades_count} trade(s) across {distinct_days} days "
+                f"({sample_confidence} confidence). {cap_clause}"
             )
         else:
             summary_text = (

@@ -505,6 +505,22 @@ def test_scoped_bot_aggregation_and_summary():
     assert res.scorecard.overall_score is not None
 
 
+def test_scoped_hero_grade_matches_bot_table_threshold():
+    """Issue #146 F7: a 6-trade bot is graded in the table and in the hero."""
+    trades = _make_adequate_trades(symbol="NVDA", n=6, days=6)
+    cfg = [{"name": "nvda_sma", "symbol": "NVDA", "strategy": "sma_crossover",
+            "allocated_capital": 60000.0}]
+    pe.clear_performance_cache()
+    res = calculate_engine_performance(
+        trades=trades, bot_overview_data={}, bot_configs=cfg,
+        period="1M", bot_scope="NVDA", mode="live", now=FIXED_NOW,
+    )
+    bot = res.bots[0]
+    assert bot.rating_grade != "N/A"  # table uses the 5-trade threshold
+    assert res.scorecard.overall_grade == bot.rating_grade  # hero agrees
+    assert "provisional" in res.scorecard.summary_assessment.lower()
+
+
 def test_scoped_bot_isolated_from_other_symbols():
     nvda = _make_adequate_trades(symbol="NVDA", n=20, days=20)
     iwm = [
