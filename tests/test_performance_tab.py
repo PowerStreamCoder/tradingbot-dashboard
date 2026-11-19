@@ -505,6 +505,23 @@ def test_scoped_bot_aggregation_and_summary():
     assert res.scorecard.overall_score is not None
 
 
+def test_measured_warning_surfaces_as_ungraded_when_sample_thin():
+    """Issue #146 F8: warnings must appear (tagged) even below grading size."""
+    trades = _make_adequate_trades(n=6, days=6, unconfirmed_every=2)
+    cfg = [{"name": "nvda_sma", "symbol": "NVDA", "allocated_capital": 60000.0}]
+    pe.clear_performance_cache()
+    res = calculate_engine_performance(
+        trades=trades, bot_overview_data={}, bot_configs=cfg,
+        period="1M", bot_scope="ALL", mode="live", now=FIXED_NOW,
+    )
+    ids = {d.id for d in res.diagnostics}
+    assert "diag-insufficient-sample" in ids
+    assert "diag-unconfirmed-fills" in ids
+    fill_diag = next(d for d in res.diagnostics if d.id == "diag-unconfirmed-fills")
+    assert fill_diag.title.startswith("[UNGRADED]")
+    assert "Provisional" in fill_diag.detail
+
+
 def test_scoped_hero_grade_matches_bot_table_threshold():
     """Issue #146 F7: a 6-trade bot is graded in the table and in the hero."""
     trades = _make_adequate_trades(symbol="NVDA", n=6, days=6)

@@ -1862,83 +1862,82 @@ def calculate_engine_performance(
                 guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#pillar-2-quantitative--strategy-rating-parameters",
             )
         )
-    else:
-        if mdd_reduction_pct is not None and mdd_reduction_pct >= 30.0:
-            diagnostics.append(
-                EngineDiagnosticFinding(
-                    id="diag-cap-preservation",
-                    level="SUCCESS",
-                    category="RISK_PRESERVATION",
-                    title="Drawdown Suppression vs Benchmark",
-                    detail=(
-                        f"Engine Max Drawdown is contained at {overall_mdd}%, a {mdd_reduction_pct}% "
-                        f"reduction in peak-to-trough pain compared to holding {benchmark_symbol}."
-                    ),
-                    recommended_action="Maintain current ATR-based stop floor and break-even lock mechanisms.",
-                    guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#pillar-2-quantitative--strategy-rating-parameters",
-                )
+    if mdd_reduction_pct is not None and mdd_reduction_pct >= 30.0:
+        diagnostics.append(
+            EngineDiagnosticFinding(
+                id="diag-cap-preservation",
+                level="SUCCESS",
+                category="RISK_PRESERVATION",
+                title="Drawdown Suppression vs Benchmark",
+                detail=(
+                    f"Engine Max Drawdown is contained at {overall_mdd}%, a {mdd_reduction_pct}% "
+                    f"reduction in peak-to-trough pain compared to holding {benchmark_symbol}."
+                ),
+                recommended_action="Maintain current ATR-based stop floor and break-even lock mechanisms.",
+                guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#pillar-2-quantitative--strategy-rating-parameters",
             )
-        elif mdd_reduction_pct is not None and mdd_reduction_pct < 0.0:
-            diagnostics.append(
-                EngineDiagnosticFinding(
-                    id="diag-cap-underperform",
-                    level="WARNING",
-                    category="RISK_PRESERVATION",
-                    title="Drawdown Exceeds Buy-and-Hold",
-                    detail=(
-                        f"Engine Max Drawdown ({overall_mdd}%) is deeper than {benchmark_symbol} "
-                        f"buy-and-hold ({benchmark_mdd}%)."
-                    ),
-                    recommended_action="Tighten position sizing or ATR stop distance to reduce peak-to-trough exposure.",
-                    guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#2-drawdown-control",
-                )
+        )
+    elif mdd_reduction_pct is not None and mdd_reduction_pct < 0.0:
+        diagnostics.append(
+            EngineDiagnosticFinding(
+                id="diag-cap-underperform",
+                level="WARNING",
+                category="RISK_PRESERVATION",
+                title="Drawdown Exceeds Buy-and-Hold",
+                detail=(
+                    f"Engine Max Drawdown ({overall_mdd}%) is deeper than {benchmark_symbol} "
+                    f"buy-and-hold ({benchmark_mdd}%)."
+                ),
+                recommended_action="Tighten position sizing or ATR stop distance to reduce peak-to-trough exposure.",
+                guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#2-drawdown-control",
             )
+        )
 
-        if overall_fill_confirmation is not None and overall_fill_confirmation < 98.0:
-            diagnostics.append(
-                EngineDiagnosticFinding(
-                    id="diag-unconfirmed-fills",
-                    level="WARNING",
-                    category="EXECUTION",
-                    title="Unconfirmed Fill Prices Detected",
-                    detail=(
-                        f"{round(100.0 - overall_fill_confirmation, 1)}% of exits used a signal-price fallback "
-                        f"rather than a logged IBKR execution, which can distort slippage and P&L."
-                    ),
-                    recommended_action="Investigate async fill capture timeouts so exit prices are taken from IBKR executions.",
-                    guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#a-execution-quality-benchmarks-sec-rule-605--606-data",
-                )
+    if overall_fill_confirmation is not None and overall_fill_confirmation < 98.0:
+        diagnostics.append(
+            EngineDiagnosticFinding(
+                id="diag-unconfirmed-fills",
+                level="WARNING",
+                category="EXECUTION",
+                title="Unconfirmed Fill Prices Detected",
+                detail=(
+                    f"{round(100.0 - overall_fill_confirmation, 1)}% of exits used a signal-price fallback "
+                    f"rather than a logged IBKR execution, which can distort slippage and P&L."
+                ),
+                recommended_action="Investigate async fill capture timeouts so exit prices are taken from IBKR executions.",
+                guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#a-execution-quality-benchmarks-sec-rule-605--606-data",
             )
+        )
 
-        if overall_reconciliation is not None and overall_reconciliation < 99.0:
-            diagnostics.append(
-                EngineDiagnosticFinding(
-                    id="diag-reconciliation",
-                    level="WARNING",
-                    category="EXECUTION",
-                    title="Bot / Broker P&L Reconciliation Gaps",
-                    detail=(
-                        f"Only {overall_reconciliation}% of validated trades matched IBKR realized P&L."
-                    ),
-                    recommended_action="Review P&L calculator inputs (fees, partial fills) for the mismatched trades.",
-                    guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#a-execution-quality-benchmarks-sec-rule-605--606-data",
-                )
+    if overall_reconciliation is not None and overall_reconciliation < 99.0:
+        diagnostics.append(
+            EngineDiagnosticFinding(
+                id="diag-reconciliation",
+                level="WARNING",
+                category="EXECUTION",
+                title="Bot / Broker P&L Reconciliation Gaps",
+                detail=(
+                    f"Only {overall_reconciliation}% of validated trades matched IBKR realized P&L."
+                ),
+                recommended_action="Review P&L calculator inputs (fees, partial fills) for the mismatched trades.",
+                guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#a-execution-quality-benchmarks-sec-rule-605--606-data",
             )
+        )
 
-        if overall_sharpe is not None:
-            diagnostics.append(
-                EngineDiagnosticFinding(
-                    id="diag-risk-adjusted",
-                    level="INFO" if overall_sharpe >= 1.0 else "WARNING",
-                    category="RISK_PRESERVATION",
-                    title=f"Annualized Sharpe of {overall_sharpe}",
-                    detail=(
-                        f"Measured over {distinct_days} daily observations against a 4.5% risk-free hurdle."
-                    ),
-                    recommended_action="Compare against the Barclay CTA median (1.10) when rebalancing risk exposure.",
-                    guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#pillar-2-quantitative--strategy-rating-parameters",
-                )
+    if overall_sharpe is not None:
+        diagnostics.append(
+            EngineDiagnosticFinding(
+                id="diag-risk-adjusted",
+                level="INFO" if overall_sharpe >= 1.0 else "WARNING",
+                category="RISK_PRESERVATION",
+                title=f"Annualized Sharpe of {overall_sharpe}",
+                detail=(
+                    f"Measured over {distinct_days} daily observations against a 4.5% risk-free hurdle."
+                ),
+                recommended_action="Compare against the Barclay CTA median (1.10) when rebalancing risk exposure.",
+                guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#pillar-2-quantitative--strategy-rating-parameters",
             )
+        )
 
     # Warning: the requested bot scope could not be resolved (bot removed or
     # renamed since the page was opened). Report the fallback explicitly.
@@ -1993,6 +1992,16 @@ def calculate_engine_performance(
                     guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#1-slippage--order-routing-optimization-highest-immediate-impact",
                 )
             )
+
+    # Under an insufficient sample, measured warnings still surface so they can
+    # be seen and later clear once the metric improves. Tag them as ungraded so
+    # they are never mistaken for a rated verdict (Issue #146 F8).
+    if sample_confidence == "INSUFFICIENT":
+        for finding in diagnostics:
+            if finding.id == "diag-insufficient-sample":
+                continue
+            finding.title = f"[UNGRADED] {finding.title}"
+            finding.detail = f"{finding.detail} (Provisional: sample below grading thresholds.)"
 
     response = EnginePerformanceResponse(
         scorecard=scorecard,
