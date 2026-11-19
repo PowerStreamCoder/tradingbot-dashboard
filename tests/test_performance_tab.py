@@ -1185,6 +1185,33 @@ def test_calculate_engine_performance_with_populated_execution_metrics():
     assert mach_dict["Broker Calls on Hot Path"].status == "BEATING"
 
 
+def test_markout_status_unmeasured_without_30s():
+    """Issue #146 F6: +1s/+5s alone must not produce an OPTIMAL +30s verdict."""
+    metrics = {"intervals": [{
+        "ts": "2026-10-20T14:00:00Z",
+        "snapshot": {
+            "symbol": "NVDA",
+            "counters": {"cascade_evaluations": 10},
+            "latency": {
+                "markout_1s_bps": {"count": 10, "mean": -1.0, "p90": 0.0, "p99": 0.0},
+                "markout_5s_bps": {"count": 10, "mean": -2.0, "p90": 0.0, "p99": 0.0},
+                # markout_30s_bps deliberately absent
+            },
+        },
+    }]}
+    pe.clear_performance_cache()
+    res = calculate_engine_performance(
+        trades=[], bot_overview_data={}, bot_configs=[],
+        period="1M", bot_scope="ALL", mode="all", now=FIXED_NOW,
+        execution_metrics_data=metrics,
+    )
+    row = next(m for m in res.machinery.metrics
+               if m.name == "Adverse Selection / Markout (+30s)")
+    assert row.engine_value is None
+    assert row.status == "UNMEASURED"
+    assert "+30s: N/A" in row.engine_formatted
+
+
 def test_calculate_engine_performance_symbol_scope_filters_execution_metrics():
     trades = _make_adequate_trades(n=10, days=8)
 

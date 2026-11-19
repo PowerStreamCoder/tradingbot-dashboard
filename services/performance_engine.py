@@ -879,7 +879,13 @@ def _summarize_execution_metrics(
         m5_s = f"{m5_val:+.1f} bps" if m5_val is not None else "N/A"
         m30_s = f"{m30_val:+.1f} bps" if m30_val is not None else "N/A"
         markout_str = f"+1s: {m1_s} | +5s: {m5_s} | +30s: {m30_s}"
-        markout_status = "BEATING" if (m30_val is not None and m30_val >= 0.0) else ("LAGGING" if m30_val is not None else "OPTIMAL")
+        # The primary judgement is the +30s markout. Without it there is no
+        # basis for an OPTIMAL (or any) verdict, even if +1s/+5s were captured
+        # (Issue #146 F6).
+        if m30_val is None:
+            markout_status = "UNMEASURED"
+        else:
+            markout_status = "BEATING" if m30_val >= 0.0 else "LAGGING"
         markout_basis = "measured"
 
     metrics_list.append(BenchmarkComparisonMetric(
