@@ -1859,7 +1859,7 @@ def calculate_engine_performance(
                     f"{MIN_OBSERVATIONS_FOR_RATIOS} daily observations."
                 ),
                 recommended_action="Allow the engine to accumulate a larger live/paper sample before drawing conclusions.",
-                guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#pillar-2-quantitative--strategy-rating-parameters",
+                guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#3-pillar-2-quantitative--strategy-rating-parameters",
             )
         )
     if mdd_reduction_pct is not None and mdd_reduction_pct >= 30.0:
@@ -1874,7 +1874,7 @@ def calculate_engine_performance(
                     f"reduction in peak-to-trough pain compared to holding {benchmark_symbol}."
                 ),
                 recommended_action="Maintain current ATR-based stop floor and break-even lock mechanisms.",
-                guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#pillar-2-quantitative--strategy-rating-parameters",
+                guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#3-pillar-2-quantitative--strategy-rating-parameters",
             )
         )
     elif mdd_reduction_pct is not None and mdd_reduction_pct < 0.0:
@@ -1889,7 +1889,7 @@ def calculate_engine_performance(
                     f"buy-and-hold ({benchmark_mdd}%)."
                 ),
                 recommended_action="Tighten position sizing or ATR stop distance to reduce peak-to-trough exposure.",
-                guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#2-drawdown-control",
+                guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#c-capital--risk-preservation",
             )
         )
 
@@ -1935,7 +1935,7 @@ def calculate_engine_performance(
                     f"Measured over {distinct_days} daily observations against a 4.5% risk-free hurdle."
                 ),
                 recommended_action="Compare against the Barclay CTA median (1.10) when rebalancing risk exposure.",
-                guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#pillar-2-quantitative--strategy-rating-parameters",
+                guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#3-pillar-2-quantitative--strategy-rating-parameters",
             )
         )
 
@@ -1976,7 +1976,7 @@ def calculate_engine_performance(
                     f"{', '.join(idle_symbols[:6])}{'...' if len(idle_symbols) > 6 else ''}."
                 ),
                 recommended_action="Calibrate confirmation floor / MTF filters using tune_bot_params.py to avoid over-filtering valid setups.",
-                guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#1-reduce-slippage--adverse-selection-highest-pnl-impact",
+                guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#1-slippage--order-routing-optimization-highest-immediate-impact",
             )
         )
 

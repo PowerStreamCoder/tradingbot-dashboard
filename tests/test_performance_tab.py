@@ -505,6 +505,33 @@ def test_scoped_bot_aggregation_and_summary():
     assert res.scorecard.overall_score is not None
 
 
+def test_guide_reference_anchors_resolve_to_headings():
+    """Issue #146 F10: no diagnostic may link to a non-existent guide section."""
+    import re
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[2]
+    guide = repo_root / "tradingbot-documentation/guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md"
+    source = Path(__file__).resolve().parents[1] / "services/performance_engine.py"
+    assert guide.exists()
+
+    def slug(text):
+        # GitHub-style: lowercase, drop punctuation (keep spaces/hyphens),
+        # then replace each remaining space with a hyphen.
+        cleaned = re.sub(r"[^\w\s-]", "", text.strip().lower())
+        return cleaned.replace(" ", "-")
+
+    headings = {slug(line.lstrip("#").strip())
+                for line in guide.read_text().splitlines() if line.startswith("#")}
+    refs = re.findall(
+        r"TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE\.md#([\w-]+)",
+        source.read_text(),
+    )
+    assert refs, "expected at least one anchored guide reference"
+    broken = sorted(set(refs) - headings)
+    assert not broken, f"Broken guide anchors: {broken}"
+
+
 def test_measured_warning_surfaces_as_ungraded_when_sample_thin():
     """Issue #146 F8: warnings must appear (tagged) even below grading size."""
     trades = _make_adequate_trades(n=6, days=6, unconfirmed_every=2)
