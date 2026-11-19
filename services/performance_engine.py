@@ -27,8 +27,10 @@ Data integrity principles (v2.0.0):
 
 from typing import List, Dict, Any, Optional, Tuple
 from pydantic import BaseModel, Field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from threading import Lock
+import hashlib
+import json
 import math
 import logging
 
@@ -48,6 +50,16 @@ logger = logging.getLogger(__name__)
 CACHE_TTL_SECONDS = 60.0
 _perf_cache: Dict[str, Dict[str, Any]] = {}
 _perf_cache_lock = Lock()
+
+
+def _payload_fingerprint(*values: Any) -> str:
+    """Stable short digest of cache-relevant inputs (Issue #146 F12).
+
+    Length-only keys collide whenever data changes without changing shape,
+    silently returning a stale scorecard within the TTL window.
+    """
+    encoded = json.dumps(values, sort_keys=True, default=str, ensure_ascii=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
 
 
 def clear_performance_cache() -> None:
@@ -197,7 +209,7 @@ class EngineMachineryReport(BaseModel):
     exit_blocked_by_entry: Optional[int] = None
     event_loop_errors: Optional[int] = None
     broker_quote_calls: Optional[int] = None
-    cascade_p95_us: Optional[float] = None
+    cascade_p90_us: Optional[float] = None
     cascade_evaluations: Optional[int] = None
     metrics: List[BenchmarkComparisonMetric] = Field(default_factory=list)
 
@@ -387,6 +399,59 @@ def compute_annualized_volatility_pct(daily_returns: List[float]) -> Optional[fl
     return round(math.sqrt(variance) * math.sqrt(TRADING_DAYS_PER_YEAR) * 100.0, 2)
 
 
+def build_continuous_daily_returns(
+    daily_pnl: Dict[str, float],
+    capital: float,
+    period_start: datetime,
+    now: datetime,
+) -> Tuple[List[float], int]:
+    """Build a continuous weekday return series across the whole period window.
+
+    Days without realized P&L are represented as zero-return sessions instead
+    of being dropped. Otherwise a few active days get annualized as if they
+    were the entire window, inflating Sharpe/Calmar and misstating drawdown
+    (Issue #146 F4). Weekends are skipped so the series aligns with the 252
+    trading-day annualization factor used by the ratio helpers.
+
+    Returns ``(returns, active_days)`` where ``active_days`` counts only days
+    that actually had realized P&L; that count gates ratio computation.
+    """
+    if capital <= 0:
+        return [], 0
+    start_date = period_start.date()
+    end_date = now.date()
+    if end_date < start_date:
+        return [], 0
+
+    # Map realized P&L onto weekday sessions. Weekend-dated fills (paper mode /
+    # crypto) roll onto the next weekday so their P&L is not silently dropped.
+    pnl_by_session: Dict[str, float] = {}
+    for key, value in daily_pnl.items():
+        try:
+            day = date.fromisoformat(key)
+        except (ValueError, TypeError):
+            continue
+        if day < start_date or day > end_date:
+            continue
+        while day.weekday() >= 5:
+            day += timedelta(days=1)
+        if day > end_date:
+            day = end_date
+            while day.weekday() >= 5:
+                day -= timedelta(days=1)
+        session_key = day.isoformat()
+        pnl_by_session[session_key] = pnl_by_session.get(session_key, 0.0) + value
+
+    returns: List[float] = []
+    current = start_date
+    while current <= end_date:
+        if current.weekday() < 5:  # Monday .. Friday
+            returns.append(pnl_by_session.get(current.isoformat(), 0.0) / capital)
+        current += timedelta(days=1)
+
+    return returns, len(pnl_by_session)
+
+
 def _extract_slippage(trade: Dict[str, Any]) -> Optional[float]:
     """Return an explicitly recorded slippage value, or ``None`` if not present.
 
@@ -416,21 +481,32 @@ def _extract_quantity(trade: Dict[str, Any]) -> Optional[float]:
     return None
 
 
-def _is_fill_confirmed(trade: Dict[str, Any]) -> bool:
-    """True when the exit price is backed by a real IBKR execution.
+def _is_fill_confirmed(trade: Dict[str, Any]) -> Optional[bool]:
+    """Return whether the exit price is backed by a real IBKR execution.
 
-    Trades flagged as estimated from the signal price (``unconfirmedFill`` /
-    ``exitPriceSource == "signal_fallback"``) count as unconfirmed. Legacy
-    trades that never carried these fields are treated as confirmed.
+    ``True``  -> explicit ``ibkr_execution`` provenance (confirmed).
+    ``False`` -> explicitly flagged as a signal-price fallback (unconfirmed).
+    ``None``  -> no provenance recorded (legacy trade / unmeasured).
+
+    Only explicit broker provenance counts. Treating a missing field as
+    confirmed would fabricate a 100% fill-confirmation rate for trades the
+    engine cannot actually verify (Issue #146 F2).
     """
     if trade.get("unconfirmedFill") is True:
         return False
     meta = trade.get("analysis_metadata")
     if isinstance(meta, dict) and meta.get("unconfirmed_fill") is True:
         return False
-    if trade.get("exitPriceSource") == "signal_price" or trade.get("exitPriceSource") == "signal_fallback":
+
+    source = trade.get("exitPriceSource")
+    if source is None and isinstance(meta, dict):
+        source = meta.get("exit_price_source")
+    if source == "signal_price" or source == "signal_fallback":
         return False
-    return True
+    if source == "ibkr_execution":
+        return True
+    # No recorded provenance -> genuinely unmeasured.
+    return None
 
 
 def _first_present(trade: Dict[str, Any], keys: Tuple[str, ...]) -> Optional[Dict[str, Any]]:
@@ -762,8 +838,10 @@ def _summarize_execution_metrics(
 
 
     # 7. Decision-Path Cost
-    cascade_p95_ns = cascade_info.get("p90")
-    cascade_p95_us = round(cascade_p95_ns / 1000.0, 1) if cascade_p95_ns is not None else None
+    # The logged cascade summary exposes p90 (not p95); keep the field name
+    # honest instead of implying a percentile we cannot measure (Issue #146 F11).
+    cascade_p90_ns = cascade_info.get("p90")
+    cascade_p90_us = round(cascade_p90_ns / 1000.0, 1) if cascade_p90_ns is not None else None
     cascade_evals = _get_counter("cascade_evaluations")
 
     metrics_list: List[BenchmarkComparisonMetric] = []
@@ -815,7 +893,13 @@ def _summarize_execution_metrics(
         m5_s = f"{m5_val:+.1f} bps" if m5_val is not None else "N/A"
         m30_s = f"{m30_val:+.1f} bps" if m30_val is not None else "N/A"
         markout_str = f"+1s: {m1_s} | +5s: {m5_s} | +30s: {m30_s}"
-        markout_status = "BEATING" if (m30_val is not None and m30_val >= 0.0) else ("LAGGING" if m30_val is not None else "OPTIMAL")
+        # The primary judgement is the +30s markout. Without it there is no
+        # basis for an OPTIMAL (or any) verdict, even if +1s/+5s were captured
+        # (Issue #146 F6).
+        if m30_val is None:
+            markout_status = "UNMEASURED"
+        else:
+            markout_status = "BEATING" if m30_val >= 0.0 else "LAGGING"
         markout_basis = "measured"
 
     metrics_list.append(BenchmarkComparisonMetric(
@@ -887,17 +971,17 @@ def _summarize_execution_metrics(
     dec_str = "--"
     dec_status = "UNMEASURED"
     dec_basis = "unavailable"
-    if cascade_p95_us is not None or (cascade_evals is not None and cascade_evals > 0):
-        c_p = f"{cascade_p95_us:.1f} µs (p90)" if cascade_p95_us is not None else "N/A"
+    if cascade_p90_us is not None or (cascade_evals is not None and cascade_evals > 0):
+        c_p = f"{cascade_p90_us:.1f} µs (p90)" if cascade_p90_us is not None else "N/A"
         ev_s = f"{cascade_evals:,} evals" if cascade_evals is not None else "0 evals"
         dec_str = f"{c_p} | {ev_s}"
-        dec_status = "BEATING" if (cascade_p95_us is None or cascade_p95_us <= 150.0) else "LAGGING"
+        dec_status = "BEATING" if (cascade_p90_us is None or cascade_p90_us <= 150.0) else "LAGGING"
         dec_basis = "measured"
 
     metrics_list.append(BenchmarkComparisonMetric(
         name="Decision-Path Cost",
         category="DECISION_COST",
-        engine_value=cascade_p95_us,
+        engine_value=cascade_p90_us,
         engine_formatted=dec_str,
         benchmark_name="Sub-Millisecond Cascade (F5)",
         benchmark_value=150.0,
@@ -936,19 +1020,21 @@ def _summarize_execution_metrics(
             f"{_p99_us:,.1f} µs p99"
             + (f" | {_mean_us:,.1f} µs mean" if _mean_us is not None else "")
         ) if _p99_us is not None else "--"
-        # Target mirrors the whole-cascade p99 budget (500 ms); a single phase
-        # above it is, by construction, the one holding the tail.
+        # Target mirrors the whole-cascade p99 budget of 500 µs. A single phase
+        # above it is, by construction, the one holding the tail. The value is
+        # already in microseconds (ns / 1000), so comparing against 500_000
+        # would be 1000x too lenient (Issue #146 F5).
         _status = "UNMEASURED"
         if _p99_us is not None:
-            _status = "LAGGING" if _p99_us > 500_000.0 else "BEATING"
+            _status = "LAGGING" if _p99_us > 500.0 else "BEATING"
         metrics_list.append(BenchmarkComparisonMetric(
             name=_name,
             category="DECISION_COST",
             engine_value=_p99_us,
             engine_formatted=_val_str,
             benchmark_name="Phase p99 within budget (F5)",
-            benchmark_value=500_000.0,
-            benchmark_formatted="< 500 ms p99",
+            benchmark_value=500.0,
+            benchmark_formatted="< 500 µs p99",
             status=_status,
             data_basis="measured",
             description=_desc,
@@ -969,7 +1055,7 @@ def _summarize_execution_metrics(
         exit_blocked_by_entry=exit_blocked,
         event_loop_errors=loop_errors,
         broker_quote_calls=broker_quotes,
-        cascade_p95_us=cascade_p95_us,
+        cascade_p90_us=cascade_p90_us,
         cascade_evaluations=cascade_evals,
         metrics=metrics_list,
     )
@@ -1015,10 +1101,17 @@ def calculate_engine_performance(
     if norm_mode == "both":
         norm_mode = "all"
 
-    series_key = len(benchmark_price_series) if benchmark_price_series else 0
-    metrics_key = len(execution_metrics_data) if isinstance(execution_metrics_data, (list, dict)) else (1 if execution_metrics_data else 0)
-    # Check cache
-    cache_key = f"perf_{period}_{bot_scope}_{benchmark_symbol}_{norm_mode}_{series_key}_{metrics_key}"
+    # Fingerprint every input that affects the result. Length-only keys (the
+    # old behaviour) return stale scorecards when data changes without changing
+    # shape within the TTL window (Issue #146 F12). ``now`` is deliberately
+    # excluded: it advances every request and would defeat the cache.
+    payload_key = _payload_fingerprint(
+        trades, bot_overview_data, bot_configs, account_overview_data,
+        benchmark_price_series, history_limit, execution_metrics_data,
+    )
+    cache_key = (
+        f"perf_{period}_{bot_scope}_{benchmark_symbol}_{norm_mode}_{payload_key}"
+    )
     with _perf_cache_lock:
         if cache_key in _perf_cache:
             entry = _perf_cache[cache_key]
@@ -1127,6 +1220,7 @@ def calculate_engine_performance(
         sym_slippage_shares = 0.0
         sym_reported_slippage_trades = 0
         sym_fill_confirmed = 0
+        sym_fill_provenance_known = 0
         sym_validated = 0
         sym_matched = 0
         daily_sym_pnl: Dict[str, float] = {}
@@ -1147,9 +1241,13 @@ def calculate_engine_performance(
                 sym_slippage_shares += shares
                 sym_reported_slippage_trades += 1
 
-            # Execution integrity
-            if _is_fill_confirmed(tr):
-                sym_fill_confirmed += 1
+            # Execution integrity: only trades with recorded provenance enter
+            # the fill-confirmation denominator (Issue #146 F2).
+            fill_status = _is_fill_confirmed(tr)
+            if fill_status is not None:
+                sym_fill_provenance_known += 1
+                if fill_status:
+                    sym_fill_confirmed += 1
             validation = _first_present(tr, ("validation",))
             if validation and validation.get("validated"):
                 sym_validated += 1
@@ -1181,9 +1279,11 @@ def calculate_engine_performance(
             "gross_losses": gross_losses,
             "commissions": sym_commissions,
             "net_pnl": net_pnl,
+            "unrealized_pnl": unrealized_pnl,
             "slippage": sym_slippage,
             "slippage_shares": sym_slippage_shares,
             "fill_confirmed": sym_fill_confirmed,
+            "fill_provenance_known": sym_fill_provenance_known,
             "validated": sym_validated,
             "matched": sym_matched,
             "trades_count": trades_count,
@@ -1196,7 +1296,9 @@ def calculate_engine_performance(
 
         avg_win = (gross_wins / wins) if wins > 0 else 0.0
         avg_loss = (abs(gross_losses) / losses) if losses > 0 else 0.0
-        payoff = round(avg_win / avg_loss, 2) if avg_loss > 0 else (9.99 if avg_win > 0 else None)
+        # Payoff ratio is undefined without realized losses. A sentinel here
+        # would fabricate an edge, so leave it unmeasured instead.
+        payoff = round(avg_win / avg_loss, 2) if avg_loss > 0 else None
 
         p_win = wins / trades_count if trades_count > 0 else 0.0
         p_loss = losses / trades_count if trades_count > 0 else 0.0
@@ -1205,27 +1307,40 @@ def calculate_engine_performance(
         )
         expectancy_pct = round((expectancy_dollars / alloc_cap) * 100.0, 2) if alloc_cap > 0 else 0.0
 
-        # Sharpe & Sortino (only with enough distinct daily observations)
-        sorted_days = sorted(daily_sym_pnl.keys())
-        daily_returns = [daily_sym_pnl[d] / alloc_cap for d in sorted_days] if alloc_cap > 0 else []
-        if len(daily_returns) >= MIN_OBSERVATIONS_FOR_RATIOS:
-            sym_sharpe, sym_sortino = calculate_sharpe_and_sortino(daily_returns)
+        # Continuous daily series across the whole window (zero days included)
+        # so annualization uses the real number of sessions, not just the days
+        # that happened to contain a trade (Issue #146 F4). Mark open positions
+        # to market on the final session so NAV reflects unrealized P&L too.
+        sym_daily_returns, sym_active_days = build_continuous_daily_returns(
+            daily_sym_pnl, alloc_cap, period_start, now
+        )
+        if sym_daily_returns and unrealized_pnl:
+            sym_daily_returns[-1] += unrealized_pnl / alloc_cap
+
+        # Sharpe & Sortino: gate on real (trade-bearing) observations, not the
+        # zero-filled series length.
+        if sym_active_days >= MIN_OBSERVATIONS_FOR_RATIOS:
+            sym_sharpe, sym_sortino = calculate_sharpe_and_sortino(sym_daily_returns)
         else:
             sym_sharpe, sym_sortino = None, None
 
         # Drawdown (needs at least one return observation)
         sym_mdd: Optional[float] = None
         sym_calmar: Optional[float] = None
-        if daily_returns:
+        if sym_daily_returns:
             nav_curve = [alloc_cap]
             curr_nav = alloc_cap
-            for r in daily_returns:
+            for r in sym_daily_returns:
                 curr_nav *= (1.0 + r)
                 nav_curve.append(curr_nav)
             sym_mdd = calculate_max_drawdown(nav_curve)
-            ann_return = compute_annualized_return_pct(daily_returns)
-            if ann_return is not None and abs(sym_mdd) > 0:
-                sym_calmar = round(ann_return / abs(sym_mdd), 2)
+            # Calmar combines an annualized return with drawdown; annualizing
+            # from a handful of trade-bearing days produces meaningless values
+            # (Issue #146 F3). Use the real observation count for the guard.
+            if sym_active_days >= MIN_OBSERVATIONS_FOR_RATIOS:
+                ann_return = compute_annualized_return_pct(sym_daily_returns)
+                if ann_return is not None and abs(sym_mdd) > 0:
+                    sym_calmar = round(ann_return / abs(sym_mdd), 2)
 
         avg_slippage_sh: Optional[float] = None
         if sym_slippage_shares > 0:
@@ -1235,7 +1350,10 @@ def calculate_engine_performance(
         if gross_wins > 0:
             cost_drag = round(((sym_commissions + sym_slippage) / gross_wins) * 100.0, 1)
 
-        fill_conf_rate = round((sym_fill_confirmed / trades_count) * 100.0, 1) if trades_count > 0 else None
+        fill_conf_rate = (
+            round((sym_fill_confirmed / sym_fill_provenance_known) * 100.0, 1)
+            if sym_fill_provenance_known > 0 else None
+        )
         recon_rate = round((sym_matched / sym_validated) * 100.0, 1) if sym_validated > 0 else None
 
         sym_mdd_reduction: Optional[float] = None
@@ -1349,9 +1467,11 @@ def calculate_engine_performance(
     total_gross_losses = 0.0
     total_commissions = 0.0
     total_net_pnl = 0.0
+    total_unrealized = 0.0
     total_slippage_dollars = 0.0
     total_slippage_shares = 0.0
     total_fill_confirmed = 0
+    total_fill_provenance_known = 0
     total_validated = 0
     total_matched = 0
     total_trades_count = 0
@@ -1365,9 +1485,11 @@ def calculate_engine_performance(
         total_gross_losses += agg.get("gross_losses", 0.0)
         total_commissions += agg.get("commissions", 0.0)
         total_net_pnl += agg.get("net_pnl", 0.0)
+        total_unrealized += agg.get("unrealized_pnl", 0.0)
         total_slippage_dollars += agg.get("slippage", 0.0)
         total_slippage_shares += agg.get("slippage_shares", 0.0)
         total_fill_confirmed += agg.get("fill_confirmed", 0)
+        total_fill_provenance_known += agg.get("fill_provenance_known", 0)
         total_validated += agg.get("validated", 0)
         total_matched += agg.get("matched", 0)
         total_trades_count += agg.get("trades_count", 0)
@@ -1401,16 +1523,19 @@ def calculate_engine_performance(
         except (ValueError, TypeError):
             pass
 
-    # Daily observation count (for confidence + ratio gating)
-    sorted_all_days = sorted(daily_portfolio_pnl.keys())
-    portfolio_daily_returns = (
-        [daily_portfolio_pnl[d] / total_allocated for d in sorted_all_days]
-        if total_allocated > 0 else []
+    # Continuous daily series across the whole window (zero days included),
+    # with open positions marked to market on the final session (#146 F4).
+    # ``distinct_days`` keeps its original meaning: calendar days that traded,
+    # used for sample confidence. Ratio gating uses the weekday-session count.
+    portfolio_daily_returns, active_sessions = build_continuous_daily_returns(
+        daily_portfolio_pnl, total_allocated, period_start, now
     )
-    distinct_days = len(portfolio_daily_returns)
+    distinct_days = len(daily_portfolio_pnl)
+    if portfolio_daily_returns and total_unrealized:
+        portfolio_daily_returns[-1] += total_unrealized / total_allocated
 
-    # Portfolio Sharpe & Sortino - only with enough observations (no fallbacks)
-    if distinct_days >= MIN_OBSERVATIONS_FOR_RATIOS:
+    # Portfolio Sharpe & Sortino - only with enough real observations (no fallbacks)
+    if active_sessions >= MIN_OBSERVATIONS_FOR_RATIOS:
         overall_sharpe, overall_sortino = calculate_sharpe_and_sortino(portfolio_daily_returns)
     else:
         overall_sharpe, overall_sortino = None, None
@@ -1427,7 +1552,7 @@ def calculate_engine_performance(
 
     # Overall Calmar
     overall_calmar: Optional[float] = None
-    if overall_mdd is not None and abs(overall_mdd) > 0 and distinct_days >= MIN_OBSERVATIONS_FOR_RATIOS:
+    if overall_mdd is not None and abs(overall_mdd) > 0 and active_sessions >= MIN_OBSERVATIONS_FOR_RATIOS:
         ann_portfolio_return = compute_annualized_return_pct(portfolio_daily_returns)
         if ann_portfolio_return is not None:
             overall_calmar = round(ann_portfolio_return / abs(overall_mdd), 2)
@@ -1441,8 +1566,8 @@ def calculate_engine_performance(
 
     # Overall execution metrics (measured)
     overall_fill_confirmation: Optional[float] = None
-    if total_trades_count > 0:
-        overall_fill_confirmation = round((total_fill_confirmed / total_trades_count) * 100.0, 1)
+    if total_fill_provenance_known > 0:
+        overall_fill_confirmation = round((total_fill_confirmed / total_fill_provenance_known) * 100.0, 1)
     overall_reconciliation: Optional[float] = None
     if total_validated > 0:
         overall_reconciliation = round((total_matched / total_validated) * 100.0, 1)
@@ -1475,17 +1600,31 @@ def calculate_engine_performance(
         [(exec_score, 0.25), (risk_score, 0.25), (edge_score, 0.25), (cap_score, 0.25)]
     )
 
-    # Suppress a letter grade entirely when the sample is too thin.
+    # Suppress a letter grade entirely when the sample is too thin. A scoped
+    # bot uses the same 5-trade threshold as the per-bot table so the hero and
+    # the table never disagree (Issue #146 F7); when the stricter engine-wide
+    # sample is not met the grade is explicitly labelled provisional.
     scope_label = f"Bot {scoped_bot.symbol}" if scoped_bot else "Trading engine"
+    if scoped_bot:
+        has_grade_sample = total_trades_count >= MIN_TRADES_PER_BOT_FOR_GRADE
+        provisional_note = (
+            " (provisional - below the full-engine minimum of "
+            f"{MIN_TRADES_FOR_GRADE} trades / {MIN_DAYS_FOR_GRADE} days)"
+            if sample_confidence == "INSUFFICIENT" else ""
+        )
+    else:
+        has_grade_sample = sample_confidence != "INSUFFICIENT"
+        provisional_note = ""
 
-    if sample_confidence == "INSUFFICIENT" or overall_score is None:
+    if not has_grade_sample or overall_score is None:
         overall_grade = "N/A"
         overall_score = None
         summary_text = (
             f"Insufficient data to grade {scope_label.lower() if scoped_bot else 'the engine'}: "
             f"{total_trades_count} trade(s) across {distinct_days} trading day(s) in {period}. "
-            f"A rating requires at least {MIN_TRADES_FOR_GRADE} trades across "
-            f"{MIN_DAYS_FOR_GRADE} days. Metrics below are shown only where they could be measured."
+            f"A rating requires at least {MIN_TRADES_PER_BOT_FOR_GRADE} trade(s) in this scope "
+            f"and {MIN_TRADES_FOR_GRADE} trades across {MIN_DAYS_FOR_GRADE} days engine-wide. "
+            f"Metrics below are shown only where they could be measured."
         )
     else:
         overall_grade = compute_grade_from_score(overall_score)
@@ -1497,8 +1636,9 @@ def calculate_engine_performance(
         if scoped_bot:
             summary_text = (
                 f"Bot {scoped_bot.symbol} ({scoped_bot.strategy}) operating at Grade {overall_grade} "
-                f"({overall_score}/100) in {scoped_bot.trading_mode} mode on {total_trades_count} trade(s) "
-                f"across {distinct_days} days ({sample_confidence} confidence). {cap_clause}"
+                f"({overall_score}/100){provisional_note} in {scoped_bot.trading_mode} mode on "
+                f"{total_trades_count} trade(s) across {distinct_days} days "
+                f"({sample_confidence} confidence). {cap_clause}"
             )
         else:
             summary_text = (
@@ -1740,86 +1880,122 @@ def calculate_engine_performance(
                     f"{MIN_OBSERVATIONS_FOR_RATIOS} daily observations."
                 ),
                 recommended_action="Allow the engine to accumulate a larger live/paper sample before drawing conclusions.",
-                guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#pillar-2-quantitative--strategy-rating-parameters",
+                guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#3-pillar-2-quantitative--strategy-rating-parameters",
             )
         )
-    else:
-        if mdd_reduction_pct is not None and mdd_reduction_pct >= 30.0:
-            diagnostics.append(
-                EngineDiagnosticFinding(
-                    id="diag-cap-preservation",
-                    level="SUCCESS",
-                    category="RISK_PRESERVATION",
-                    title="Drawdown Suppression vs Benchmark",
-                    detail=(
-                        f"Engine Max Drawdown is contained at {overall_mdd}%, a {mdd_reduction_pct}% "
-                        f"reduction in peak-to-trough pain compared to holding {benchmark_symbol}."
-                    ),
-                    recommended_action="Maintain current ATR-based stop floor and break-even lock mechanisms.",
-                    guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#pillar-2-quantitative--strategy-rating-parameters",
-                )
+    if mdd_reduction_pct is not None and mdd_reduction_pct >= 30.0:
+        diagnostics.append(
+            EngineDiagnosticFinding(
+                id="diag-cap-preservation",
+                level="SUCCESS",
+                category="RISK_PRESERVATION",
+                title="Drawdown Suppression vs Benchmark",
+                detail=(
+                    f"Engine Max Drawdown is contained at {overall_mdd}%, a {mdd_reduction_pct}% "
+                    f"reduction in peak-to-trough pain compared to holding {benchmark_symbol}."
+                ),
+                recommended_action="Maintain current ATR-based stop floor and break-even lock mechanisms.",
+                guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#3-pillar-2-quantitative--strategy-rating-parameters",
             )
-        elif mdd_reduction_pct is not None and mdd_reduction_pct < 0.0:
-            diagnostics.append(
-                EngineDiagnosticFinding(
-                    id="diag-cap-underperform",
-                    level="WARNING",
-                    category="RISK_PRESERVATION",
-                    title="Drawdown Exceeds Buy-and-Hold",
-                    detail=(
-                        f"Engine Max Drawdown ({overall_mdd}%) is deeper than {benchmark_symbol} "
-                        f"buy-and-hold ({benchmark_mdd}%)."
-                    ),
-                    recommended_action="Tighten position sizing or ATR stop distance to reduce peak-to-trough exposure.",
-                    guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#2-drawdown-control",
-                )
+        )
+    elif mdd_reduction_pct is not None and mdd_reduction_pct < 0.0:
+        diagnostics.append(
+            EngineDiagnosticFinding(
+                id="diag-cap-underperform",
+                level="WARNING",
+                category="RISK_PRESERVATION",
+                title="Drawdown Exceeds Buy-and-Hold",
+                detail=(
+                    f"Engine Max Drawdown ({overall_mdd}%) is deeper than {benchmark_symbol} "
+                    f"buy-and-hold ({benchmark_mdd}%)."
+                ),
+                recommended_action="Tighten position sizing or ATR stop distance to reduce peak-to-trough exposure.",
+                guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#c-capital--risk-preservation",
             )
+        )
 
-        if overall_fill_confirmation is not None and overall_fill_confirmation < 98.0:
-            diagnostics.append(
-                EngineDiagnosticFinding(
-                    id="diag-unconfirmed-fills",
-                    level="WARNING",
-                    category="EXECUTION",
-                    title="Unconfirmed Fill Prices Detected",
-                    detail=(
-                        f"{round(100.0 - overall_fill_confirmation, 1)}% of exits used a signal-price fallback "
-                        f"rather than a logged IBKR execution, which can distort slippage and P&L."
-                    ),
-                    recommended_action="Investigate async fill capture timeouts so exit prices are taken from IBKR executions.",
-                    guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#a-execution-quality-benchmarks-sec-rule-605--606-data",
-                )
+    if overall_fill_confirmation is not None and overall_fill_confirmation < 98.0:
+        diagnostics.append(
+            EngineDiagnosticFinding(
+                id="diag-unconfirmed-fills",
+                level="WARNING",
+                category="EXECUTION",
+                title="Unconfirmed Fill Prices Detected",
+                detail=(
+                    f"{round(100.0 - overall_fill_confirmation, 1)}% of exits used a signal-price fallback "
+                    f"rather than a logged IBKR execution, which can distort slippage and P&L."
+                ),
+                recommended_action="Investigate async fill capture timeouts so exit prices are taken from IBKR executions.",
+                guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#a-execution-quality-benchmarks-sec-rule-605--606-data",
             )
+        )
 
-        if overall_reconciliation is not None and overall_reconciliation < 99.0:
-            diagnostics.append(
-                EngineDiagnosticFinding(
-                    id="diag-reconciliation",
-                    level="WARNING",
-                    category="EXECUTION",
-                    title="Bot / Broker P&L Reconciliation Gaps",
-                    detail=(
-                        f"Only {overall_reconciliation}% of validated trades matched IBKR realized P&L."
-                    ),
-                    recommended_action="Review P&L calculator inputs (fees, partial fills) for the mismatched trades.",
-                    guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#a-execution-quality-benchmarks-sec-rule-605--606-data",
-                )
+    if overall_reconciliation is not None and overall_reconciliation < 99.0:
+        diagnostics.append(
+            EngineDiagnosticFinding(
+                id="diag-reconciliation",
+                level="WARNING",
+                category="EXECUTION",
+                title="Bot / Broker P&L Reconciliation Gaps",
+                detail=(
+                    f"Only {overall_reconciliation}% of validated trades matched IBKR realized P&L."
+                ),
+                recommended_action="Review P&L calculator inputs (fees, partial fills) for the mismatched trades.",
+                guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#a-execution-quality-benchmarks-sec-rule-605--606-data",
             )
+        )
 
-        if overall_sharpe is not None:
-            diagnostics.append(
-                EngineDiagnosticFinding(
-                    id="diag-risk-adjusted",
-                    level="INFO" if overall_sharpe >= 1.0 else "WARNING",
-                    category="RISK_PRESERVATION",
-                    title=f"Annualized Sharpe of {overall_sharpe}",
-                    detail=(
-                        f"Measured over {distinct_days} daily observations against a 4.5% risk-free hurdle."
-                    ),
-                    recommended_action="Compare against the Barclay CTA median (1.10) when rebalancing risk exposure.",
-                    guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#pillar-2-quantitative--strategy-rating-parameters",
-                )
+    if overall_sharpe is not None:
+        diagnostics.append(
+            EngineDiagnosticFinding(
+                id="diag-risk-adjusted",
+                level="INFO" if overall_sharpe >= 1.0 else "WARNING",
+                category="RISK_PRESERVATION",
+                title=f"Annualized Sharpe of {overall_sharpe}",
+                detail=(
+                    f"Measured over {distinct_days} daily observations against a 4.5% risk-free hurdle."
+                ),
+                recommended_action="Compare against the Barclay CTA median (1.10) when rebalancing risk exposure.",
+                guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#3-pillar-2-quantitative--strategy-rating-parameters",
             )
+        )
+
+    # I1: make the reconstructed-equity limitation explicit. Max Drawdown and
+    # the risk-adjusted ratios are derived from a daily series rebuilt from
+    # closed-trade P&L (+ the current unrealized mark), NOT from a per-tick
+    # equity snapshot, so they are approximations. Backtest proposal JSON files
+    # are produced by a separate subsystem and are never consumed here.
+    if overall_mdd is not None or overall_sharpe is not None:
+        _quality_notes = [
+            "the daily series is rebuilt from closed-trade P&L plus the latest "
+            "unrealized mark, not a per-tick equity snapshot"
+        ]
+        if history_truncated:
+            _quality_notes.append(
+                f"only the most recent {history_limit} trades were evaluated, so "
+                f"older trades may be missing"
+            )
+        diagnostics.append(
+            EngineDiagnosticFinding(
+                id="diag-reconstructed-equity",
+                level="INFO",
+                category="DATA_QUALITY",
+                title="Risk Ratios Use a Reconstructed Equity Curve",
+                detail=(
+                    "Max Drawdown, Sharpe, Sortino and Calmar are approximations: "
+                    + "; ".join(_quality_notes)
+                    + f". The series spans {len(portfolio_daily_returns)} session(s) "
+                    f"in {period}."
+                ),
+                recommended_action=(
+                    "Treat these figures as directional. For exchange-grade drawdown "
+                    "and volatility, snapshot the engine's per-tick equity to a bar "
+                    "series and feed it to this scorecard; backtest proposal files "
+                    "are not an input to this view."
+                ),
+                guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#data-integrity-measured-vs-unavailable-metrics",
+            )
+        )
 
     # Warning: the requested bot scope could not be resolved (bot removed or
     # renamed since the page was opened). Report the fallback explicitly.
@@ -1839,8 +2015,13 @@ def calculate_engine_performance(
             )
         )
 
-    # Opportunity: idle configured bots / thin signal funnel (data-driven)
-    idle_symbols = [b.symbol for b in bot_records if b.trades_count == 0]
+    # Opportunity: idle *active* bots / thin signal funnel (data-driven).
+    # PAUSED and REMOVED bots are not expected to trade, so recommending filter
+    # tuning for them is misleading (Issue #146 F9).
+    idle_symbols = [
+        b.symbol for b in bot_records
+        if b.trades_count == 0 and b.status == "ACTIVE"
+    ]
     if idle_symbols:
         diagnostics.append(
             EngineDiagnosticFinding(
@@ -1853,7 +2034,7 @@ def calculate_engine_performance(
                     f"{', '.join(idle_symbols[:6])}{'...' if len(idle_symbols) > 6 else ''}."
                 ),
                 recommended_action="Calibrate confirmation floor / MTF filters using tune_bot_params.py to avoid over-filtering valid setups.",
-                guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#1-reduce-slippage--adverse-selection-highest-pnl-impact",
+                guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#1-slippage--order-routing-optimization-highest-immediate-impact",
             )
         )
 
@@ -1874,6 +2055,16 @@ def calculate_engine_performance(
                     guide_reference="guides/TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md#1-slippage--order-routing-optimization-highest-immediate-impact",
                 )
             )
+
+    # Under an insufficient sample, measured warnings still surface so they can
+    # be seen and later clear once the metric improves. Tag them as ungraded so
+    # they are never mistaken for a rated verdict (Issue #146 F8).
+    if sample_confidence == "INSUFFICIENT":
+        for finding in diagnostics:
+            if finding.id == "diag-insufficient-sample":
+                continue
+            finding.title = f"[UNGRADED] {finding.title}"
+            finding.detail = f"{finding.detail} (Provisional: sample below grading thresholds.)"
 
     response = EnginePerformanceResponse(
         scorecard=scorecard,

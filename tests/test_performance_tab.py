@@ -26,6 +26,7 @@ from services.performance_engine import (
     score_capital_preservation,
     compute_annualized_return_pct,
     compute_annualized_volatility_pct,
+    build_continuous_daily_returns,
     _extract_slippage,
     _extract_quantity,
     _is_fill_confirmed,
@@ -142,6 +143,8 @@ def _make_adequate_trades(symbol="NVDA", n=40, days=30, base=FIXED_NOW, unconfir
             "trading_mode": "live",
             "commission": 2.0,
             "analysis_metadata": {"quantity": 100},
+            # Modern bots always record broker provenance (Issue #146 F2).
+            "exitPriceSource": "ibkr_execution",
         }
         if include_slippage:
             trade["slippage"] = 0.01
@@ -251,12 +254,34 @@ def test_extract_quantity_variants():
 
 
 def test_is_fill_confirmed_variants():
-    assert _is_fill_confirmed({}) is True
+    # Issue #146 F2: no provenance -> unmeasured, never fabricated as confirmed.
+    assert _is_fill_confirmed({}) is None
     assert _is_fill_confirmed({"unconfirmedFill": True}) is False
     assert _is_fill_confirmed({"analysis_metadata": {"unconfirmed_fill": True}}) is False
     assert _is_fill_confirmed({"exitPriceSource": "signal_fallback"}) is False
     assert _is_fill_confirmed({"exitPriceSource": "signal_price"}) is False
     assert _is_fill_confirmed({"exitPriceSource": "ibkr_execution"}) is True
+    assert _is_fill_confirmed({"analysis_metadata": {"exit_price_source": "ibkr_execution"}}) is True
+
+
+def test_fill_confirmation_unmeasured_without_provenance():
+    """Issue #146 F2: legacy trades must not yield a fabricated 100% rate."""
+    trades = [
+        {
+            "timestamp": (FIXED_NOW - timedelta(days=i)).isoformat(),
+            "symbol": "NVDA",
+            "profitLoss": 100.0,
+            "trading_mode": "live",
+        }
+        for i in range(6)
+    ]
+    cfg = [{"name": "nvda_sma", "symbol": "NVDA", "allocated_capital": 10000.0}]
+    res = calculate_engine_performance(
+        trades=trades, bot_overview_data={}, bot_configs=cfg,
+        period="1W", bot_scope="ALL", mode="live", now=FIXED_NOW,
+    )
+    assert res.executive_kpis.fill_confirmation_rate_pct is None
+    assert res.bots[0].fill_confirmation_rate_pct is None
 
 
 def test_first_present_and_format_and_compare():
@@ -308,6 +333,29 @@ def test_small_sample_is_not_graded(sample_trades, sample_bot_configs):
             assert b.rating_grade == "N/A"
             assert b.rating_score is None
             assert b.status_badge == "LOW_SAMPLE"
+
+
+def test_all_winning_trades_do_not_fabricate_pf_or_payoff():
+    """Issue #146 F1: undefined ratios must stay None, not sentinel constants."""
+    trades = [
+        {
+            "timestamp": (FIXED_NOW - timedelta(days=i)).isoformat(),
+            "symbol": "NVDA",
+            "profitLoss": 100.0,
+            "trading_mode": "live",
+        }
+        for i in range(6)
+    ]
+    cfg = [{"name": "nvda_sma", "symbol": "NVDA", "allocated_capital": 10000.0}]
+    res = calculate_engine_performance(
+        trades=trades, bot_overview_data={}, bot_configs=cfg,
+        period="1W", bot_scope="ALL", mode="live", now=FIXED_NOW,
+    )
+    bot = res.bots[0]
+    assert bot.profit_factor is None
+    assert bot.payoff_ratio is None
+    assert res.executive_kpis.profit_factor is None
+    assert res.executive_kpis.payoff_ratio is None
 
 
 def test_adequate_sample_is_graded():
@@ -455,6 +503,133 @@ def test_scoped_bot_aggregation_and_summary():
     )
     assert "NVDA" in res.scorecard.summary_assessment
     assert res.scorecard.overall_score is not None
+
+
+def test_performance_js_escapes_untrusted_strings():
+    """Issue #146 F13: run the Node XSS regression for the JS renderers."""
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not available")
+    script = Path(__file__).parent / "js" / "test_performance_xss.js"
+    result = subprocess.run([node, str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_guide_reference_anchors_resolve_to_headings():
+    """Issue #146 F10: no diagnostic may link to a non-existent guide section."""
+    import re
+    import subprocess
+    from pathlib import Path
+
+    source = Path(__file__).resolve().parents[1] / "services/performance_engine.py"
+    guide_rel = Path(
+        "tradingbot-documentation/guides/"
+        "TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE.md"
+    )
+
+    # The docs repo is a sibling of this checkout in the local workspace, but
+    # is not present in a linked worktree or in CI. Resolve both layouts and
+    # skip cleanly when the guide is unavailable.
+    roots = [Path(__file__).resolve().parents[2]]
+    try:
+        common = subprocess.check_output(
+            ["git", "rev-parse", "--git-common-dir"], cwd=source.parent.parent,
+            text=True, stderr=subprocess.DEVNULL,
+        ).strip()
+        common_path = Path(common)
+        if not common_path.is_absolute():
+            common_path = (source.parent.parent / common_path).resolve()
+        roots.append(common_path.parent.parent)
+    except (subprocess.CalledProcessError, OSError):
+        pass
+
+    guide = next(
+        (base / guide_rel for root in roots for base in (root, *root.parents)
+         if (base / guide_rel).exists()),
+        None,
+    )
+    if guide is None:
+        pytest.skip("tradingbot-documentation guide not checked out alongside dashboard")
+
+    def slug(text):
+        # GitHub-style: lowercase, drop punctuation (keep spaces/hyphens),
+        # then replace each remaining space with a hyphen.
+        cleaned = re.sub(r"[^\w\s-]", "", text.strip().lower())
+        return cleaned.replace(" ", "-")
+
+    headings = {slug(line.lstrip("#").strip())
+                for line in guide.read_text().splitlines() if line.startswith("#")}
+    refs = re.findall(
+        r"TRADING_ENGINE_EVALUATION_AND_BENCHMARKING_GUIDE\.md#([\w-]+)",
+        source.read_text(),
+    )
+    assert refs, "expected at least one anchored guide reference"
+    broken = sorted(set(refs) - headings)
+    assert not broken, f"Broken guide anchors: {broken}"
+
+
+def test_measured_warning_surfaces_as_ungraded_when_sample_thin():
+    """Issue #146 F8: warnings must appear (tagged) even below grading size."""
+    trades = _make_adequate_trades(n=6, days=6, unconfirmed_every=2)
+    cfg = [{"name": "nvda_sma", "symbol": "NVDA", "allocated_capital": 60000.0}]
+    pe.clear_performance_cache()
+    res = calculate_engine_performance(
+        trades=trades, bot_overview_data={}, bot_configs=cfg,
+        period="1M", bot_scope="ALL", mode="live", now=FIXED_NOW,
+    )
+    ids = {d.id for d in res.diagnostics}
+    assert "diag-insufficient-sample" in ids
+    assert "diag-unconfirmed-fills" in ids
+    fill_diag = next(d for d in res.diagnostics if d.id == "diag-unconfirmed-fills")
+    assert fill_diag.title.startswith("[UNGRADED]")
+    assert "Provisional" in fill_diag.detail
+
+
+def test_reconstructed_equity_data_quality_diagnostic():
+    """Issue #146 I1: operators must know risk ratios are approximations."""
+    trades = _make_adequate_trades(n=25, days=22)
+    cfg = [{"name": "nvda_sma", "symbol": "NVDA", "allocated_capital": 60000.0}]
+    pe.clear_performance_cache()
+    res = calculate_engine_performance(
+        trades=trades, bot_overview_data={}, bot_configs=cfg,
+        period="1M", bot_scope="ALL", mode="live", now=FIXED_NOW,
+    )
+    diag = next(d for d in res.diagnostics if d.id == "diag-reconstructed-equity")
+    assert diag.category == "DATA_QUALITY"
+    assert "approximations" in diag.detail
+    assert "not a per-tick equity snapshot" in diag.detail
+    assert "backtest proposal files" in diag.recommended_action
+
+    # When the trade-history cap truncates the window, the diagnostic says so.
+    pe.clear_performance_cache()
+    res2 = calculate_engine_performance(
+        trades=trades, bot_overview_data={}, bot_configs=cfg,
+        period="1M", bot_scope="ALL", mode="live", now=FIXED_NOW,
+        history_limit=10,
+    )
+    diag2 = next(d for d in res2.diagnostics if d.id == "diag-reconstructed-equity")
+    assert "most recent 10 trades" in diag2.detail
+    assert res2.history_truncated is True
+
+
+def test_scoped_hero_grade_matches_bot_table_threshold():
+    """Issue #146 F7: a 6-trade bot is graded in the table and in the hero."""
+    trades = _make_adequate_trades(symbol="NVDA", n=6, days=6)
+    cfg = [{"name": "nvda_sma", "symbol": "NVDA", "strategy": "sma_crossover",
+            "allocated_capital": 60000.0}]
+    pe.clear_performance_cache()
+    res = calculate_engine_performance(
+        trades=trades, bot_overview_data={}, bot_configs=cfg,
+        period="1M", bot_scope="NVDA", mode="live", now=FIXED_NOW,
+    )
+    bot = res.bots[0]
+    assert bot.rating_grade != "N/A"  # table uses the 5-trade threshold
+    assert res.scorecard.overall_grade == bot.rating_grade  # hero agrees
+    assert "provisional" in res.scorecard.summary_assessment.lower()
 
 
 def test_scoped_bot_isolated_from_other_symbols():
@@ -605,6 +780,39 @@ def test_capital_underperformance_warning_and_idle_bots():
     assert "diag-idle-bots" in ids
 
 
+def test_idle_bot_diagnostic_only_targets_active_bots():
+    """Issue #146 F9: paused/removed bots must not get filter-tuning advice."""
+    trades = _make_adequate_trades(symbol="NVDA", n=12, days=12)
+    cfg = [
+        {"name": "nvda_sma", "symbol": "NVDA", "allocated_capital": 60000.0, "enabled": True},
+        {"name": "paused_sma", "symbol": "IWM", "allocated_capital": 20000.0, "enabled": False},
+        # XYZ traded historically but is no longer configured -> REMOVED.
+    ]
+    pe.clear_performance_cache()
+    res = calculate_engine_performance(
+        trades=trades + [{"timestamp": (FIXED_NOW - timedelta(days=5)).isoformat(),
+                          "symbol": "XYZ", "profitLoss": 10.0, "trading_mode": "live"}],
+        bot_overview_data={}, bot_configs=cfg,
+        period="1M", bot_scope="ALL", mode="live", now=FIXED_NOW,
+    )
+    ids = {d.id for d in res.diagnostics}
+    assert "diag-idle-bots" not in ids  # only IWM (PAUSED) and XYZ (REMOVED) are idle
+
+    # Adding an active idle bot does surface the diagnostic.
+    cfg.append({"name": "active_idle", "symbol": "QQQ", "allocated_capital": 20000.0, "enabled": True})
+    pe.clear_performance_cache()
+    res2 = calculate_engine_performance(
+        trades=trades + [{"timestamp": (FIXED_NOW - timedelta(days=5)).isoformat(),
+                          "symbol": "XYZ", "profitLoss": 10.0, "trading_mode": "live"}],
+        bot_overview_data={}, bot_configs=cfg,
+        period="1M", bot_scope="ALL", mode="live", now=FIXED_NOW,
+    )
+    diag = next(d for d in res2.diagnostics if d.id == "diag-idle-bots")
+    assert "QQQ" in diag.detail
+    assert "IWM" not in diag.detail
+    assert "XYZ" not in diag.detail
+
+
 def test_capital_preservation_success_diagnostic():
     # Engine nearly flat while benchmark sells off hard -> big DD reduction
     trades = []
@@ -633,6 +841,32 @@ def test_cache_returns_deep_copy_and_marks_cached():
     assert first.cached is False
 
 
+def test_cache_key_fingerprints_payload_contents():
+    """Issue #146 F12: same-length but different data must not share a cache entry."""
+    trades = _make_adequate_trades(n=12, days=12)
+    cfg = [{"name": "nvda_sma", "symbol": "NVDA", "allocated_capital": 60000.0}]
+    pe.clear_performance_cache()
+    first = calculate_engine_performance(
+        trades=trades, bot_overview_data={}, bot_configs=cfg, period="1M",
+        mode="live", benchmark_symbol="SPY",
+        benchmark_price_series=[100.0, 101.0, 99.0, 102.0], now=FIXED_NOW,
+    )
+    second = calculate_engine_performance(
+        trades=trades, bot_overview_data={}, bot_configs=cfg, period="1M",
+        mode="live", benchmark_symbol="SPY",
+        benchmark_price_series=[100.0, 300.0, 50.0, 90.0], now=FIXED_NOW,
+    )
+    assert second.cached is False
+    assert first.executive_kpis.benchmark_mdd_pct != second.executive_kpis.benchmark_mdd_pct
+    # An identical repeat still hits the cache.
+    third = calculate_engine_performance(
+        trades=trades, bot_overview_data={}, bot_configs=cfg, period="1M",
+        mode="live", benchmark_symbol="SPY",
+        benchmark_price_series=[100.0, 101.0, 99.0, 102.0], now=FIXED_NOW,
+    )
+    assert third.cached is True
+
+
 def test_ratio_suppression_below_min_observations():
     # 12 trades but spread over only 12 days -> daily obs < MIN_OBSERVATIONS_FOR_RATIOS
     trades = _make_adequate_trades(n=12, days=12)
@@ -641,6 +875,121 @@ def test_ratio_suppression_below_min_observations():
                                        period="1M", bot_scope="ALL", mode="live", now=FIXED_NOW)
     assert res.executive_kpis.annualized_sharpe is None
     assert res.executive_kpis.sortino_ratio is None
+    # Issue #146 F3: bot/portfolio Calmar must obey the same observation guard.
+    assert res.executive_kpis.calmar_ratio is None
+    assert res.bots[0].calmar_ratio is None
+
+
+def test_calmar_computed_when_observations_and_drawdown_exist():
+    """Issue #146 F3: Calmar must be reported once the guard is satisfied."""
+    now = datetime(2026, 10, 31, 18, 0, tzinfo=timezone.utc)
+    trades = _make_adequate_trades(n=40, days=30, base=now)
+    cfg = [{"name": "nvda_sma", "symbol": "NVDA", "client_id": 4,
+            "allocated_capital": 60000.0}]
+    pe.clear_performance_cache()
+    res = calculate_engine_performance(
+        trades=trades, bot_overview_data={}, bot_configs=cfg, period="1M",
+        bot_scope="ALL", mode="live", now=now,
+    )
+    # Positive annualized return plus a real drawdown -> Calmar is measured.
+    assert res.bots[0].calmar_ratio is not None
+    assert res.bots[0].calmar_ratio > 0
+    assert res.executive_kpis.calmar_ratio == res.bots[0].calmar_ratio
+
+
+def test_continuous_daily_returns_fill_zero_sessions():
+    """Issue #146 F4: quiet days must be sessions, not skipped days."""
+    # Five weekday sessions in a short window, each +$100 on $10,000.
+    daily_pnl = {
+        "2026-10-07": 100.0, "2026-10-08": 100.0, "2026-10-09": 100.0,
+        "2026-10-12": 100.0, "2026-10-13": 100.0,
+    }
+    start = datetime(2026, 10, 7, tzinfo=timezone.utc)
+    end = datetime(2026, 10, 13, 18, 0, tzinfo=timezone.utc)
+    returns, active = build_continuous_daily_returns(daily_pnl, 10000.0, start, end)
+    # 7th..13th = 5 weekdays (10/10, 10/11 are weekend) -> all five are active.
+    assert len(returns) == 5
+    assert active == 5
+    assert all(r == 0.01 for r in returns)
+
+    # Weekend-dated P&L rolls onto the next weekday instead of being dropped.
+    weekend = {"2026-10-10": 100.0, "2026-10-11": 50.0}
+    returns2, active2 = build_continuous_daily_returns(weekend, 10000.0, start, end)
+    assert active2 == 1
+    # Mon 10/12 is the second-to-last session (Tue 10/13 is last).
+    assert returns2[-2] == 0.015  # 150/10000
+
+
+def test_continuous_daily_returns_defensive_branches():
+    """Issue #146 F4: invalid/out-of-range/weekend-tail P&L must be handled."""
+    # Inverted window yields no sessions.
+    end = datetime(2026, 10, 5, tzinfo=timezone.utc)
+    start = datetime(2026, 10, 9, tzinfo=timezone.utc)
+    assert build_continuous_daily_returns({}, 10000.0, start, end) == ([], 0)
+
+    # Malformed and out-of-window date keys are ignored; a weekend P&L that
+    # rolls past the window is clamped back onto the last weekday session.
+    start = datetime(2026, 10, 5, tzinfo=timezone.utc)
+    end = datetime(2026, 10, 10, tzinfo=timezone.utc)  # Saturday
+    daily_pnl = {
+        "not-a-date": 500.0,
+        "2026-09-01": 500.0,
+        "2026-10-10": 250.0,  # Saturday -> rolls to Mon 10/12 > end -> Friday 10/09
+    }
+    returns, active = build_continuous_daily_returns(daily_pnl, 10000.0, start, end)
+    assert active == 1
+    # 10/05..10/10 has five weekday sessions; the clamped P&L lands on the last.
+    assert len(returns) == 5
+    assert returns[-1] == 0.025
+    assert all(r == 0.0 for r in returns[:-1])
+
+
+def test_sparse_window_annualization_is_diluted():
+    """Issue #146 F4: annualizing only trade days inflates returns."""
+    start = datetime(2026, 9, 20, tzinfo=timezone.utc)
+    end = datetime(2026, 10, 13, 18, 0, tzinfo=timezone.utc)
+    daily_pnl = {f"2026-10-{d:02d}": 100.0 for d in range(5, 10)}
+    returns, active = build_continuous_daily_returns(daily_pnl, 10000.0, start, end)
+    assert active == 5
+    # Full window has ~17 weekdays; sparse-only series would use n=5.
+    sparse_annual = compute_annualized_return_pct([0.01] * 5)
+    full_annual = compute_annualized_return_pct(returns)
+    assert len(returns) > 5
+    assert full_annual is not None and sparse_annual is not None
+    assert full_annual < sparse_annual
+
+
+def test_unrealized_pnl_marks_final_session():
+    """Issue #146 F4: open P&L must be reflected in drawdown, not dropped."""
+    cfg = [{"name": "nvda_sma", "symbol": "NVDA", "allocated_capital": 10000.0}]
+    res = calculate_engine_performance(
+        trades=[], bot_overview_data={"NVDA": {"unrealizedPnl": -2000.0}},
+        bot_configs=cfg, period="1W", bot_scope="ALL", mode="live", now=FIXED_NOW,
+    )
+    bot = res.bots[0]
+    assert bot.unrealized_pnl == -2000.0
+    assert bot.max_drawdown_pct is not None and bot.max_drawdown_pct < 0
+    # No closed trades -> no real observations, so ratios/grade stay suppressed.
+    assert bot.calmar_ratio is None
+    assert bot.rating_grade == "N/A"
+
+
+def test_bot_calmar_guard_with_sparse_trades():
+    """Issue #146 F3: 5 trades over 2 days must not produce a bot Calmar."""
+    trades = [
+        {"timestamp": (FIXED_NOW - timedelta(days=1)).isoformat(), "symbol": "NVDA",
+         "profitLoss": p, "trading_mode": "live", "exitPriceSource": "ibkr_execution"}
+        for p in (-500.0, 600.0, -100.0, 100.0, 100.0)
+    ]
+    cfg = [{"name": "nvda_sma", "symbol": "NVDA", "allocated_capital": 10000.0}]
+    res = calculate_engine_performance(
+        trades=trades, bot_overview_data={}, bot_configs=cfg,
+        period="1W", bot_scope="ALL", mode="live", now=FIXED_NOW,
+    )
+    bot = res.bots[0]
+    assert bot.sharpe_ratio is None
+    assert bot.calmar_ratio is None
+    assert res.executive_kpis.calmar_ratio is None
 
 
 # ---------------------------------------------------------------------------
@@ -1047,6 +1396,10 @@ def test_calculate_engine_performance_with_populated_execution_metrics():
     assert res.machinery.is_available is True
     assert res.machinery.data_basis == "measured"
     assert res.machinery.cascade_p99_us == 250.0
+    # Issue #146 F11: the field is p90 (the only percentile logged), not a
+    # mislabelled p95.
+    assert res.machinery.cascade_p90_us == 110.0
+    assert not hasattr(res.machinery, "cascade_p95_us")
     assert res.machinery.queue_wait_p99_ms == 25.0
     assert res.machinery.markout_30s_bps == 3.1
     assert res.machinery.reconciliation_events == 0
@@ -1061,6 +1414,33 @@ def test_calculate_engine_performance_with_populated_execution_metrics():
     assert mach_dict["Order-State Reconciliation Lag"].status == "BEATING"
     assert mach_dict["Technical Concurrency / Non-Blocking"].status == "BEATING"
     assert mach_dict["Broker Calls on Hot Path"].status == "BEATING"
+
+
+def test_markout_status_unmeasured_without_30s():
+    """Issue #146 F6: +1s/+5s alone must not produce an OPTIMAL +30s verdict."""
+    metrics = {"intervals": [{
+        "ts": "2026-10-20T14:00:00Z",
+        "snapshot": {
+            "symbol": "NVDA",
+            "counters": {"cascade_evaluations": 10},
+            "latency": {
+                "markout_1s_bps": {"count": 10, "mean": -1.0, "p90": 0.0, "p99": 0.0},
+                "markout_5s_bps": {"count": 10, "mean": -2.0, "p90": 0.0, "p99": 0.0},
+                # markout_30s_bps deliberately absent
+            },
+        },
+    }]}
+    pe.clear_performance_cache()
+    res = calculate_engine_performance(
+        trades=[], bot_overview_data={}, bot_configs=[],
+        period="1M", bot_scope="ALL", mode="all", now=FIXED_NOW,
+        execution_metrics_data=metrics,
+    )
+    row = next(m for m in res.machinery.metrics
+               if m.name == "Adverse Selection / Markout (+30s)")
+    assert row.engine_value is None
+    assert row.status == "UNMEASURED"
+    assert "+30s: N/A" in row.engine_formatted
 
 
 def test_calculate_engine_performance_symbol_scope_filters_execution_metrics():
@@ -1286,7 +1666,7 @@ def test_calculate_engine_performance_execution_metrics_edge_cases():
 def test_cascade_phase_breakdown_names_the_f5_tail():
     """#372 / F5: cascade_phase_*_ns series surface as per-phase machinery rows.
 
-    A phase whose p99 blows the 500 ms budget is flagged LAGGING (it owns the
+    A phase whose p99 blows the 500 µs budget is flagged LAGGING (it owns the
     tail); cheap phases are BEATING. Scopes without phased data (pre-#394) add
     no phase rows at all.
     """
@@ -1303,7 +1683,7 @@ def test_cascade_phase_breakdown_names_the_f5_tail():
             "latency": {
                 "cascade_ns": _series(100, 36_000_000, 3_000_000_000),
                 "cascade_phase_marks_ns": _series(100, 30_000_000, 2_900_000_000),
-                "cascade_phase_adaptive_ns": _series(100, 4_000_000, 80_000_000),
+                "cascade_phase_adaptive_ns": _series(100, 60_000, 80_000),  # 80 µs -> within budget
                 "cascade_phase_guard_ns": _series(100, 50_000, 200_000),
             },
         },
@@ -1333,6 +1713,40 @@ def test_cascade_phase_breakdown_names_the_f5_tail():
     assert phase_rows["Cascade Phase · Adaptive P&L Agent"].status == "BEATING"
     assert phase_rows["Cascade Phase · Position Guard"].status == "BEATING"
     assert all(m.data_basis == "measured" for m in phase_rows.values())
+
+
+def test_cascade_phase_budget_is_microseconds_not_milliseconds():
+    """Issue #146 F5: 600 µs phase p99 must be LAGGING under a 500 µs budget."""
+    def _phase(p99_ns):
+        return [{
+            "type": "interval",
+            "ts": "2026-10-13T14:35:00Z",
+            "snapshot": {
+                "symbol": "NVDA",
+                "counters": {"cascade_evaluations": 10},
+                "latency": {"cascade_phase_marks_ns": {
+                    "count": 10, "mean": p99_ns, "p90": p99_ns, "p99": p99_ns,
+                }},
+            },
+        }]
+
+    def _row(p99_ns):
+        pe.clear_performance_cache()
+        res = calculate_engine_performance(
+            trades=[], bot_overview_data={},
+            bot_configs=[{"symbol": "NVDA", "name": "nvda_bot"}],
+            period="1M", bot_scope="NVDA", mode="all", now=FIXED_NOW,
+            execution_metrics_data=_phase(p99_ns),
+        )
+        return next(m for m in res.machinery.metrics
+                    if m.name == "Cascade Phase · Option Mark Refresh")
+
+    over = _row(600_000)  # 600 µs
+    under = _row(400_000)  # 400 µs
+    assert over.status == "LAGGING"
+    assert under.status == "BEATING"
+    assert over.benchmark_formatted == "< 500 µs p99"
+    assert over.benchmark_value == 500.0
 
     # A scope with no phased latency series adds zero phase rows.
     # Clear the module cache first: the call above cached a NVDA/1M response.

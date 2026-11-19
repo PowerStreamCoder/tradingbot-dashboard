@@ -16,6 +16,19 @@ let lastPerformanceData = null;
 
 const NOT_AVAILABLE = '--';
 
+// Escape untrusted backend strings before inserting them into innerHTML. A bot
+// symbol, diagnostic message or guide reference containing markup must render
+// literally, never as injected HTML (Issue #146 F13).
+function escapeHtml(value) {
+    if (value == null) return '';
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 // Auto-refresh control. Performance analytics are not real-time, so polling is
 // deliberately slow and fully pausable to keep backend/Firestore usage minimal.
 const AUTO_REFRESH_STORAGE_KEY = 'perfAutoRefreshMs';
@@ -878,13 +891,13 @@ function renderBenchmarkTable(tableId, list) {
         return `
         <tr>
             <td>
-                <div style="font-weight: 600; color: #f8fafc;">${m.name}</div>
-                <div style="font-size: 0.75rem; color: #94a3b8; margin-top: 0.2rem;">${m.description}</div>
+                <div style="font-weight: 600; color: #f8fafc;">${escapeHtml(m.name)}</div>
+                <div style="font-size: 0.75rem; color: #94a3b8; margin-top: 0.2rem;">${escapeHtml(m.description)}</div>
             </td>
-            <td class="font-mono" style="font-weight: 700; color: ${valueColor};">${m.engine_formatted || NOT_AVAILABLE}</td>
-            <td class="font-mono" style="color: #94a3b8;">${m.benchmark_formatted || NOT_AVAILABLE}</td>
+            <td class="font-mono" style="font-weight: 700; color: ${valueColor};">${m.engine_formatted ? escapeHtml(m.engine_formatted) : NOT_AVAILABLE}</td>
+            <td class="font-mono" style="color: #94a3b8;">${m.benchmark_formatted ? escapeHtml(m.benchmark_formatted) : NOT_AVAILABLE}</td>
             <td>
-                <span class="status-pill status-${status}">${m.status}</span>
+                <span class="status-pill status-${escapeHtml(status)}">${escapeHtml(m.status)}</span>
             </td>
         </tr>
     `;
@@ -904,15 +917,15 @@ function renderBots(bots) {
             <tr>
                 <td>
                     <div class="symbol-badge">
-                        <span>${b.symbol}</span>
-                        <span style="font-size: 0.72rem; color: #94a3b8; font-weight: normal;">(${b.strategy})</span>
-                        ${b.status && b.status !== 'ACTIVE' ? `<span class="bot-badge-tag badge-na" style="margin-left:0.35rem;">${b.status}</span>` : ''}
+                        <span>${escapeHtml(b.symbol)}</span>
+                        <span style="font-size: 0.72rem; color: #94a3b8; font-weight: normal;">(${escapeHtml(b.strategy)})</span>
+                        ${b.status && b.status !== 'ACTIVE' ? `<span class="bot-badge-tag badge-na" style="margin-left:0.35rem;">${escapeHtml(b.status)}</span>` : ''}
                     </div>
                 </td>
                 <td>
-                    <span class="bot-badge-tag badge-${(b.status_badge || 'low_sample').toLowerCase()}">${b.status_badge}</span>
+                    <span class="bot-badge-tag badge-${escapeHtml((b.status_badge || 'low_sample').toLowerCase())}">${escapeHtml(b.status_badge)}</span>
                 </td>
-                <td class="font-mono" style="font-weight: 700;">${b.rating_grade}${b.rating_score != null ? ` <span style="font-size: 0.75rem; color: #94a3b8;">(${b.rating_score})</span>` : ''}</td>
+                <td class="font-mono" style="font-weight: 700;">${escapeHtml(b.rating_grade)}${b.rating_score != null ? ` <span style="font-size: 0.75rem; color: #94a3b8;">(${escapeHtml(b.rating_score)})</span>` : ''}</td>
                 <td class="font-mono">${b.trades_count}</td>
                 <td class="font-mono">${b.win_rate_pct.toFixed(1)}%</td>
                 <td class="font-mono" style="color: ${b.net_pnl >= 0 ? '#34d399' : '#f87171'}; font-weight: 600;">
@@ -923,7 +936,7 @@ function renderBots(bots) {
                 <td class="font-mono" style="color: #fbbf24;">${b.max_drawdown_pct != null ? b.max_drawdown_pct.toFixed(2) + '%' : NOT_AVAILABLE}</td>
                 <td class="font-mono">${b.avg_slippage_per_share != null ? '$' + b.avg_slippage_per_share.toFixed(3) + '/sh' : NOT_AVAILABLE}</td>
                 <td style="font-size: 0.8rem; color: #cbd5e1; max-width: 280px; white-space: normal;">
-                    ${b.diagnostic_finding}
+                    ${escapeHtml(b.diagnostic_finding)}
                 </td>
             </tr>
         `).join('');
@@ -945,7 +958,7 @@ function renderBots(bots) {
             pill.className = `bot-scope-pill ${currentBotScope === scope ? 'active' : ''}`;
             pill.dataset.scope = scope;
             pill.onclick = () => setBotScope(scope);
-            pill.innerHTML = `<span class="scope-dot" style="background:${color};"></span> ${label}`;
+            pill.innerHTML = `<span class="scope-dot" style="background:${escapeHtml(color)};"></span> ${escapeHtml(label)}`;
             pillsContainer.appendChild(pill);
         };
         addPill('ALL', 'All Bots Combined', '#818cf8');
@@ -961,18 +974,18 @@ function renderDiagnostics(diagnostics) {
     if (!grid || !diagnostics) return;
 
     grid.innerHTML = diagnostics.map(d => `
-        <div class="diag-card diag-${(d.level || 'info').toLowerCase()}">
+        <div class="diag-card diag-${escapeHtml((d.level || 'info').toLowerCase())}">
             <div class="diag-header">
-                <span class="diag-category">${d.category}</span>
-                <span style="font-size: 0.72rem; font-weight: 700; color: #94a3b8;">${d.level}</span>
+                <span class="diag-category">${escapeHtml(d.category)}</span>
+                <span style="font-size: 0.72rem; font-weight: 700; color: #94a3b8;">${escapeHtml(d.level)}</span>
             </div>
-            <div class="diag-title">${d.title}</div>
-            <div class="diag-detail">${d.detail}</div>
+            <div class="diag-title">${escapeHtml(d.title)}</div>
+            <div class="diag-detail">${escapeHtml(d.detail)}</div>
             <div class="diag-action">
                 <span>💡</span>
-                <span><strong>Action:</strong> ${d.recommended_action}</span>
+                <span><strong>Action:</strong> ${escapeHtml(d.recommended_action)}</span>
             </div>
-            <a href="https://github.com/PowerStreamCoder/tradingbot-documentation/blob/main/${d.guide_reference}" target="_blank" class="diag-ref">
+            <a href="https://github.com/PowerStreamCoder/tradingbot-documentation/blob/main/${encodeURI(d.guide_reference || '')}" target="_blank" class="diag-ref">
                 📖 View in Tuning &amp; Evaluation Guide &rarr;
             </a>
         </div>
@@ -987,8 +1000,9 @@ function renderBenchmarkChart(scorecard) {
         performanceChart.destroy();
     }
 
-    // Only the four measurable pillars; unavailable pillars are plotted as 0
-    // and are not silently replaced with assumed values.
+    // Only the four measurable pillars. An unavailable pillar is passed as
+    // null so Chart.js leaves a gap; plotting it as 0 makes "unmeasured" look
+    // like a failing score (Issue #146 F14).
     const labels = [
         'Execution Quality',
         'Risk-Adjusted Alpha',
@@ -997,10 +1011,10 @@ function renderBenchmarkChart(scorecard) {
     ];
 
     const engineData = [
-        scorecard.execution_score != null ? scorecard.execution_score : 0,
-        scorecard.risk_adjusted_score != null ? scorecard.risk_adjusted_score : 0,
-        scorecard.expectancy_score != null ? scorecard.expectancy_score : 0,
-        scorecard.capital_preservation_score != null ? scorecard.capital_preservation_score : 0
+        scorecard.execution_score != null ? scorecard.execution_score : null,
+        scorecard.risk_adjusted_score != null ? scorecard.risk_adjusted_score : null,
+        scorecard.expectancy_score != null ? scorecard.expectancy_score : null,
+        scorecard.capital_preservation_score != null ? scorecard.capital_preservation_score : null
     ];
 
     // Static published institutional reference baseline (clearly labelled).
