@@ -1378,7 +1378,7 @@ function renderBotParameters(params) {
                         : `<span class="param-pill tag" style="opacity:.5">Disabled (INCOME)</span>`;
                 })() },
                 // --- Entry & Strike Settings ---
-                { key: 'Eligible Regimes', val: fmtParamTags(params.covered_calls?.call_enabled_regimes || ['BULL', 'NEUTRAL']) },
+                { key: 'Call Eligibility', val: '<span class="param-pill tag">Runtime (indicators)</span>' },
                 { key: 'Target Expiration', val: `<span class="param-val number highlight-blue">${params.covered_calls?.call_expiration_days ?? 14} days</span>` },
                 { key: 'Min Option Premium', val: `<span class="param-val number highlight-green">${fmtParamPercent(params.covered_calls?.call_min_premium_pct ?? 0.006)}</span>` },
                 { key: 'Call Confirm Bars', val: `<span class="param-val number">${params.covered_calls?.call_confirmation_bars ?? 1} bar(s)</span>` },
@@ -1401,7 +1401,7 @@ function renderBotParameters(params) {
                 { key: 'ADX Exit Threshold', val: `<span class="param-val number highlight-purple">${params.regime?.adx_exit_threshold ?? 18.0}</span>` },
                 { key: 'Min DI Spread (+/-)', val: `<span class="param-val number">${params.regime?.di_spread_min ?? 3.0} pts</span>` },
                 { key: 'SMA 200 Macro Anchor', val: fmtParamPill(params.regime?.adx_regime_sma200_anchor, 'ACTIVE (Bull/Bear)', 'DISABLED') },
-                { key: 'Neutral Regime Entries', val: fmtParamPill(params.neutral_regime?.use_neutral_regime_entries) },
+                { key: 'Neutral Entry Gate', val: '<span class="param-pill tag">Runtime (indicators)</span>' },
                 { key: 'Neutral Entry Mode', val: `<span class="param-pill tag">${params.neutral_regime?.neutral_entry_mode ?? 'aggressive'}</span>` }
             ]
         },
