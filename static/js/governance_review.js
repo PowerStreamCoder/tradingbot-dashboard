@@ -894,7 +894,7 @@ const ACTION_METADATA = {
         shortLabel: 'Gap-Fade Shield',
         icon: '🛡️',
         desc: 'Loss-cutter: flattens a trade fading an opening gap / ORB breakout',
-        thresholdType: 'r_multiple',
+        thresholdType: 'arm',
         badgeClass: 'badge-shield'
     },
     'trailing_stop': {
@@ -950,6 +950,9 @@ function formatAdaptiveThreshold(val, actionType) {
     }
     if (meta.thresholdType === 'gate') {
         return `${num.toFixed(1)}x Gate`;
+    }
+    if (meta.thresholdType === 'arm') {
+        return `${num.toFixed(2)} Arm`;
     }
     if (num > 0 && num < 1) {
         return `${(num * 100).toFixed(1)}%`;

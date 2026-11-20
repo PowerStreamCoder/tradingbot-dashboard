@@ -194,6 +194,8 @@ class TestDashboardAPI(unittest.TestCase):
         self.assertEqual(nvda_params.get("symbol"), "NVDA")
         self.assertIn("capital", nvda_params)
         self.assertEqual(nvda_params["capital"]["capital_per_bucket_long"], 25000.0)
+        # Verify runtime adaptive overlay merged from nvda.adaptive.json
+        self.assertTrue(nvda_params.get("exit_logic", {}).get("use_sma_slope_exit"))
 
         # Test non-existent symbol returns None
         bad_params = load_bot_parameters("NONEXISTENT")
