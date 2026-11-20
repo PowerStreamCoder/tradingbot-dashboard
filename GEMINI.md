@@ -141,7 +141,7 @@ duties — not guaranteed returns. Current status: not achieved.
 - Changelog: `../tradingbot-documentation/CHANGELOG.md`
 
 ## Code Knowledge Graph
-_Auto-updated 2026-11-19. Full graph: `tradingbot-tools/knowledge-graph/output/`_
+_Auto-updated 2026-11-20. Full graph: `tradingbot-tools/knowledge-graph/output/`_
 
 ### Key Classes
 | Class | File | Role |
