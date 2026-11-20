@@ -1,0 +1,6 @@
+{
+  "exit_logic": {
+    "use_sma_slope_exit": true,
+    "use_atr_targets": true
+  }
+}
