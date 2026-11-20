@@ -19,10 +19,6 @@
   },
   "covered_calls": {
     "use_covered_calls": true,
-    "call_enabled_regimes": [
-      "BULL",
-      "NEUTRAL"
-    ],
     "call_expiration_days": 7,
     "call_min_premium_pct": 0.004,
     "call_confirmation_bars": 0,
@@ -72,7 +68,6 @@
     "allow_short_entries": false
   },
   "neutral_regime": {
-    "use_neutral_regime_entries": true,
     "neutral_entry_mode": "moderate"
   },
   "threshold_coordination": {
