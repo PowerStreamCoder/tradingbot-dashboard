@@ -31,7 +31,7 @@ import logging
 import math
 from datetime import datetime, timezone, timedelta
 from threading import Lock
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union, Tuple
 
 from pydantic import BaseModel, Field
 
