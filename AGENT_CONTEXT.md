@@ -140,14 +140,14 @@ duties — not guaranteed returns. Current status: not achieved.
 - Changelog: `../tradingbot-documentation/CHANGELOG.md`
 
 ## Code Knowledge Graph
-_Auto-updated 2026-11-20. Full graph: `tradingbot-tools/knowledge-graph/output/`_
+_Auto-updated 2026-11-21. Full graph: `tradingbot-tools/knowledge-graph/output/`_
 
 ### Key Classes
 | Class | File | Role |
 |---|---|---|
 | `ActionRecord` | `adaptive_feedback_engine.py` | In-memory mirror of a single Firestore adaptive_action_log d |
 | `AdaptiveCoveredCallAgent` | `adaptive_covered_call_agent.py` | Adaptive Covered Call Agent. |
-| `AdaptiveCoveredCallConfig` | `config.py` | Configuration for Adaptive Covered Call Agent. |
+| `AdaptiveCoveredCallConfig` | `config.py` | Legacy adaptive CC config container. |
 | `AdaptiveEntryAgent` | `adaptive_entry_agent.py` | Adaptive Entry Agent. |
 | `AdaptiveEntryConfig` | `config.py` | Configuration for Adaptive Entry Agent. |
 | `AdaptiveFeedbackEngine` | `adaptive_feedback_engine.py` | Records adaptive agent decisions, links outcomes on position |
@@ -157,9 +157,9 @@ _Auto-updated 2026-11-20. Full graph: `tradingbot-tools/knowledge-graph/output/`
 | `ArbitrationDecision` | `agent_orchestrator.py` | Outcome of exit verdict arbitration (Phase 4). |
 | `AssetArchetype` | `security_profile_provider.py` |  |
 | `AsyncFillMonitor` | `execution_manager.py` | Tracks orders that timed out but may fill asynchronously. |
-| `BadBar` | `tests/test_coverage_98_bots.py` |  |
 | `BadBucket` | `tests/test_coverage_98_bots.py` |  |
 | `Bare` | `tests/test_option_notifications.py` |  |
+| `BasePaperTrader` | `base.py` | Base class for IBKR paper trading bots. |
 
 ### Trade Entry Lifecycle
 SMACrossoverTrader detects SMA5/SMA20 crossover on 1-hour bar → EntryFilterChain validates: RegimeFilter, MultiTimeframeFilter, volatility guards → UnifiedEntryHandler.execute_entry() → ExecutionManager.execute() → BasePaperTrader.on_entry_fill()
