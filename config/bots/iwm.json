@@ -19,12 +19,7 @@
   },
   "covered_calls": {
     "use_covered_calls": true,
-    "call_expiration_days": 14,
-    "call_min_premium_pct": 0.006,
-    "call_confirmation_bars": 1,
     "cc_mode": "INCOME",
-    "cc_income_mode_min_hold_hours": 96.0,
-    "cc_option_profit_target_pct": 0.5,
     "_comment_expiration": "14 DTE = 336h term. Retained after measurement: shortening to 4 DTE was tested and is materially WORSE - call median hold collapsed 24.0h -> 1.0h and return fell 37.74% -> 21.90%, because a near-dated call is bought straight back (approaching_strike fires almost immediately and the thin premium fails the call_min_premium_pct gate). A longer tenor is what makes the premium worth collecting at all."
   },
   "exit_logic": {
@@ -71,15 +66,9 @@
     "neutral_entry_mode": "aggressive"
   },
   "threshold_coordination": {
-    "min_move_for_call_atr": 1.0,
-    "take_profit_with_call_atr": 3.0,
     "take_profit_without_call_atr": 6.0,
-    "min_move_for_call_absolute_pct": 0.001,
     "take_profit_absolute_pct": 0.005,
     "max_hold_hours": 144.0,
-    "cc_expected_position_hold_hours": 24.0,
-    "cc_min_tenor_monetization_fraction": 0.25,
-    "cc_horizon_check_enabled": true,
     "_comment_cc_horizon": "max_hold_hours 144h = 42.9% of the 14-DTE (336h) term, above the 25% (84h) monetization floor, so the load-time check judges the CAP and passes: max(144,24)=144h >= 84h. cc_expected_position_hold_hours is 24h - the MEASURED median hold, not the cap - so the declaration describes real behaviour instead of the best case. Both facts are reported deliberately: the cap says how long the position MAY be held, the expected value says how long it actually is."
   },
   "adaptive_pnl": {
@@ -117,14 +106,7 @@
     "atr_expansion_ratio": 1.25
   },
   "adaptive_covered_call": {
-    "enable_adaptive_covered_call": true,
-    "base_min_premium_pct": 0.006,
-    "min_allowed_premium_pct": 0.0025,
-    "max_allowed_premium_pct": 0.012,
-    "base_profit_cushion_atr": 1.0,
-    "neutral_regime_profit_cushion_atr": 0.3,
-    "bull_regime_profit_cushion_atr": 1.0,
-    "adx_trend_breakout_threshold": 25.0
+    "enable_adaptive_covered_call": true
   },
   "security_profile": {
     "asset_archetype": "INDEX_ETF",

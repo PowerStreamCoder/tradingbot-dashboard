@@ -98,24 +98,21 @@ def generate_expert_parameter_advice(
     if effective_mode == "EQUITY":
         use_covered_calls = False
         resolved_cc_mode = "EQUITY"
-        call_expiration_days = 0
         strike_offset_pct = 0.0
         cc_desc = "Equity Mode: Pure directional momentum. Covered calls are completely ignored and disabled."
         advisory_mode_phrase = "pure Equity mode (covered calls disabled)"
     elif effective_mode == "INCOME":
         use_covered_calls = True
         resolved_cc_mode = "INCOME"
-        call_expiration_days = 30
         strike_offset_pct = 4.0  # 4% OTM
-        cc_desc = "Income mode (30-day expiry, ~4% OTM strike) optimizes theta decay and steady premium yield."
+        cc_desc = "Income mode: runtime-derived CC posture optimizes theta decay and assignment-tolerant premium yield."
         advisory_mode_phrase = "INCOME covered call rules"
     else:
         # Default or TOTAL_RETURN
         use_covered_calls = True
         resolved_cc_mode = "TOTAL_RETURN"
-        call_expiration_days = 7
         strike_offset_pct = 9.0  # 9% OTM
-        cc_desc = "Total Return mode (7-day expiry, ~9% OTM strike) preserves equity capital upside while monetizing weekly calls."
+        cc_desc = "Total Return mode: runtime-derived CC posture preserves upside while monetizing calls non-aggressively."
         advisory_mode_phrase = "TOTAL_RETURN covered call rules"
 
     # 5. Risk Tier Assessment
@@ -169,8 +166,6 @@ def generate_expert_parameter_advice(
             "covered_calls": {
                 "use_covered_calls": use_covered_calls,
                 "cc_mode": resolved_cc_mode,
-                "call_expiration_days": call_expiration_days,
-                "call_strike_offset_normal": round(strike_offset_pct / 100.0, 3) if strike_offset_pct else 0.018,
             },
             "trading_behavior": {
                 "allow_short_entries": (track == "GROWTH" and short_bucket_capital > 0),

@@ -269,7 +269,7 @@ def test_generate_expert_parameter_advice_growth_and_income():
     # $5,000 bucket / $25 price = 200 -> capped at 100
     assert params_g["atr_parameters"]["position_min_shares"] == 100
     assert params_g["covered_calls"]["cc_mode"] == "TOTAL_RETURN"
-    assert params_g["covered_calls"]["call_expiration_days"] == 7
+    assert "call_expiration_days" not in params_g["covered_calls"]
     assert len(advice_growth["expert_rationale"]) == 5
     assert any(
         "capital-gated" in r and "SHORT" in r
@@ -291,7 +291,7 @@ def test_generate_expert_parameter_advice_growth_and_income():
     # $5,000 bucket / $500 price = 10 shares
     assert params_i["atr_parameters"]["position_min_shares"] == 10
     assert params_i["covered_calls"]["cc_mode"] == "INCOME"
-    assert params_i["covered_calls"]["call_expiration_days"] == 30
+    assert "call_expiration_days" not in params_i["covered_calls"]
     assert params_i["capital"]["capital_per_bucket_short"] == 0.0
 
 
