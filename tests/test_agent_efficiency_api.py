@@ -228,6 +228,7 @@ def test_get_agent_efficiency_alerts_error(client, mock_service):
 
 def test_send_agent_efficiency_daily_digest_no_webhook(client, mock_service):
     """POST /api/agent-efficiency/daily-digest generates digest without dispatch when no URL provided."""
+    mock_service.generate_daily_rollup.return_value = {"date": "2026-11-21"}
     with patch("services.agent_efficiency_notifier.AgentEfficiencyNotifier.dispatch_webhook") as mock_dispatch:
         response = client.post(
             "/api/agent-efficiency/daily-digest",
@@ -240,7 +241,9 @@ def test_send_agent_efficiency_daily_digest_no_webhook(client, mock_service):
         assert "text" in data["digest"]
         assert "html" in data["digest"]
         assert data["dispatched"] is False
+        assert data["rollup"] == {"date": "2026-11-21"}
         mock_dispatch.assert_not_called()
+        mock_service.generate_daily_rollup.assert_called_once()
 
 
 def test_send_agent_efficiency_daily_digest_with_webhook(client, mock_service):
@@ -255,6 +258,22 @@ def test_send_agent_efficiency_daily_digest_with_webhook(client, mock_service):
         assert data["status"] == "success"
         assert data["dispatched"] is True
         mock_dispatch.assert_called_once()
+
+
+def test_send_agent_efficiency_daily_digest_rollup_failure_graceful(client, mock_service):
+    """POST /api/agent-efficiency/daily-digest gracefully succeeds even if daily rollup persistence fails."""
+    mock_service.generate_daily_rollup.side_effect = RuntimeError("Rollup DB error")
+    with patch("services.agent_efficiency_notifier.AgentEfficiencyNotifier.dispatch_webhook") as mock_dispatch:
+        response = client.post(
+            "/api/agent-efficiency/daily-digest",
+            cookies={"dashboard_session": SESSION_ID}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "success"
+        assert data["rollup"] is None
+        assert data["dispatched"] is False
+        mock_dispatch.assert_not_called()
 
 
 def test_send_agent_efficiency_daily_digest_error(client, mock_service):

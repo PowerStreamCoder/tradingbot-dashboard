@@ -120,9 +120,15 @@ class AgentEfficiencyService:
     and runtime SLA compliance.
     """
 
-    def __init__(self, db: Optional[Any] = None, cache_ttl: float = DEFAULT_CACHE_TTL_SECONDS):
+    def __init__(
+        self,
+        db: Optional[Any] = None,
+        cache_ttl: float = DEFAULT_CACHE_TTL_SECONDS,
+        max_cache_entries: int = 128,
+    ):
         self._db = db
         self.cache_ttl = cache_ttl
+        self.max_cache_entries = max(16, max_cache_entries)
         self._cache: Dict[str, Tuple[datetime, Any]] = {}
         self._lock = Lock()
 
@@ -152,25 +158,66 @@ class AgentEfficiencyService:
 
     def _set_in_cache(self, key: str, val: Any):
         with self._lock:
-            self._cache[key] = (datetime.now(timezone.utc), val)
+            now = datetime.now(timezone.utc)
+            # Evict if at capacity
+            if len(self._cache) >= self.max_cache_entries and key not in self._cache:
+                # 1. Evict expired keys
+                expired = [
+                    k for k, (ts, _) in self._cache.items()
+                    if (now - ts).total_seconds() >= self.cache_ttl
+                ]
+                for k in expired:
+                    del self._cache[k]
+
+                # 2. If still at capacity, evict oldest entry (LRU/FIFO)
+                if len(self._cache) >= self.max_cache_entries:
+                    oldest = min(self._cache.keys(), key=lambda k: self._cache[k][0])
+                    del self._cache[oldest]
+
+            self._cache[key] = (now, val)
 
     # -----------------------------------------------------------------------
     # Data Fetching Helpers
     # -----------------------------------------------------------------------
 
-    def _fetch_collection_docs(self, collection_name: str, limit: int = 500) -> List[Dict[str, Any]]:
+    def _fetch_collection_docs(
+        self,
+        collection_name: str,
+        limit: int = 500,
+        order_by_field: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         try:
             db = self._get_db()
             coll = db.collection(collection_name)
             docs = []
-            try:
-                stream = coll.limit(limit).stream()
-            except Exception:
-                stream = coll.stream()
+            stream = None
+            if order_by_field:
+                try:
+                    from google.cloud import firestore
+                    stream = coll.order_by(order_by_field, direction=firestore.Query.DESCENDING).limit(limit).stream()
+                except Exception as ex:
+                    logger.debug(f"Native order_by on {collection_name}.{order_by_field} failed ({ex}); using fallback stream.")
+                    stream = None
+
+            if stream is None:
+                try:
+                    stream = coll.limit(limit).stream()
+                except Exception:
+                    stream = coll.stream()
+
             for doc in stream:
                 d = doc.to_dict() or {}
                 d.setdefault("doc_id", doc.id)
                 docs.append(d)
+
+            # In-memory sorting fallback if order_by_field was requested
+            if order_by_field and docs:
+                docs.sort(
+                    key=lambda x: str(x.get(order_by_field) or x.get("timestamp") or x.get("created_at") or x.get("ts") or ""),
+                    reverse=True
+                )
+                docs = docs[:limit]
+
             return docs
         except Exception as e:
             logger.warning(f"Error fetching collection {collection_name}: {e}")
@@ -255,11 +302,11 @@ class AgentEfficiencyService:
             return cached
 
         # Fetch telemetry
-        actions = self._fetch_collection_docs("adaptive_action_log", limit=500)
-        applied_changes = self._fetch_collection_docs("applied_changes", limit=200)
-        exec_metrics = self._fetch_collection_docs("execution_metrics", limit=500)
-        learning_cands = self._fetch_collection_docs("learning_candidates", limit=100)
-        audit_findings = self._fetch_collection_docs("audit_findings", limit=100)
+        actions = self._fetch_collection_docs("adaptive_action_log", limit=500, order_by_field="timestamp")
+        applied_changes = self._fetch_collection_docs("applied_changes", limit=200, order_by_field="timestamp")
+        exec_metrics = self._fetch_collection_docs("execution_metrics", limit=500, order_by_field="timestamp")
+        learning_cands = self._fetch_collection_docs("learning_candidates", limit=100, order_by_field="created_at")
+        audit_findings = self._fetch_collection_docs("audit_findings", limit=100, order_by_field="created_at")
         overview_docs = self._fetch_collection_docs("bot_overview", limit=50)
 
         # 1. Runtime & Latency Metrics
@@ -573,14 +620,14 @@ class AgentEfficiencyService:
         if cached is not None:
             return cached
 
-        actions = self._fetch_collection_docs("adaptive_action_log", limit=500)
+        actions = self._fetch_collection_docs("adaptive_action_log", limit=500, order_by_field="timestamp")
         bot_actions = [a for a in actions if a.get("symbol", "").upper() == sym]
 
         # Calculate symbol-specific rolling effectiveness
         rolling_s = self.calculate_effectiveness_score(bot_actions, window=10)
 
         # Applied changes & parameter drift
-        applied = self._fetch_collection_docs("applied_changes", limit=200)
+        applied = self._fetch_collection_docs("applied_changes", limit=200, order_by_field="timestamp")
         bot_changes = [c for c in applied if c.get("symbol", "").upper() == sym]
 
         param_states = {}
@@ -630,9 +677,11 @@ class AgentEfficiencyService:
         if cached is not None:
             return cached
 
-        # Fetch actions and execution metrics
-        actions = self._fetch_collection_docs("adaptive_action_log", limit=500)
-        exec_metrics = self._fetch_collection_docs("execution_metrics", limit=500)
+        # Fetch actions, execution metrics, and pre-aggregated daily rollups
+        actions = self._fetch_collection_docs("adaptive_action_log", limit=500, order_by_field="timestamp")
+        exec_metrics = self._fetch_collection_docs("execution_metrics", limit=500, order_by_field="timestamp")
+        rollups = self._fetch_collection_docs("agent_efficiency_rollups", limit=window_days + 5, order_by_field="date")
+        rollups_by_date = {r.get("date"): r for r in rollups if r.get("date")}
 
         now = datetime.now(timezone.utc)
         start_date = now - timedelta(days=window_days)
@@ -675,13 +724,22 @@ class AgentEfficiencyService:
         series = []
         for day in sorted(buckets.keys()):
             b = buckets[day]
-            b["actions_count"] = len(b["raw_actions"])
-            b["rolling_score"] = self.calculate_effectiveness_score(b["raw_actions"])
+            if b["raw_actions"]:
+                b["actions_count"] = len(b["raw_actions"])
+                b["rolling_score"] = self.calculate_effectiveness_score(b["raw_actions"])
+            elif day in rollups_by_date:
+                r = rollups_by_date[day]
+                b["actions_count"] = r.get("actions_count", 0)
+                b["rolling_score"] = r.get("rolling_score", 0.0)
+                b["giveback_saved"] = r.get("net_giveback_saved", 0.0)
+
             if b["raw_latencies"]:
                 sorted_lats = sorted(b["raw_latencies"])
                 idx = int(math.ceil(0.99 * len(sorted_lats))) - 1
                 b["p99_latency_ms"] = round(sorted_lats[max(0, min(idx, len(sorted_lats) - 1))], 2)
-            
+            elif day in rollups_by_date:
+                b["p99_latency_ms"] = rollups_by_date[day].get("p99_latency_ms", 0.0)
+
             series.append({
                 "date": b["date"],
                 "rolling_score": b["rolling_score"],
@@ -711,7 +769,7 @@ class AgentEfficiencyService:
         alerts: List[Dict[str, Any]] = []
 
         # 1. Check Latency SLAs
-        exec_metrics = self._fetch_collection_docs("execution_metrics", limit=200)
+        exec_metrics = self._fetch_collection_docs("execution_metrics", limit=200, order_by_field="timestamp")
         adaptive_ms = []
         for em in exec_metrics:
             ns = em.get("cascade_phase_adaptive_ns")
@@ -744,7 +802,7 @@ class AgentEfficiencyService:
             ).model_dump())
 
         # 2. Check Sustained Negative Alpha (S-score < -0.20)
-        actions = self._fetch_collection_docs("adaptive_action_log", limit=200)
+        actions = self._fetch_collection_docs("adaptive_action_log", limit=200, order_by_field="timestamp")
         s_score = self.calculate_effectiveness_score(actions, window=20)
         if s_score < NEGATIVE_ALPHA_THRESHOLD:
             alerts.append(EfficiencyAlert(
@@ -759,7 +817,7 @@ class AgentEfficiencyService:
             ).model_dump())
 
         # 3. Check Circuit Breaker Trips
-        applied = self._fetch_collection_docs("applied_changes", limit=50)
+        applied = self._fetch_collection_docs("applied_changes", limit=50, order_by_field="timestamp")
         for c in applied:
             if c.get("circuit_breaker_trip") or c.get("reason") == "circuit_breaker_rollback":
                 alerts.append(EfficiencyAlert(
@@ -777,3 +835,41 @@ class AgentEfficiencyService:
         result = {"alerts": alerts}
         self._set_in_cache("alerts", result)
         return result
+
+    def generate_daily_rollup(self, date_str: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Generates and persists a consolidated daily efficiency rollup document
+        in Firestore collection 'agent_efficiency_rollups' keyed by 'YYYY-MM-DD'.
+        """
+        target_date = date_str or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        summary = self.get_summary()
+        alerts = self.get_alerts().get("alerts", [])
+        alpha = summary.get("aggregate_alpha", {})
+        sla = summary.get("sla_metrics", {})
+        adaptive_sla = sla.get("cascade_phase_adaptive", {})
+
+        rollup = {
+            "date": target_date,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "fleet_health": summary.get("fleet_health", "HEALTHY"),
+            "rolling_score": alpha.get("rolling_effectiveness", 0.0),
+            "net_giveback_saved": alpha.get("net_giveback_saved", 0.0),
+            "premium_harvested": alpha.get("premium_harvested", 0.0),
+            "mean_r_multiple": alpha.get("mean_r_multiple", 0.0),
+            "actions_count": alpha.get("total_actions_evaluated", 0),
+            "p99_latency_ms": adaptive_sla.get("p99_ms", 0.0),
+            "active_alerts_count": len(alerts),
+            "agent_scores": {
+                agent: data.get("headline_metric_value")
+                for agent, data in summary.get("agent_scores", {}).items()
+            },
+        }
+
+        try:
+            db = self._get_db()
+            coll = db.collection("agent_efficiency_rollups")
+            coll.document(target_date).set(rollup)
+        except Exception as e:
+            logger.warning(f"Could not persist daily rollup for {target_date}: {e}")
+
+        return rollup
