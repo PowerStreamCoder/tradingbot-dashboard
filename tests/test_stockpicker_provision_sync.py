@@ -359,8 +359,8 @@ def test_frontend_modal_ux_and_custom_dropdown_contract():
     assert 'data-value="EQUITY"' in html
     assert 'data-value="TOTAL_RETURN"' in html
     assert 'data-value="INCOME"' in html
-    assert 'id="modal-call-exp-container"' in html
-    assert 'id="modal-call-exp-notice"' in html
+    # Runtime CC contract: call expiration knob removed from modal UI
+    assert 'id="modal-call-exp-container"' not in html
 
     js_path = os.path.join(os.path.dirname(__file__), "..", "static", "js", "stock_picker.js")
     with open(js_path, "r", encoding="utf-8") as f:
