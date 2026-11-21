@@ -18,6 +18,7 @@ The dashboard provides institutional-grade visibility into active bots, position
   - Active adaptive agent states and ±35% drift safety limit monitoring.
 - **Learning Review (`/learning-review`)**: Reviewing candidate observations and dict-shaped escalation pairs from the nightly learning engine.
 - **Trade Log Audit Review (`/audit`)**: Supervisory audit review interface displaying post-close audit runs, rule invariants, open/resolved finding states, executed vs. skipped check telemetry, and generated markdown reports.
+- **Agent Efficiency Measurement & Monitoring (`/agent-efficiency`)**: Centralized quantitative evaluation across all 7 autonomous agents (`AgentOrchestrator`, `AdaptiveEntryAgent`, `AdaptivePnLAgent`, `AdaptiveCoveredCallAgent`, `AdaptiveFeedbackEngine`, `LearningEngine`, `TradeLogAuditor`). Evaluates rolling effectiveness ($S \in [-1.0, 1.0]$), R-multiple retention, giveback preservation, runtime execution SLAs ($p99 \le 500\text{ ms}$), and parameter drift against $\pm 35\%$ safety clamps.
 - **StockPicker & Market Regime (`/stockpicker`)**: Multi-symbol screener displaying market regimes (Bullish, Bearish, Neutral, Volatile).
 - **Secure Bot Control REST API**: Remote controls to pause/resume trading, initiate graceful position exits, or adjust active parameters without SSH. Authenticated with `X-API-Key` (`BOT_CONTROL_API_KEY`).
 
@@ -34,12 +35,14 @@ tradingbot-dashboard/
 │   ├── governance_review.html  # Governance review & adaptive action ledger
 │   ├── learning_review.html    # Nightly learning candidates & regime analysis
 │   ├── performance.html        # Trading engine performance scorecard & benchmarking
-│   └── audit_review.html       # Trade Log Audit review & findings inspector
+│   ├── audit_review.html       # Trade Log Audit review & findings inspector
+│   └── agent_efficiency.html   # Multi-agent efficiency scorecard & SLA monitoring
 ├── static/                     # High-performance static assets
 │   ├── css/                    # Glassmorphic dark-theme stylesheets
 │   │   ├── styles.css          # Core design system and tokens
 │   │   ├── header.css          # Standardized header UX & metadata pills
-│   │   └── performance.css     # Performance scorecard layout & charts
+│   │   ├── performance.css     # Performance scorecard layout & charts
+│   │   └── agent_efficiency.css# Agent efficiency scorecard & charts
 │   └── js/                     # Modular frontend controllers
 │       ├── overview.js         # Fleet overview controller
 │       ├── bot_focus.js        # Technical charts & bot switching controller
@@ -47,9 +50,14 @@ tradingbot-dashboard/
 │       ├── learning_review.js  # Learning engine review controller
 │       ├── performance.js      # Performance metrics and chart renderer
 │       ├── audit_review.js     # Audit runs, findings & report viewer
+│       ├── agent_efficiency.js # Agent efficiency metrics & Chart.js renderer
 │       └── header_controls.js  # Shared auto-refresh, progress bar & status pills
 ├── stockpicker/                # Stock screening and regime classification subsystem
 ├── services/                   # Background telemetry readers and aggregators
+│   ├── agent_efficiency_service.py   # Multi-agent scoring, SLA monitoring, and caching
+│   ├── agent_efficiency_notifier.py  # Daily post-market digest and webhook alerts
+│   ├── performance_engine.py         # Institutional performance attribution engine
+│   └── pnl_statement_engine.py       # 4-tier P&L reporting engine
 ├── config/                     # Configuration definitions and schema validation
 ├── tests/                      # Automated test suites (API routes, serialization, mocks)
 ├── Dockerfile                  # Container image specification for Cloud Run
@@ -75,9 +83,14 @@ tradingbot-dashboard/
 - `GET /performance`: Quantitative execution performance scorecard.
 - `GET /stockpicker`: Regime scanner and screener.
 - `GET /audit` (alias `/audit-review`): Trade Log Audit review and findings inspector.
+- `GET /agent-efficiency`: Multi-agent autonomous efficiency scorecard, SLA monitoring, and action audit ledger.
 
 ### Telemetry & Data APIs
 - `GET /api/bot-overview`: Comprehensive multi-bot status, open positions, buckets, and P&L.
+- `GET /api/agent-efficiency/summary`: 7-agent fleet health scorecard, aggregate alpha impact, and execution SLA percentiles.
+- `GET /api/agent-efficiency/bot/{symbol}`: Bot-specific agent telemetry, parameter drift, and recent actions.
+- `GET /api/agent-efficiency/history`: Time-series $S_t$ effectiveness and latency distributions.
+- `GET /api/agent-efficiency/alerts`: Real-time SLA breaches, circuit breaker rollbacks, and clamp pinning alerts.
 - `GET /api/bot-status/{symbol}`: Granular metrics, active SMA values, regime, and heartbeat time.
 - `GET /api/historical-bars/{symbol}`: Historical price bars for chart rendering.
 - `GET /api/engine-performance?period=YTD&bot=ALL&mode=all&benchmark=SPY`: Full performance scorecard, executive KPIs, public benchmarks, per-bot attribution, and diagnostic findings. Add `&force=true` to bypass the caches.
