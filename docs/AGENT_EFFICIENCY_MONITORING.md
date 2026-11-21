@@ -167,9 +167,10 @@ A new first-class navigation tab in `tradingbot-dashboard` with:
 - [x] Add unit tests with hermetic Firestore mocks (`tests/test_agent_efficiency_service.py`).
 
 ### Phase 2: Backend API Endpoints (`main.py`)
-- [ ] Create `/api/agent-efficiency/summary`, `/api/agent-efficiency/bot/{symbol}`, and historical time-series endpoints.
-- [ ] Add error handling and response caching (60s TTL).
-- [ ] Validate response schemas with pydantic models.
+- [x] Create `/api/agent-efficiency/summary`, `/api/agent-efficiency/bot/{symbol}`, and historical time-series endpoints.
+- [x] Add error handling and response caching (60s TTL).
+- [x] Validate response schemas with pydantic models.
+- [x] Wire `/agent-efficiency` route and dashboard navigation header links across all templates.
 
 ### Phase 3: Dashboard UI & Visualizations
 - [x] Create `templates/agent_efficiency.html` and `static/js/agent_efficiency.js`.
@@ -178,7 +179,7 @@ A new first-class navigation tab in `tradingbot-dashboard` with:
 
 ### Phase 4: Scheduled Monitoring & Alerting
 - [x] Create notification & digest formatter service (`services/agent_efficiency_notifier.py`).
-- [ ] Implement daily 17:00 ET session aggregation scheduler trigger.
+- [x] Implement daily 17:00 ET session aggregation scheduler trigger endpoint (`POST /api/agent-efficiency/daily-digest`).
 - [x] Wire alerts into notification webhook router (`services/agent_efficiency_notifier.py`).
 - [x] Add SLA latency violation detector.
 

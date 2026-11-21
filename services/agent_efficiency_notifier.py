@@ -11,7 +11,7 @@ import json
 import logging
 import os
 import urllib.request
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -143,8 +143,8 @@ class AgentEfficiencyNotifier:
     def dispatch_webhook(self, payload: Dict[str, Any], webhook_url: Optional[str] = None) -> bool:
         """Sends JSON payload to the configured webhook URL."""
         target_url = webhook_url or self.webhook_url
-        if not target_url:
-            logger.info("No webhook URL configured; skipping dispatch.")
+        if not target_url or not target_url.startswith(("http://", "https://")):
+            logger.info("No valid http/https webhook URL configured; skipping dispatch.")
             return False
 
         try:
@@ -154,7 +154,7 @@ class AgentEfficiencyNotifier:
                 data=data,
                 headers={"Content-Type": "application/json"}
             )
-            with urllib.request.urlopen(req, timeout=5.0) as resp:
+            with urllib.request.urlopen(req, timeout=5.0) as resp:  # nosec B310
                 return resp.status in (200, 201, 202, 204)
         except Exception as e:
             logger.error(f"Failed to dispatch agent efficiency webhook to {target_url}: {e}")
