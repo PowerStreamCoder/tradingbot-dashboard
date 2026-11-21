@@ -64,6 +64,11 @@ from services.performance_engine import (
     EnginePerformanceResponse,
     clear_performance_cache,
 )
+from services.agent_efficiency_service import (
+    AgentEfficiencyService,
+    FleetEfficiencySummary,
+)
+from services.agent_efficiency_notifier import AgentEfficiencyNotifier
 
 
 # Initialize rate limiter
@@ -877,7 +882,11 @@ async def check_access_code(request: Request, call_next):
 
     # If trying to access main page or dashboard without auth, show login
     if (
-        request.url.path in ["/", "/dashboard", "/bot-focus", "/nvda-focus", "/pnl-reporting", "/learning-review", "/governance-review", "/audit", "/audit-review"]
+        request.url.path in [
+            "/", "/dashboard", "/bot-focus", "/nvda-focus", "/pnl-reporting",
+            "/learning-review", "/governance-review", "/audit", "/audit-review",
+            "/agent-efficiency",
+        ]
         or request.url.path.startswith("/bot/")
     ):
         return HTMLResponse(content=get_login_page(), status_code=200)
@@ -5342,6 +5351,149 @@ async def get_entry_decisions(limit: int = 50, symbol: Optional[str] = None):
     except Exception as e:
         logger.error(f"Error fetching entry decisions: {e}")
         return {"status": "error", "message": str(e), "decisions": []}
+
+
+# ===========================================================================
+# Agent Efficiency Monitoring Subsystem (Issue #139)
+# ===========================================================================
+
+_agent_efficiency_service_instance: Optional[AgentEfficiencyService] = None
+
+
+def get_agent_efficiency_service() -> AgentEfficiencyService:
+    """Get or initialize the shared AgentEfficiencyService singleton."""
+    global _agent_efficiency_service_instance
+    if _agent_efficiency_service_instance is None:
+        db = getattr(dashboard_data, "db", None)
+        _agent_efficiency_service_instance = AgentEfficiencyService(db=db)
+    elif getattr(_agent_efficiency_service_instance, "_db", None) is None and getattr(dashboard_data, "db", None) is not None:
+        setattr(_agent_efficiency_service_instance, "_db", dashboard_data.db)
+    return _agent_efficiency_service_instance
+
+
+def set_agent_efficiency_service(service: Optional[AgentEfficiencyService]) -> None:
+    """Setter for AgentEfficiencyService (useful for test isolation)."""
+    global _agent_efficiency_service_instance
+    _agent_efficiency_service_instance = service
+
+
+@app.get("/agent-efficiency", response_class=HTMLResponse)
+async def agent_efficiency_page():
+    """Serve the Agent Efficiency Measurement & Regular Monitoring page."""
+    page_path = os.path.join(TEMPLATES_DIR, "agent_efficiency.html")
+    if not os.path.exists(page_path):
+        raise HTTPException(status_code=404, detail="Agent efficiency page not found")
+    return FileResponse(page_path)
+
+
+@app.get("/api/agent-efficiency/summary")
+async def get_agent_efficiency_summary(response: Response = None):
+    """
+    Fleet-wide summary metrics, SLA compliance, and agent performance scorecard.
+    """
+    try:
+        service = get_agent_efficiency_service()
+        data = service.get_summary()
+        if response:
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return data
+    except Exception as e:
+        logger.error(f"Error fetching agent efficiency summary: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to fetch efficiency summary: {str(e)}")
+
+
+@app.get("/api/agent-efficiency/bot/{symbol}")
+async def get_bot_agent_efficiency(symbol: str, response: Response = None):
+    """
+    Bot-specific agent efficiency metrics and parameter drift.
+    """
+    try:
+        if not symbol or not symbol.strip():
+            raise HTTPException(status_code=400, detail="Symbol parameter is required")
+        service = get_agent_efficiency_service()
+        data = service.get_bot_efficiency(symbol=symbol.strip().upper())
+        if response:
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return data
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching bot efficiency for {symbol}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to fetch bot efficiency: {str(e)}")
+
+
+@app.get("/api/agent-efficiency/history")
+async def get_agent_efficiency_history(
+    agent: str = "all",
+    window: int = 7,
+    response: Response = None
+):
+    """
+    Historical time-series telemetry for agent scores, latency, and drift.
+    """
+    try:
+        window_days = max(1, min(int(window), 90))
+        service = get_agent_efficiency_service()
+        data = service.get_history(agent=agent, window_days=window_days)
+        if response:
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return data
+    except Exception as e:
+        logger.error(f"Error fetching agent efficiency history: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to fetch efficiency history: {str(e)}")
+
+
+@app.get("/api/agent-efficiency/alerts")
+async def get_agent_efficiency_alerts(response: Response = None):
+    """
+    Active alerts for latency breaches, parameter pinning, and negative alpha.
+    """
+    try:
+        service = get_agent_efficiency_service()
+        data = service.get_alerts()
+        if response:
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return data
+    except Exception as e:
+        logger.error(f"Error fetching agent efficiency alerts: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to fetch efficiency alerts: {str(e)}")
+
+
+@app.post("/api/agent-efficiency/daily-digest")
+async def send_agent_efficiency_daily_digest(
+    webhook_url: Optional[str] = None
+):
+    """
+    Trigger immediate post-market session digest generation and dispatch (Phase 4 integration).
+    """
+    try:
+        service = get_agent_efficiency_service()
+        summary = service.get_summary()
+        notifier = AgentEfficiencyNotifier(webhook_url=webhook_url)
+        text_digest = notifier.format_daily_digest_text(summary)
+        html_digest = notifier.format_daily_digest_html(summary)
+
+        dispatched = False
+        target_url = webhook_url or notifier.webhook_url
+        if target_url:
+            payload = {
+                "text": text_digest,
+                "html": html_digest,
+                "summary": summary,
+            }
+            dispatched = notifier.dispatch_webhook(payload=payload, webhook_url=target_url)
+
+        return {
+            "status": "success",
+            "digest": {
+                "text": text_digest,
+                "html": html_digest,
+            },
+            "dispatched": dispatched,
+        }
+    except Exception as e:
+        logger.error(f"Error generating daily efficiency digest: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to generate daily digest: {str(e)}")
 
 
 if __name__ == "__main__":
