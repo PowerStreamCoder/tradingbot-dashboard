@@ -153,13 +153,13 @@ _Auto-updated 2026-11-21. Full graph: `tradingbot-tools/knowledge-graph/output/`
 | `AdaptiveFeedbackEngine` | `adaptive_feedback_engine.py` | Records adaptive agent decisions, links outcomes on position |
 | `AdaptivePnLAgent` | `adaptive_pnl_agent.py` | Adaptive Profit Loss Agent. |
 | `AdaptivePnLConfig` | `config.py` | Configuration for Adaptive Profit Loss Agent. |
+| `AgentEfficiencyNotifier` | `services/agent_efficiency_notifier.py` | Handles formatting and webhook/email dispatch for agent effi |
+| `AgentEfficiencyService` | `services/agent_efficiency_service.py` | Core aggregator service for evaluating agent performance, al |
 | `AgentOrchestrator` | `agent_orchestrator.py` | Agent Orchestrator. |
+| `AgentScoreCard` | `services/agent_efficiency_service.py` |  |
 | `ArbitrationDecision` | `agent_orchestrator.py` | Outcome of exit verdict arbitration (Phase 4). |
 | `AssetArchetype` | `security_profile_provider.py` |  |
 | `AsyncFillMonitor` | `execution_manager.py` | Tracks orders that timed out but may fill asynchronously. |
-| `BadBucket` | `tests/test_coverage_98_bots.py` |  |
-| `Bare` | `tests/test_option_notifications.py` |  |
-| `BasePaperTrader` | `base.py` | Base class for IBKR paper trading bots. |
 
 ### Trade Entry Lifecycle
 SMACrossoverTrader detects SMA5/SMA20 crossover on 1-hour bar → EntryFilterChain validates: RegimeFilter, MultiTimeframeFilter, volatility guards → UnifiedEntryHandler.execute_entry() → ExecutionManager.execute() → BasePaperTrader.on_entry_fill()
