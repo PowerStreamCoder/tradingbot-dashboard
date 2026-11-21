@@ -4884,17 +4884,14 @@ async def provision_bot_from_pick(request: Request):
         if "covered_calls" not in bot_params:
             bot_params["covered_calls"] = {}
         bot_params["covered_calls"].update(recommended["covered_calls"])
+        # Runtime CC contract: only cc_mode/use_covered_calls supported.
         if chosen_cc_mode == "EQUITY" or custom_params.get("use_covered_calls") is False:
             bot_params["covered_calls"]["use_covered_calls"] = False
             bot_params["covered_calls"]["cc_mode"] = "EQUITY"
-            bot_params["covered_calls"]["call_expiration_days"] = 0
         elif chosen_cc_mode:
             bot_params["covered_calls"]["use_covered_calls"] = True
             bot_params["covered_calls"]["cc_mode"] = chosen_cc_mode
-            if custom_params.get("call_expiration_days") is not None:
-                bot_params["covered_calls"]["call_expiration_days"] = int(custom_params["call_expiration_days"])
-        elif custom_params.get("call_expiration_days") is not None:
-            bot_params["covered_calls"]["call_expiration_days"] = int(custom_params["call_expiration_days"])
+        # Removed CC tuning knobs (e.g. call_expiration_days) are intentionally ignored.
 
         for b_dir in target_dirs:
             os.makedirs(b_dir, exist_ok=True)

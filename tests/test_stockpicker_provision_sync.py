@@ -207,9 +207,9 @@ def test_frontend_bot_selector_synchronization():
 def test_parameter_advisor_3_modes():
     """
     Verify parameter advisor handles all 3 canonical modes:
-    1. EQUITY: covered calls disabled (use_covered_calls=False, call_expiration_days=0)
-    2. TOTAL_RETURN: covered calls enabled (use_covered_calls=True, call_expiration_days=7)
-    3. INCOME: covered calls enabled (use_covered_calls=True, call_expiration_days=30)
+    1. EQUITY: covered calls disabled (use_covered_calls=False)
+    2. TOTAL_RETURN: covered calls enabled (use_covered_calls=True)
+    3. INCOME: covered calls enabled (use_covered_calls=True, cc_mode=INCOME)
     """
     from stockpicker.parameter_advisor import generate_expert_parameter_advice
 
@@ -223,7 +223,7 @@ def test_parameter_advisor_3_modes():
     cc_eq = adv_eq["recommended_params"]["covered_calls"]
     assert cc_eq["use_covered_calls"] is False
     assert cc_eq["cc_mode"] == "EQUITY"
-    assert cc_eq["call_expiration_days"] == 0
+    assert "call_expiration_days" not in cc_eq
     assert "pure Equity mode (covered calls disabled)" in adv_eq["advisory_summary"]
 
     # 2. TOTAL_RETURN mode
@@ -236,7 +236,7 @@ def test_parameter_advisor_3_modes():
     cc_tr = adv_tr["recommended_params"]["covered_calls"]
     assert cc_tr["use_covered_calls"] is True
     assert cc_tr["cc_mode"] == "TOTAL_RETURN"
-    assert cc_tr["call_expiration_days"] == 7
+    assert "call_expiration_days" not in cc_tr
 
     # 3. INCOME mode
     adv_inc = generate_expert_parameter_advice(
@@ -248,7 +248,7 @@ def test_parameter_advisor_3_modes():
     cc_inc = adv_inc["recommended_params"]["covered_calls"]
     assert cc_inc["use_covered_calls"] is True
     assert cc_inc["cc_mode"] == "INCOME"
-    assert cc_inc["call_expiration_days"] == 30
+    assert "call_expiration_days" not in cc_inc
 
 
 def test_api_parameter_advice_cc_mode(auth_client):
@@ -266,7 +266,7 @@ def test_api_parameter_advice_cc_mode(auth_client):
 def test_provision_bot_equity_mode_disables_covered_calls(auth_client, tmp_path):
     """
     Verify that provisioning a bot with cc_mode="EQUITY" writes a bot configuration
-    with covered_calls.use_covered_calls = False, cc_mode = "EQUITY", and call_expiration_days = 0.
+    with covered_calls.use_covered_calls = False, cc_mode = "EQUITY"; removed CC knobs are ignored.
     """
     cand_data = {
         "ticker": "XLV",
@@ -302,7 +302,6 @@ def test_provision_bot_equity_mode_disables_covered_calls(auth_client, tmp_path)
                 "covered_calls": {
                     "use_covered_calls": True,
                     "cc_mode": "TOTAL_RETURN",
-                    "call_expiration_days": 7
                 }
             }))()
         return orig_open(file, mode, *args, **kwargs)
@@ -339,7 +338,7 @@ def test_provision_bot_equity_mode_disables_covered_calls(auth_client, tmp_path)
 
         assert bot_cfg["covered_calls"]["use_covered_calls"] is False
         assert bot_cfg["covered_calls"]["cc_mode"] == "EQUITY"
-        assert bot_cfg["covered_calls"]["call_expiration_days"] == 0
+        assert "call_expiration_days" not in bot_cfg["covered_calls"]
         assert bot_cfg["atr_parameters"]["trailing_stop_atr_multiplier"] == 2.2
         assert bot_cfg["atr_parameters"]["position_min_shares"] == 35
 
@@ -359,8 +358,8 @@ def test_frontend_modal_ux_and_custom_dropdown_contract():
     assert 'data-value="EQUITY"' in html
     assert 'data-value="TOTAL_RETURN"' in html
     assert 'data-value="INCOME"' in html
-    assert 'id="modal-call-exp-container"' in html
-    assert 'id="modal-call-exp-notice"' in html
+    # Runtime CC contract: call expiration knob removed from modal UI
+    assert 'id="modal-call-exp-container"' not in html
 
     js_path = os.path.join(os.path.dirname(__file__), "..", "static", "js", "stock_picker.js")
     with open(js_path, "r", encoding="utf-8") as f:

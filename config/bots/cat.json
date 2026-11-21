@@ -19,16 +19,7 @@
   },
   "covered_calls": {
     "use_covered_calls": false,
-    "call_expiration_days": 7,
-    "call_min_premium_pct": 0.004,
-    "call_confirmation_bars": 0,
-    "call_strike_offset_low_vol": 0.015,
-    "call_strike_offset_normal": 0.018,
-    "call_strike_offset_sideways": 0.015,
-    "call_strike_offset_trending_down": 0.018,
-    "cc_mode": "TOTAL_RETURN",
-    "cc_income_mode_min_hold_hours": 96.0,
-    "cc_option_profit_target_pct": 0.5
+    "cc_mode": "TOTAL_RETURN"
   },
   "exit_logic": {
     "use_atr_targets": false,
@@ -71,15 +62,9 @@
     "neutral_entry_mode": "conservative"
   },
   "threshold_coordination": {
-    "min_move_for_call_atr": 1.0,
-    "take_profit_with_call_atr": 2.5,
     "take_profit_without_call_atr": 4.0,
-    "min_move_for_call_absolute_pct": 0.003,
     "take_profit_absolute_pct": 0.012,
-    "max_hold_hours": 0.0,
-    "cc_expected_position_hold_hours": null,
-    "cc_min_tenor_monetization_fraction": 0.25,
-    "cc_horizon_check_enabled": true
+    "max_hold_hours": 0.0
   },
   "adaptive_pnl": {
     "enable_adaptive_pnl": true,
@@ -111,14 +96,7 @@
     "atr_expansion_ratio": 1.25
   },
   "adaptive_covered_call": {
-    "enable_adaptive_covered_call": true,
-    "base_min_premium_pct": 0.006,
-    "min_allowed_premium_pct": 0.0025,
-    "max_allowed_premium_pct": 0.012,
-    "base_profit_cushion_atr": 1.0,
-    "neutral_regime_profit_cushion_atr": 0.3,
-    "bull_regime_profit_cushion_atr": 1.0,
-    "adx_trend_breakout_threshold": 25.0
+    "enable_adaptive_covered_call": true
   },
   "security_profile": {
     "asset_archetype": "HIGH_GROWTH_EQUITY",

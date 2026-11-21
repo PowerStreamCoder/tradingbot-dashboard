@@ -896,7 +896,6 @@ def test_main_remaining_branches(auth_client):
             "trailing_stop_atr_multiplier": 2.5,
             "position_min_shares": 10,
             "cc_mode": "OTM",
-            "call_expiration_days": 45
         }
     }
     mock_curr_prov = MagicMock()

@@ -874,7 +874,6 @@ function applyModeUiState(mode) {
 
     // 4. Update Call Expiration (Days) field states
     const expContainer = document.getElementById('modal-call-exp-container');
-    const expInput = document.getElementById('modal-param-call-exp-days');
     const expStatus = document.getElementById('modal-call-exp-status');
     const expNotice = document.getElementById('modal-call-exp-notice');
 
@@ -1007,7 +1006,6 @@ async function refreshParameterAdvice() {
             const elShares = document.getElementById('modal-param-min-shares');
             if (elShares && atr.position_min_shares) elShares.value = atr.position_min_shares;
 
-            const elExp = document.getElementById('modal-param-call-exp-days');
             if (currentMode === 'EQUITY') {
                 if (elExp) {
                     elExp.disabled = true;
@@ -1016,7 +1014,6 @@ async function refreshParameterAdvice() {
             } else {
                 if (elExp) {
                     elExp.disabled = false;
-                    if (cc.call_expiration_days) elExp.value = cc.call_expiration_days;
                 }
             }
         }
@@ -1044,7 +1041,6 @@ async function confirmProvisionBot() {
     const elStop = document.getElementById('modal-param-trailing-stop');
     const elShares = document.getElementById('modal-param-min-shares');
     const elMode = document.getElementById('modal-param-cc-mode');
-    const elExp = document.getElementById('modal-param-call-exp-days');
 
     const chosenMode = (elMode ? elMode.value : 'TOTAL_RETURN').toUpperCase();
     const customParams = {
@@ -1056,10 +1052,8 @@ async function confirmProvisionBot() {
 
     if (chosenMode === 'EQUITY') {
         customParams.use_covered_calls = false;
-        customParams.call_expiration_days = 0;
     } else {
         customParams.use_covered_calls = true;
-        if (elExp && elExp.value) customParams.call_expiration_days = parseInt(elExp.value);
     }
 
     const btn = document.getElementById('modal-confirm-provision-btn');

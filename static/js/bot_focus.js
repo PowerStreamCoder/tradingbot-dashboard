@@ -1362,30 +1362,11 @@ function renderBotParameters(params) {
                     const cls = mode === 'INCOME' ? 'highlight-green' : 'highlight-blue';
                     return `<span class="param-pill tag ${cls}">${mode}</span>`;
                 })() },
-                { key: 'Income Hold Floor', val: (() => {
-                    const hrs = params.covered_calls?.cc_income_mode_min_hold_hours ?? 96.0;
-                    const active = (params.covered_calls?.cc_mode ?? 'TOTAL_RETURN') === 'INCOME';
-                    return active
-                        ? `<span class="param-val number highlight-green">${hrs} hrs</span>`
-                        : `<span class="param-val number" style="opacity:.5">${hrs} hrs (TOTAL_RETURN)</span>`;
-                })() },
-                { key: 'Profit Target Buyback', val: `<span class="param-val number highlight-purple">${fmtParamPercent(params.covered_calls?.cc_option_profit_target_pct ?? 0.50)} retained</span>` },
-                { key: 'DTE Gamma Guard', val: `<span class="param-pill tag highlight-green">Holds to Expiry (Policy)</span>` },
-                { key: 'Roll Up &amp; Out', val: (() => {
-                    const mode = params.covered_calls?.cc_mode ?? 'TOTAL_RETURN';
-                    return mode === 'TOTAL_RETURN'
-                        ? `<span class="param-pill tag highlight-blue">Active (TOTAL_RETURN)</span>`
-                        : `<span class="param-pill tag" style="opacity:.5">Disabled (INCOME)</span>`;
-                })() },
-                // --- Entry & Strike Settings ---
-                { key: 'Call Eligibility', val: '<span class="param-pill tag">Runtime (indicators)</span>' },
-                { key: 'Target Expiration', val: `<span class="param-val number highlight-blue">${params.covered_calls?.call_expiration_days ?? 14} days</span>` },
-                { key: 'Min Option Premium', val: `<span class="param-val number highlight-green">${fmtParamPercent(params.covered_calls?.call_min_premium_pct ?? 0.006)}</span>` },
-                { key: 'Call Confirm Bars', val: `<span class="param-val number">${params.covered_calls?.call_confirmation_bars ?? 1} bar(s)</span>` },
-                { key: 'Strike Offset (Normal)', val: `<span class="param-val number">${fmtParamPercent(params.covered_calls?.call_strike_offset_normal ?? 0.018)} OTM</span>` },
-                { key: 'Strike Offset (Low Vol)', val: `<span class="param-val number">${fmtParamPercent(params.covered_calls?.call_strike_offset_low_vol ?? 0.015)} OTM</span>` },
-                { key: 'Profit Cushion ATR', val: `<span class="param-val number">${params.adaptive_covered_call?.base_profit_cushion_atr ?? 1.0}x ATR</span>` },
-                { key: 'Breakout Freeze Thresh', val: `<span class="param-val number">ADX ${params.adaptive_covered_call?.adx_trend_breakout_threshold ?? 25.0}</span>` }
+                { key: 'Call Eligibility', val: '<span class="param-pill tag">Runtime (regime × vol/IV × cc_mode)</span>' },
+                { key: 'Strike / Tenor / Premium', val: '<span class="param-val number">Runtime-derived (no user CC knobs)</span>' },
+                { key: 'Assignment Intent', val: '<span class="param-pill tag highlight-green">Assignment-tolerant / hold to expiry</span>' },
+                { key: 'Defensive Roll', val: '<span class="param-pill tag" style="opacity:.8">Disabled by default (non-aggressive)</span>' },
+                { key: 'Profit Target Buyback', val: '<span class="param-val number" style="opacity:.8">Off by default (discretionary)</span>' }
             ]
         },
         // 5. Regime & Macro Trend
