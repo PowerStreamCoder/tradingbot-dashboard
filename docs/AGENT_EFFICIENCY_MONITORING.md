@@ -2,7 +2,7 @@
 
 **Document:** `AGENT_EFFICIENCY_MONITORING.md`  
 **Repository:** `tradingbot-dashboard`  
-**Status:** 📋 Draft / Proposal  
+**Status:** 🚀 Active Implementation (PR [#153](https://github.com/PowerStreamCoder/tradingbot-dashboard/pull/153))  
 **Target Milestone:** v5.7.0  
 **Related Issue:** [#139](https://github.com/PowerStreamCoder/tradingbot-dashboard/issues/139)  
 **Scope:** Multi-Agent Autonomous Algorithmic Engine (`AgentOrchestrator`, `AdaptiveEntryAgent`, `AdaptivePnLAgent`, `AdaptiveCoveredCallAgent`, `AdaptiveFeedbackEngine`, `LearningEngine`, `TradeLogAuditor`)
@@ -162,9 +162,9 @@ A new first-class navigation tab in `tradingbot-dashboard` with:
 ## 6. Implementation Phases & Acceptance Criteria
 
 ### Phase 1: Data Model & Aggregator Service (`services/agent_efficiency_service.py`)
-- [ ] Implement query logic to aggregate `adaptive_action_log`, `applied_changes`, and `execution_metrics`.
-- [ ] Compute rolling $S$-scores, R-multiple retention, and circuit breaker trip metrics.
-- [ ] Add unit tests with hermetic Firestore mocks.
+- [x] Implement query logic to aggregate `adaptive_action_log`, `applied_changes`, and `execution_metrics`.
+- [x] Compute rolling $S$-scores, R-multiple retention, and circuit breaker trip metrics.
+- [x] Add unit tests with hermetic Firestore mocks (`tests/test_agent_efficiency_service.py`).
 
 ### Phase 2: Backend API Endpoints (`main.py`)
 - [ ] Create `/api/agent-efficiency/summary`, `/api/agent-efficiency/bot/{symbol}`, and historical time-series endpoints.
@@ -172,14 +172,15 @@ A new first-class navigation tab in `tradingbot-dashboard` with:
 - [ ] Validate response schemas with pydantic models.
 
 ### Phase 3: Dashboard UI & Visualizations
-- [ ] Create `templates/agent_efficiency.html` and `static/js/agent_efficiency.js`.
-- [ ] Style consistent with glassmorphic dark design system (`static/css/styles.css`).
-- [ ] Implement Chart.js charts for rolling effectiveness ($S$) and parameter drift.
+- [x] Create `templates/agent_efficiency.html` and `static/js/agent_efficiency.js`.
+- [x] Style consistent with glassmorphic dark design system (`static/css/agent_efficiency.css`).
+- [x] Implement Chart.js charts for rolling effectiveness ($S$) and parameter drift.
 
 ### Phase 4: Scheduled Monitoring & Alerting
-- [ ] Implement daily 17:00 ET session aggregation task.
-- [ ] Wire alerts into notification webhook router (`services/notifications.py`).
-- [ ] Add SLA latency violation detector.
+- [x] Create notification & digest formatter service (`services/agent_efficiency_notifier.py`).
+- [ ] Implement daily 17:00 ET session aggregation scheduler trigger.
+- [x] Wire alerts into notification webhook router (`services/agent_efficiency_notifier.py`).
+- [x] Add SLA latency violation detector.
 
 ---
 

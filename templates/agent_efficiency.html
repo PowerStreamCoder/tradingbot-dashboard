@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent Efficiency &amp; Monitoring - Trading Bot Dashboard</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Stylesheets -->
+    <link rel="stylesheet" href="/static/css/bot_focus.css?v=2.9.1">
+    <link rel="stylesheet" href="/static/css/agent_efficiency.css?v=1.0.0">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="agent-efficiency-container">
+        <!-- Header -->
+        <header class="bot-header">
+            <div class="header-left">
+                <h1>
+                    <span class="bot-icon">🤖</span>
+                    Agent Efficiency &amp; Monitoring
+                    <span class="statement-account-pill">7-Agent Autonomous Fleet</span>
+                </h1>
+                <div class="bot-metadata">
+                    <div class="metadata-pill-badge" title="Overall fleet health status">
+                        <span class="badge-icon">🛡️</span>
+                        <span class="label">Fleet Health:</span>
+                        <span class="value font-mono" id="fleetHealthBadge">HEALTHY</span>
+                    </div>
+                    <span class="metadata-separator">|</span>
+                    <div class="metadata-pill-badge" title="Active autonomous agents in loop">
+                        <span class="badge-icon">⚙️</span>
+                        <span class="label">Agents:</span>
+                        <span class="value font-mono">7 Active</span>
+                    </div>
+                    <span class="metadata-separator">|</span>
+                    <div class="metadata-pill-badge" title="Timestamp of latest efficiency telemetry aggregation">
+                        <span class="badge-icon">🕒</span>
+                        <span class="label">Updated:</span>
+                        <span class="value font-mono" id="lastUpdatedVal">--</span>
+                    </div>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="header-sync-cluster">
+                    <div class="refresh-status" title="Real-time telemetry feed">
+                        <span class="pulse-dot"></span>
+                        <span id="syncStatusText">Telemetry Connected</span>
+                    </div>
+                </div>
+                <div class="header-actions-cluster">
+                    <button class="btn btn-action btn-refresh" id="btnRefreshEfficiency" onclick="loadEfficiencyData()" title="Refresh efficiency metrics now">
+                        <span class="btn-icon">🔄</span>
+                        <span>Refresh</span>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Navigation Bar -->
+        <nav class="nav-bar">
+            <a href="/bot-focus" class="nav-link">
+                🎯 Bot Focus
+            </a>
+            <a href="/pnl-reporting" class="nav-link">
+                💰 P&amp;L Reporting
+            </a>
+            <a href="/performance" class="nav-link">
+                ⚡ Performance
+            </a>
+            <a href="/learning-review" class="nav-link">
+                🧠 Learning &amp; Analysis
+            </a>
+            <a href="/governance-review" class="nav-link">
+                ⚖️ Governance Review
+            </a>
+            <a href="/audit" class="nav-link">
+                🔍 Trade Log Audit
+            </a>
+            <a href="/bot-focus?show=stockpicker" class="nav-link">
+                📊 Stock Picker
+            </a>
+            <a href="/agent-efficiency" class="nav-link active">
+                🤖 Agent Efficiency
+            </a>
+        </nav>
+
+        <!-- Alerts Container -->
+        <div id="alertsContainer" class="alerts-banner" style="display: none;"></div>
+
+        <!-- Aggregate Alpha Summary Strip -->
+        <div class="alpha-summary-strip">
+            <div class="alpha-stat-item">
+                <span class="alpha-stat-label">Rolling Effectiveness (S)</span>
+                <span class="alpha-stat-value" id="alphaScoreVal">0.00</span>
+            </div>
+            <div class="alpha-stat-item">
+                <span class="alpha-stat-label">Giveback Saved</span>
+                <span class="alpha-stat-value val-positive" id="givebackSavedVal">$0.00</span>
+            </div>
+            <div class="alpha-stat-item">
+                <span class="alpha-stat-label">Premium Harvested</span>
+                <span class="alpha-stat-value val-positive" id="premiumHarvestedVal">$0.00</span>
+            </div>
+            <div class="alpha-stat-item">
+                <span class="alpha-stat-label">Average Realized R</span>
+                <span class="alpha-stat-value val-neutral" id="meanRVal">0.00R</span>
+            </div>
+            <div class="alpha-stat-item">
+                <span class="alpha-stat-label">Evaluated Actions</span>
+                <span class="alpha-stat-value" id="totalActionsVal">0</span>
+            </div>
+            <div class="alpha-stat-item">
+                <span class="alpha-stat-label">Helped / Hurt Actions</span>
+                <span class="alpha-stat-value" id="helpedHurtVal">0 / 0</span>
+            </div>
+        </div>
+
+        <!-- 7-Agent Fleet Overview Grid -->
+        <div class="agent-fleet-grid" id="agentFleetGrid">
+            <!-- Dynamically populated by agent_efficiency.js -->
+        </div>
+
+        <!-- Filter Toolbar -->
+        <div class="filter-toolbar">
+            <div class="filter-group">
+                <label class="filter-label" for="symbolFilter">Symbol:</label>
+                <select id="symbolFilter" class="filter-select" onchange="onSymbolFilterChange()">
+                    <option value="ALL">All Active Bots</option>
+                    <option value="NVDA">NVDA</option>
+                    <option value="IWM">IWM</option>
+                    <option value="MSFT">MSFT</option>
+                    <option value="CAT">CAT</option>
+                    <option value="QQQ">QQQ</option>
+                    <option value="AFRM">AFRM</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label class="filter-label" for="agentFilter">Agent Focus:</label>
+                <select id="agentFilter" class="filter-select" onchange="onAgentFilterChange()">
+                    <option value="all">All Agents</option>
+                    <option value="AdaptivePnLAgent">AdaptivePnLAgent</option>
+                    <option value="AdaptiveEntryAgent">AdaptiveEntryAgent</option>
+                    <option value="AdaptiveCoveredCallAgent">AdaptiveCoveredCallAgent</option>
+                    <option value="AdaptiveFeedbackEngine">AdaptiveFeedbackEngine</option>
+                    <option value="AgentOrchestrator">AgentOrchestrator</option>
+                    <option value="LearningEngine">LearningEngine</option>
+                    <option value="TradeLogAuditor">TradeLogAuditor</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label class="filter-label" for="windowFilter">Window:</label>
+                <select id="windowFilter" class="filter-select" onchange="onWindowFilterChange()">
+                    <option value="7">Last 7 Days</option>
+                    <option value="14">Last 14 Days</option>
+                    <option value="30">Last 30 Days</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Interactive Charts Grid -->
+        <div class="charts-grid">
+            <div class="chart-card">
+                <h3>📈 Rolling Effectiveness Score (S<sub>t</sub>)</h3>
+                <div class="chart-container">
+                    <canvas id="effectivenessChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-card">
+                <h3>⚖️ Parameter Drift vs ±35% Safety Clamps</h3>
+                <div class="chart-container">
+                    <canvas id="parameterDriftChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-card" style="grid-column: 1 / -1;">
+                <h3>⚡ Cascade Execution Phase Latency Distribution (SLA ≤ 500ms)</h3>
+                <div class="chart-container">
+                    <canvas id="latencyChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Action Audit Drill-Down Table -->
+        <div class="efficiency-card">
+            <h3 style="margin-top:0; font-size:1.1rem; color:#f8fafc; display:flex; align-items:center; gap:8px;">
+                <span>📋</span> Action Audit &amp; Resolution Ledger
+            </h3>
+            <div class="audit-table-wrapper">
+                <table class="audit-table" id="auditTable">
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>Symbol</th>
+                            <th>Action Type</th>
+                            <th>Threshold Used</th>
+                            <th>Outcome P&amp;L</th>
+                            <th>Realized R</th>
+                            <th>Resolution</th>
+                        </tr>
+                    </thead>
+                    <tbody id="auditTableBody">
+                        <tr>
+                            <td colspan="7" style="text-align: center; color: #64748b; padding: 24px;">Loading telemetry actions...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Script -->
+    <script src="/static/js/agent_efficiency.js?v=1.0.0"></script>
+</body>
+</html>
