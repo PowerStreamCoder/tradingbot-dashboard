@@ -25,6 +25,15 @@ class _FakeDoc:
         return dict(self._data)
 
 
+class _FakeDocRef:
+    def __init__(self, doc_id, storage):
+        self.id = doc_id
+        self._storage = storage
+
+    def set(self, data):
+        self._storage[self.id] = data
+
+
 class _FakeStream:
     def __init__(self, docs):
         self._docs = list(docs)
@@ -34,8 +43,10 @@ class _FakeStream:
 
 
 class _FakeCollection:
-    def __init__(self, docs):
+    def __init__(self, docs, storage=None, fail_order_by=False):
         self._docs = list(docs)
+        self._storage = storage if storage is not None else {}
+        self._fail_order_by = fail_order_by
 
     def limit(self, n):
         return _FakeStream(self._docs[:n])
@@ -43,14 +54,31 @@ class _FakeCollection:
     def stream(self):
         return iter(self._docs)
 
+    def document(self, doc_id):
+        return _FakeDocRef(doc_id, self._storage)
+
+    def order_by(self, field, direction=None):
+        if self._fail_order_by:
+            raise RuntimeError(f"Missing index on {field}")
+        rev = "DESC" in str(direction).upper()
+        sorted_docs = sorted(self._docs, key=lambda d: str(d.to_dict().get(field) or ""), reverse=rev)
+        return _FakeCollection(sorted_docs, storage=self._storage, fail_order_by=self._fail_order_by)
+
 
 class _FakeDb:
-    def __init__(self, collections=None):
+    def __init__(self, collections=None, fail_order_by=False):
         self._collections = collections or {}
+        self._fail_order_by = fail_order_by
+        self.storage = {}
 
     def collection(self, name):
         docs = self._collections.get(name, [])
-        return _FakeCollection([_FakeDoc(d.get("doc_id", f"{name}_{i}"), d) for i, d in enumerate(docs)])
+        coll_storage = self.storage.setdefault(name, {})
+        return _FakeCollection(
+            [_FakeDoc(d.get("doc_id", f"{name}_{i}"), d) for i, d in enumerate(docs)],
+            storage=coll_storage,
+            fail_order_by=self._fail_order_by
+        )
 
 
 class TestAgentEfficiencyService(unittest.TestCase):
@@ -427,6 +455,112 @@ class TestAgentEfficiencyService(unittest.TestCase):
         svc_zero = AgentEfficiencyService(db=_FakeDb(db_zero_base))
         bot_zero = svc_zero.get_bot_efficiency("NVDA")
         self.assertEqual(bot_zero["parameter_states"]["break_even_lock_r_multiple"]["drift_pct"], 0.0)
+
+    def test_cache_lru_eviction(self):
+        """Verifies LRU capacity clamping and expired entry eviction."""
+        svc = AgentEfficiencyService(db=_FakeDb(), cache_ttl=1.0, max_cache_entries=16)
+        # Verify min clamp
+        self.assertEqual(svc.max_cache_entries, 16)
+
+        # Manually set max_cache_entries to 3 to test eviction mechanics
+        svc.max_cache_entries = 3
+
+        svc._set_in_cache("k1", "v1")
+        svc._set_in_cache("k2", "v2")
+        svc._set_in_cache("k3", "v3")
+        self.assertEqual(len(svc._cache), 3)
+
+        # Adding k4 should evict oldest (k1)
+        svc._set_in_cache("k4", "v4")
+        self.assertEqual(len(svc._cache), 3)
+        self.assertIsNone(svc._get_from_cache("k1"))
+        self.assertEqual(svc._get_from_cache("k4"), "v4")
+
+        # Manually expire k2 and verify expired eviction
+        svc._cache["k2"] = (datetime.now(timezone.utc) - timedelta(seconds=10), "v2")
+        svc._set_in_cache("k5", "v5")
+        self.assertEqual(len(svc._cache), 3)
+        self.assertNotIn("k2", svc._cache)
+        self.assertEqual(svc._get_from_cache("k5"), "v5")
+
+    def test_generate_daily_rollup_and_persist(self):
+        """Verifies rollup generation, calculation, and persistence."""
+        fake_db = _FakeDb()
+        svc = AgentEfficiencyService(db=fake_db)
+        rollup = svc.generate_daily_rollup("2026-11-21")
+
+        self.assertEqual(rollup["date"], "2026-11-21")
+        self.assertEqual(rollup["fleet_health"], "HEALTHY")
+        self.assertIn("rolling_score", rollup)
+        self.assertIn("p99_latency_ms", rollup)
+        self.assertIn("agent_scores", rollup)
+
+        # Check stored in fake db
+        stored = fake_db.storage.get("agent_efficiency_rollups", {}).get("2026-11-21")
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored["date"], "2026-11-21")
+
+        # Test failure resilience when set() throws
+        failing_db = MagicMock()
+        failing_db.collection.return_value.document.return_value.set.side_effect = RuntimeError("Storage write failure")
+        svc_fail = AgentEfficiencyService(db=failing_db)
+        # Should not raise exception
+        rollup_fail = svc_fail.generate_daily_rollup("2026-11-21")
+        self.assertEqual(rollup_fail["date"], "2026-11-21")
+
+    def test_history_with_preaggregated_rollups(self):
+        """Verifies get_history utilizes pre-aggregated daily rollup documents."""
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        db_data = {
+            "agent_efficiency_rollups": [
+                {
+                    "date": yesterday,
+                    "rolling_score": 0.75,
+                    "net_giveback_saved": 250.0,
+                    "p99_latency_ms": 115.5,
+                    "actions_count": 8,
+                }
+            ],
+            "adaptive_action_log": [],  # no raw actions for yesterday
+            "execution_metrics": [],
+        }
+
+        fake_db = _FakeDb(db_data)
+        svc = AgentEfficiencyService(db=fake_db)
+        hist = svc.get_history(agent="all", window_days=3)
+
+        day_entry = next((s for s in hist["series"] if s["date"] == yesterday), None)
+        self.assertIsNotNone(day_entry)
+        self.assertEqual(day_entry["rolling_score"], 0.75)
+        self.assertEqual(day_entry["giveback_saved"], 250.0)
+        self.assertEqual(day_entry["p99_latency_ms"], 115.5)
+        self.assertEqual(day_entry["actions_count"], 8)
+
+    def test_fetch_collection_docs_native_and_fallback_sorting(self):
+        """Verifies native order_by and fallback sorting mechanics."""
+        raw_docs = [
+            {"timestamp": "2026-11-20T10:00:00Z", "val": 10},
+            {"timestamp": "2026-11-20T12:00:00Z", "val": 20},
+            {"timestamp": "2026-11-20T08:00:00Z", "val": 5},
+        ]
+
+        # 1. Native order_by path
+        db_native = _FakeDb({"test_coll": raw_docs}, fail_order_by=False)
+        svc_native = AgentEfficiencyService(db=db_native)
+        res_native = svc_native._fetch_collection_docs("test_coll", limit=2, order_by_field="timestamp")
+        self.assertEqual(len(res_native), 2)
+        self.assertEqual(res_native[0]["val"], 20)
+        self.assertEqual(res_native[1]["val"], 10)
+
+        # 2. Fallback in-memory sort path when order_by raises exception
+        db_fallback = _FakeDb({"test_coll": raw_docs}, fail_order_by=True)
+        svc_fallback = AgentEfficiencyService(db=db_fallback)
+        res_fallback = svc_fallback._fetch_collection_docs("test_coll", limit=2, order_by_field="timestamp")
+        self.assertEqual(len(res_fallback), 2)
+        self.assertEqual(res_fallback[0]["val"], 20)
+        self.assertEqual(res_fallback[1]["val"], 10)
 
 
 if __name__ == "__main__":

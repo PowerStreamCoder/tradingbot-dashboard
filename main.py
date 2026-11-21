@@ -5483,6 +5483,13 @@ async def send_agent_efficiency_daily_digest(
             }
             dispatched = notifier.dispatch_webhook(payload=payload, webhook_url=target_url)
 
+        # Generate & persist consolidated daily rollup snapshot
+        rollup = None
+        try:
+            rollup = service.generate_daily_rollup()
+        except Exception as ex:
+            logger.warning(f"Could not persist daily rollup snapshot: {ex}")
+
         return {
             "status": "success",
             "digest": {
@@ -5490,6 +5497,7 @@ async def send_agent_efficiency_daily_digest(
                 "html": html_digest,
             },
             "dispatched": dispatched,
+            "rollup": rollup,
         }
     except Exception as e:
         logger.error(f"Error generating daily efficiency digest: {e}", exc_info=True)
