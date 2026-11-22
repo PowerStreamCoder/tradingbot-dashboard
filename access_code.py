@@ -123,19 +123,36 @@ def verify_totp(candidate: str, secret_b32: str, now=None, window: int = 1) -> b
     return matched
 
 
+def is_production(env=None) -> bool:
+    """True if running in production (e.g. Cloud Run K_SERVICE or explicit production environment)."""
+    environ = env if env is not None else os.environ
+    env_name = environ.get("ENVIRONMENT", "").lower()
+    return bool(
+        environ.get("K_SERVICE")
+        or env_name in ("production", "prod")
+        or environ.get("DASHBOARD_STRICT_AUTH", "").lower() in ("1", "true")
+    )
+
+
 def today_code(now=None) -> str:
-    """Today's date as ``ddmmyy``, in UTC (kept as unconfigured fallback)."""
+    """Today's date as ``ddmmyy``, in UTC (kept as unconfigured development fallback only)."""
     moment = now if now is not None else datetime.now(timezone.utc)
     return moment.strftime(DATE_FORMAT)
 
 
-def access_code(secret: str = "", now=None, totp_secret: str = "") -> str:
+def access_code(secret: str = "", now=None, totp_secret: str = "", env=None) -> str:
     """The current access code.
 
-    With no secret: the legacy ``ddmmyy`` date code.
-    With a secret: the 6-digit Google Authenticator TOTP code for the current 30s window.
+    In production: requires a secret. If unset, raises RuntimeError to prevent
+    fallback to publicly derivable date codes (Option 2B).
+    In development/testing: falls back to the legacy date code if unset.
     """
     if not secret and not totp_secret:
+        if is_production(env):
+            raise RuntimeError(
+                "DASHBOARD_ACCESS_SECRET is not configured in production environment! "
+                "Date-derived passcode fallback is disabled for security."
+            )
         return today_code(now)
     key_b32 = get_totp_secret(secret, totp_secret)
     return totp_code(key_b32, for_time=now)
@@ -153,21 +170,23 @@ def totp_secret_from_env(env=None) -> str:
     return (environ.get(TOTP_SECRET_ENV_VAR) or "").strip()
 
 
-def code_matches(candidate, secret: str = None, now=None, totp_secret: str = None) -> bool:
+def code_matches(candidate, secret: str = None, now=None, totp_secret: str = None, env=None) -> bool:
     """Whether ``candidate`` is a valid Google Authenticator TOTP code.
 
-    With no secret configured: falls back to the legacy date code.
-    With a secret configured: requires a valid 6-digit Google Authenticator code.
+    In production: requires a valid secret configured. If secret is missing, fails closed (returns False).
+    In development/testing: falls back to legacy date code if secret is missing.
     Compared in constant time with +-30s clock drift tolerance.
     """
     if not isinstance(candidate, str):
         return False
 
     cleaned = candidate.strip().upper()
-    sec = secret_from_env() if secret is None else secret
-    totp_sec = totp_secret_from_env() if totp_secret is None else totp_secret
+    sec = secret_from_env(env) if secret is None else secret
+    totp_sec = totp_secret_from_env(env) if totp_secret is None else totp_secret
 
     if not sec and not totp_sec:
+        if is_production(env):
+            return False
         expected = today_code(now)
         return hmac.compare_digest(cleaned.encode("utf-8"), expected.encode("utf-8"))
 

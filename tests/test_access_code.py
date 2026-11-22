@@ -377,6 +377,50 @@ class TestGoogleAuthenticatorTOTP:
         assert ac.verify_totp(curr_code, secret_b32, now=object()) is True
 
 
+class TestProductionFailClosed:
+    """Option 2B (Audit F / Issue #497): Fail closed in production if secret is missing."""
+
+    def test_production_detection(self):
+        assert ac.is_production({"K_SERVICE": "trading-dashboard"}) is True
+        assert ac.is_production({"ENVIRONMENT": "production"}) is True
+        assert ac.is_production({"ENVIRONMENT": "prod"}) is True
+        assert ac.is_production({"ENVIRONMENT": "PROD"}) is True
+        assert ac.is_production({"DASHBOARD_STRICT_AUTH": "1"}) is True
+        assert ac.is_production({"DASHBOARD_STRICT_AUTH": "true"}) is True
+        assert ac.is_production({"ENVIRONMENT": "development"}) is False
+        assert ac.is_production({}) is False
+
+    def test_production_with_whitespace_secret_fails_closed(self):
+        prod_env = {
+            "K_SERVICE": "trading-dashboard",
+            "DASHBOARD_ACCESS_SECRET": "   "
+        }
+        with pytest.raises(RuntimeError, match="DASHBOARD_ACCESS_SECRET is not configured in production"):
+            ac.access_code(ac.secret_from_env(prod_env), env=prod_env)
+        assert ac.code_matches("123456", secret=ac.secret_from_env(prod_env), env=prod_env) is False
+
+    def test_production_without_secret_raises_runtime_error(self):
+        prod_env = {"K_SERVICE": "trading-dashboard"}
+        with pytest.raises(RuntimeError, match="DASHBOARD_ACCESS_SECRET is not configured in production"):
+            ac.access_code("", env=prod_env)
+
+    def test_production_without_secret_rejects_date_passcode(self):
+        prod_env = {"K_SERVICE": "trading-dashboard"}
+        date_code = ac.today_code()
+        # In production with missing secret, date passcode MUST be rejected (fail closed)
+        assert ac.code_matches(date_code, secret="", env=prod_env) is False
+
+    def test_production_with_valid_secret_authenticates(self):
+        prod_env = {
+            "K_SERVICE": "trading-dashboard",
+            "DASHBOARD_ACCESS_SECRET": "prod-super-secret-12345"
+        }
+        valid_code = ac.access_code("prod-super-secret-12345", env=prod_env)
+        assert ac.code_matches(valid_code, secret="prod-super-secret-12345", env=prod_env) is True
+        # Date code is still rejected
+        date_code = ac.today_code()
+        assert ac.code_matches(date_code, secret="prod-super-secret-12345", env=prod_env) is False
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
