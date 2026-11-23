@@ -92,7 +92,6 @@
     "cascade_throttle_enabled": true
   },
   "adaptive_entry": {
-    "enable_adaptive_entry": true,
     "base_neutral_mtf_threshold": 0.55,
     "min_neutral_mtf_threshold": 0.45,
     "max_neutral_mtf_threshold": 0.65,
