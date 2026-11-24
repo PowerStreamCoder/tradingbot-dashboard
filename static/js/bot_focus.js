@@ -2762,7 +2762,10 @@ async function handleCreatePosition() {
             },
             body: JSON.stringify({
                 client_id: targetBotId,
-                symbol: targetSymbol
+                symbol: targetSymbol,
+                // #528: optional operator thesis becomes the manual entry's
+                // label for the opportunity model's calibration oracle.
+                thesis: (document.getElementById('createPositionThesis')?.value || '').trim() || undefined
             })
         });
 
@@ -2774,6 +2777,8 @@ async function handleCreatePosition() {
             }
 
             console.log(`Create position command queued for ${targetSymbol} (client_id: ${targetBotId})`);
+            const thesisInput = document.getElementById('createPositionThesis');
+            if (thesisInput) thesisInput.value = '';
             showPositionOperationAlert(`⏳ Order queued for ${targetSymbol} (100 shares + covered call). Waiting for bot execution &amp; broker fill...`, 'info');
             showNotification(`Order queued for ${targetSymbol}. The bot will execute within 2-5 seconds.`, 'info');
 
