@@ -141,7 +141,7 @@ duties — not guaranteed returns. Current status: not achieved.
 - Changelog: `../tradingbot-documentation/CHANGELOG.md`
 
 ## Code Knowledge Graph
-_Auto-updated 2026-11-23. Full graph: `tradingbot-tools/knowledge-graph/output/`_
+_Auto-updated 2026-11-24. Full graph: `tradingbot-tools/knowledge-graph/output/`_
 
 ### Key Classes
 | Class | File | Role |
@@ -158,9 +158,9 @@ _Auto-updated 2026-11-23. Full graph: `tradingbot-tools/knowledge-graph/output/`
 | `AgentEfficiencyService` | `services/agent_efficiency_service.py` | Core aggregator service for evaluating agent performance, al |
 | `AgentOrchestrator` | `agent_orchestrator.py` | Agent Orchestrator. |
 | `AgentScoreCard` | `services/agent_efficiency_service.py` |  |
+| `AllocationContext` | `opportunity_allocator.py` | Point-in-time portfolio state supplied by the live strategy  |
+| `AllocationDecision` | `opportunity_allocator.py` | The allocator's verdict. Contains no execution instruction. |
 | `ArbitrationDecision` | `agent_orchestrator.py` | Outcome of exit verdict arbitration (Phase 4). |
-| `AssetArchetype` | `security_profile_provider.py` |  |
-| `AsyncFillMonitor` | `execution_manager.py` | Tracks orders that timed out but may fill asynchronously. |
 
 ### Trade Entry Lifecycle
 SMACrossoverTrader detects SMA5/SMA20 crossover on 1-hour bar → EntryFilterChain validates: RegimeFilter, MultiTimeframeFilter, volatility guards → UnifiedEntryHandler.execute_entry() → ExecutionManager.execute() → BasePaperTrader.on_entry_fill()
