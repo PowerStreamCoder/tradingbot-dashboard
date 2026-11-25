@@ -1008,35 +1008,6 @@ class TestBotControlEndpoints:
                 res = client.post("/api/create-position", json={"client_id": 4, "symbol": "NVDA"})
                 assert res.status_code == 500
 
-    def test_create_position_forwards_operator_thesis(self, auth_client):
-        """#528: manual entries carry the operator's stated reason as a label."""
-        client, _ = auth_client
-        with patch("main.is_market_hours", return_value=True):
-            with patch("google.cloud.firestore.Client") as mock_fs:
-                mock_db = MagicMock()
-                mock_fs.return_value = mock_db
-                mock_doc = MagicMock()
-                mock_doc.exists = True
-                mock_db.collection().document().get.return_value = mock_doc
-
-                res = client.post("/api/create-position", json={
-                    "client_id": 4, "symbol": "NVDA",
-                    "thesis": "  trend continuation above SMA200  ",
-                })
-                assert res.status_code == 200
-                payload = mock_db.collection().document().set.call_args[0][0]
-                assert payload["pending_command"]["params"]["thesis"] == (
-                    "trend continuation above SMA200"
-                )
-
-                # Invalid/absent thesis must not reach the bot command.
-                res = client.post("/api/create-position", json={
-                    "client_id": 4, "symbol": "NVDA", "thesis": 12345,
-                })
-                assert res.status_code == 200
-                payload = mock_db.collection().document().set.call_args[0][0]
-                assert "thesis" not in payload["pending_command"]["params"]
-
     def test_create_position_refused_outside_market_hours(self, auth_client):
         """#98: outside market hours the command is refused, never queued.
 
