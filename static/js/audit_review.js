@@ -6,7 +6,7 @@
 let allFindings = [];
 let allFindingCounts = null; // Server-side totals; unaffected by the page-size limit.
 let allRuns = [];
-let activeStatus = 'active'; // 'active' | 'resolved' | 'all'
+let activeStatus = 'active'; // 'active' | 'resolved' | 'dismissed' | 'all'
 let selectedCategory = 'all';
 let selectedSymbol = 'all';
 let searchQuery = '';
@@ -290,6 +290,14 @@ function updateKpiCards() {
     const bResolved = document.getElementById('badge-status-resolved');
     if (bResolved) bResolved.textContent = resolvedCount;
 
+    // Dismissed findings are counted server-side like every other status (#155 AUD-016).
+    const bDismissed = document.getElementById('badge-status-dismissed');
+    if (bDismissed) {
+        bDismissed.textContent = allFindingCounts
+            ? (Number(allFindingCounts.dismissed) || 0)
+            : allFindings.filter(f => String(f.status || '').toLowerCase() === 'dismissed').length;
+    }
+
     const bAll = document.getElementById('badge-status-all');
     if (bAll) bAll.textContent = totalCount;
 }
@@ -337,6 +345,7 @@ function renderFindings() {
         const s = String(f.status || '').toLowerCase();
         if (activeStatus === 'active' && !(s === 'open' || s === 'recurring')) return false;
         if (activeStatus === 'resolved' && s !== 'resolved') return false;
+        if (activeStatus === 'dismissed' && s !== 'dismissed') return false;
 
         if (selectedCategory !== 'all') {
             const cat = String(f.category || '').toUpperCase();
@@ -420,12 +429,74 @@ function renderFindings() {
                     ${f.first_seen ? `<span><strong>First Seen:</strong> ${escapeHtml(f.first_seen)}</span>` : ''}
                     ${f.last_seen ? `<span><strong>Last Seen:</strong> ${escapeHtml(f.last_seen)}</span>` : ''}
                     ${f.resolved_at ? `<span><strong>Resolved:</strong> ${escapeHtml(f.resolved_at)}</span>` : ''}
+                    ${f.resolution_reason ? `<span><strong>Reason:</strong> ${escapeHtml(f.resolution_reason)}</span>` : ''}
+                    ${f.actor ? `<span><strong>Actor:</strong> ${escapeHtml(f.actor)}</span>` : ''}
+                </div>
+                <div class="finding-actions" style="display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap;">
+                    ${status === 'open' || status === 'recurring' ? `
+                        <button class="btn btn-action" onclick="decideAuditFinding(this)" data-key="${escapeHtml(f.key || f.finding_id || '')}" data-decision="resolve">Mark Resolved</button>
+                        <button class="btn btn-action" onclick="decideAuditFinding(this)" data-key="${escapeHtml(f.key || f.finding_id || '')}" data-decision="dismiss">Dismiss</button>
+                    ` : ''}
+                    ${status === 'resolved' || status === 'dismissed' ? `
+                        <button class="btn btn-action" onclick="decideAuditFinding(this)" data-key="${escapeHtml(f.key || f.finding_id || '')}" data-decision="reopen">Reopen</button>
+                    ` : ''}
                 </div>
             </div>
         `;
     });
 
     container.innerHTML = html;
+}
+
+/* ---------------------------- HUMAN DECISIONS ------------------------------ */
+
+/**
+ * Apply a resolve/dismiss/reopen decision (#155 AUD-016). Terminal decisions
+ * require a reason so the Firestore audit trail is meaningful; the button is
+ * disabled until the request completes to prevent duplicate writes.
+ */
+async function decideAuditFinding(button) {
+    const key = button.dataset.key;
+    const decision = button.dataset.decision;
+    if (!key || !decision) return;
+
+    let reason = '';
+    if (decision === 'dismiss' || decision === 'reopen') {
+        reason = window.prompt(
+            `${decision === 'dismiss' ? 'Dismiss' : 'Reopen'} finding ${key} — reason (required):`,
+            ''
+        );
+        if (reason === null) return;
+        reason = reason.trim();
+        if (!reason) {
+            showToast('A reason is required for this decision', 'error');
+            return;
+        }
+    } else {
+        reason = window.prompt(`Mark finding ${key} resolved — reason (optional):`, '') || '';
+        reason = reason.trim();
+    }
+
+    const originalText = button.textContent;
+    button.disabled = true;
+    button.textContent = 'Saving...';
+    try {
+        const res = await fetch(`/api/audit/findings/${encodeURIComponent(key)}/status`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ decision, reason }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
+        showToast(`Finding ${decision}d`, 'success');
+        await loadAllAuditData();
+    } catch (err) {
+        console.error('Audit decision failed:', err);
+        showToast(`Failed to ${decision} finding: ${err.message}`, 'error');
+        button.disabled = false;
+        button.textContent = originalText;
+    }
 }
 
 /* ------------------------------- REPORT VIEW ------------------------------- */

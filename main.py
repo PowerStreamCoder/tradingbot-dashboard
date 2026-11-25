@@ -4124,6 +4124,78 @@ async def get_audit_findings(
         raise HTTPException(status_code=500, detail=f"Failed to fetch audit findings: {str(e)}")
 
 
+class AuditFindingDecision(BaseModel):
+    """Human lifecycle decision for one audit finding (#155 AUD-016)."""
+
+    decision: str  # "resolve" | "dismiss" | "reopen"
+    reason: str = ""
+    actor: str = "operator"
+
+
+@app.post("/api/audit/findings/{key}/status")
+async def update_audit_finding_status(key: str, decision: AuditFindingDecision,
+                                      request: Request):
+    """Apply a human resolve/dismiss/reopen decision to an audit finding.
+
+    The write lands on ``audit_findings/{key}`` with actor, reason and a UTC
+    timestamp. ``audit_review.js`` offers the matching buttons. The auditor's
+    memory consumes these fields: dismissed findings are suppressed from alerts
+    and proposals, and a reopened finding becomes ``recurring`` so it pages once.
+    """
+    session_id = request.cookies.get("dashboard_session")
+    if not is_valid_session(session_id):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    decision_name = (decision.decision or "").strip().lower()
+    target = {
+        "resolve": "resolved",
+        "dismiss": "dismissed",
+        "reopen": "recurring",
+    }.get(decision_name)
+    if not target:
+        raise HTTPException(
+            status_code=400,
+            detail="decision must be one of: resolve, dismiss, reopen",
+        )
+
+    reason = (decision.reason or "").strip()
+    if not reason:
+        reason = f"{decision_name}d by operator"
+    if decision_name in ("dismiss", "reopen") and not (decision.reason or "").strip():
+        # A terminal decision without a stated reason is not auditable.
+        raise HTTPException(status_code=400, detail="reason is required to dismiss or reopen")
+
+    actor = (decision.actor or "").strip() or "operator"
+    now = datetime.now(timezone.utc).isoformat()
+    update = {
+        "status": target,
+        "decision": decision_name,
+        "resolution_reason": reason,
+        "resolved_at": now if decision_name != "reopen" else "",
+        "decision_at": now,
+        "actor": actor,
+        "last_seen": now,
+    }
+    if decision_name == "reopen":
+        update["reopened_at"] = now
+
+    try:
+        db = getattr(dashboard_data, "db", None) or firestore.Client()
+        doc_ref = db.collection("audit_findings").document(key)
+        doc = doc_ref.get()
+        if not doc.exists:
+            raise HTTPException(status_code=404, detail=f"Audit finding '{key}' not found")
+        doc_ref.update(update)
+        updated = doc_ref.get().to_dict() or {}
+        updated.setdefault("key", key)
+        updated.update(update)
+        return {"status": "success", "finding": updated}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update audit finding: {str(e)}")
+
+
 @app.get("/api/historical-bars/{symbol}")
 async def get_historical_bars(symbol: str, bars: int = 50):
     """
