@@ -2940,8 +2940,7 @@ async def create_position(request: Request):
         {
             "client_id": 4,          # preferred: the bot's client_id
             "bot_id": 2,             # legacy alternative: 1-indexed position in bots.json
-            "symbol": "NVDA",        # optional; must match the resolved bot's config
-            "thesis": "breakout above prior day high"  # optional operator label (#528)
+            "symbol": "NVDA"         # optional; must match the resolved bot's config
         }
 
     Returns:
@@ -2950,16 +2949,6 @@ async def create_position(request: Request):
     """
     try:
         body = await request.json()
-
-        # #528: optional operator thesis. Forwarded to the bot so the manual
-        # entry is labeled with the reason for the trade, not just features.
-        # Absent/invalid values stay absent — nothing else about the command
-        # changes, and malformed input cannot reach the bot command path.
-        thesis = body.get('thesis')
-        if isinstance(thesis, str):
-            thesis = thesis.strip()[:200] or None
-        else:
-            thesis = None
 
         # Resolve to exactly one bot; refuses a client_id/symbol mismatch
         # instead of writing the command to the wrong bot. The symbol is
@@ -3003,8 +2992,6 @@ async def create_position(request: Request):
                 'use_sma_config': True  # Use SMA crossover config (2.0x ATR target, 5% stop)
             }
         }
-        if thesis:
-            create_command['params']['thesis'] = thesis
 
         # Write command to Firestore (use set with merge to handle both create and update)
         bot_ref.set({
