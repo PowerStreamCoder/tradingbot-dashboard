@@ -35,7 +35,7 @@ duties — not guaranteed returns. Current status: not achieved.
 - HTML templates: `templates/` (Jinja2 — bot_focus.html, index.html, learning_review.html)
 - Bot config (read at startup): `config/bots.json`
 - Stock picker logic: `stockpicker/core.py`, `stockpicker/runner.py`
-- Tests: `tests/` (test_api.py, test_bot_control.py, test_close_position.py, test_dashboard_api.py)
+- Tests: `tests/` (test_api.py, test_bot_control.py, test_dashboard_api.py)
 
 ## Important commands
 - Start dev server: `cd tradingbot-dashboard && python main.py` → http://localhost:8080
