@@ -4,6 +4,7 @@
  */
 
 let allFindings = [];
+let allFindingCounts = null; // Server-side totals; unaffected by the page-size limit.
 let allRuns = [];
 let activeStatus = 'active'; // 'active' | 'resolved' | 'all'
 let selectedCategory = 'all';
@@ -190,6 +191,7 @@ async function loadAllAuditData() {
 
         allRuns = runsData.runs || [];
         allFindings = findingsData.findings || [];
+        allFindingCounts = findingsData.counts || null;
 
         updateKpiCards();
         renderFindings();
@@ -253,14 +255,21 @@ function updateKpiCards() {
         }
     }
 
-    // Stat 3 & 4: Active vs Resolved Findings
+    // Stat 3 & 4: Active vs Resolved Findings. Prefer server-side counts: the
+    // findings API is paginated, so counting the loaded page understates totals.
     let activeCount = 0;
     let resolvedCount = 0;
-    allFindings.forEach(f => {
-        const s = String(f.status || '').toLowerCase();
-        if (s === 'open' || s === 'recurring') activeCount++;
-        else if (s === 'resolved') resolvedCount++;
-    });
+    if (allFindingCounts && typeof allFindingCounts === 'object') {
+        activeCount = Number(allFindingCounts.active) || 0;
+        resolvedCount = Number(allFindingCounts.resolved) || 0;
+    } else {
+        allFindings.forEach(f => {
+            const s = String(f.status || '').toLowerCase();
+            if (s === 'open' || s === 'recurring') activeCount++;
+            else if (s === 'resolved') resolvedCount++;
+        });
+    }
+    const totalCount = (allFindingCounts && Number(allFindingCounts.total)) || allFindings.length;
 
     const statActive = document.getElementById('stat-active-findings');
     if (statActive) statActive.textContent = activeCount;
@@ -270,7 +279,7 @@ function updateKpiCards() {
 
     // Badges in toolbar
     const bFindings = document.getElementById('badge-findings-count');
-    if (bFindings) bFindings.textContent = allFindings.length;
+    if (bFindings) bFindings.textContent = totalCount;
 
     const bRuns = document.getElementById('badge-runs-count');
     if (bRuns) bRuns.textContent = allRuns.length;
@@ -282,7 +291,7 @@ function updateKpiCards() {
     if (bResolved) bResolved.textContent = resolvedCount;
 
     const bAll = document.getElementById('badge-status-all');
-    if (bAll) bAll.textContent = allFindings.length;
+    if (bAll) bAll.textContent = totalCount;
 }
 
 /* ------------------------------- FINDINGS VIEW ------------------------------- */

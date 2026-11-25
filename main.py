@@ -4045,14 +4045,16 @@ async def get_audit_findings(
         limit: max findings returned (1..500)
 
     Returns:
-        {"findings": [...]}
+        {"findings": [...], "counts": {"total", "active", "resolved", "dismissed"}}
+        Counts describe the whole collection, not the truncated page, so dashboard
+        KPI badges stay correct when more than `limit` findings exist (#155 AUD-011).
     """
     try:
         limit = max(1, min(limit, 500))
         db = getattr(dashboard_data, "db", None) or firestore.Client()
         docs = db.collection("audit_findings").stream()
 
-        findings = []
+        all_findings = []
         status_norm = (status or "").strip().lower()
         cat_norm = (category or "").strip().upper()
         sym_norm = (symbol or "").strip().upper()
@@ -4060,7 +4062,26 @@ async def get_audit_findings(
         for doc in docs:
             data = doc.to_dict() or {}
             data.setdefault("key", doc.id)
+            all_findings.append(data)
 
+        counts = {
+            "total": len(all_findings),
+            "active": sum(
+                1 for f in all_findings
+                if str(f.get("status") or "").lower() in ("open", "recurring")
+            ),
+            "resolved": sum(
+                1 for f in all_findings
+                if str(f.get("status") or "").lower() == "resolved"
+            ),
+            "dismissed": sum(
+                1 for f in all_findings
+                if str(f.get("status") or "").lower() == "dismissed"
+            ),
+        }
+
+        findings = []
+        for data in all_findings:
             f_status = str(data.get("status") or "").lower()
             if status_norm and status_norm != "all":
                 if status_norm == "active" and f_status not in ("open", "recurring"):
@@ -4078,17 +4099,27 @@ async def get_audit_findings(
 
             findings.append(data)
 
-        # Sort: severity first (critical -> high -> medium -> low -> opportunity), then newest
+        # Sort: severity first (critical -> high -> medium -> low -> opportunity),
+        # newest first within each severity. Two stable sorts avoid inverting the
+        # timestamp key while keeping severity primary (#155 AUD-011).
         sev_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "opportunity": 4}
-        findings.sort(key=lambda x: (
-            sev_rank.get(str(x.get("severity", "low")).lower(), 5),
-            str(x.get("last_seen") or x.get("created_at") or "")
-        ), reverse=False)
+        findings.sort(
+            key=lambda x: str(x.get("last_seen") or x.get("created_at") or ""),
+            reverse=True,
+        )
+        findings.sort(key=lambda x: sev_rank.get(str(x.get("severity", "low")).lower(), 5))
 
         if response:
             response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
 
-        return {"findings": findings[:limit]}
+        return {
+            "findings": findings[:limit],
+            "counts": counts,
+            "total": counts["total"],
+            "active": counts["active"],
+            "resolved": counts["resolved"],
+            "dismissed": counts["dismissed"],
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch audit findings: {str(e)}")
 

@@ -301,6 +301,37 @@ class TestAuditAPI(unittest.TestCase):
         severities = [f["severity"] for f in findings]
         assert severities == ["critical", "high", "low", "opportunity"]
 
+    def test_get_audit_findings_server_side_counts_and_newest_first(self):
+        """#155 AUD-011: KPI totals cover all 500 rows, not the 200-row page."""
+        base = datetime.datetime(2026, 11, 1, 0, 0, 0)
+        docs = {}
+        for i in range(500):
+            status = "open" if i < 250 else ("resolved" if i < 400 else "dismissed")
+            key = f"f_{i:03d}"
+            docs[key] = {
+                "key": key,
+                "status": status,
+                "severity": "high",
+                "category": "INTEGRITY",
+                "symbol": "NVDA",
+                "last_seen": (base + datetime.timedelta(minutes=i)).isoformat(),
+            }
+        self.fake_db.collections["audit_findings"] = docs
+
+        res = self.client.get("/api/audit/findings?limit=200&status=all", headers=self.headers)
+        assert res.status_code == 200
+        data = res.json()
+        assert data["counts"] == {
+            "total": 500, "active": 250, "resolved": 150, "dismissed": 100,
+        }
+        assert (data["total"], data["active"], data["resolved"], data["dismissed"]) == (
+            500, 250, 150, 100,
+        )
+        assert len(data["findings"]) == 200
+        keys = [f["key"] for f in data["findings"]]
+        assert keys[0] == "f_499"
+        assert keys[-1] == "f_300"
+
     def test_get_audit_findings_filter_status(self):
         # Active status returns open and recurring
         res = self.client.get("/api/audit/findings?status=active", headers=self.headers)
