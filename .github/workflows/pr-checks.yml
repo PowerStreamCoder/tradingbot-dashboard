@@ -22,6 +22,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # AUD-025: the end-to-end smoke test imports the real auditor from the
+      # sibling checkout so a wiring break in either repo fails this CI job.
+      - name: Checkout tradingbot-tools for auditor smoke test
+        uses: actions/checkout@v4
+        with:
+          repository: PowerStreamCoder/tradingbot-tools
+          path: tradingbot-tools
+          token: ${{ secrets.PAT_TOKEN }}
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
