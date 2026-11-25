@@ -367,8 +367,18 @@ class AgentEfficiencyService:
                 "intent_match_rate": orchestrator_match_rate,
                 "conflict_arbitration_count": conflict_arbitrations,
                 "shadowed_rule_ratio": 0.0,
+                "ml_exit_arbitration_enabled": any(
+                    b.get("ml_exit_arbitration_enabled", False) for b in overview_docs
+                ),
+                "ml_arbitration_invocations": sum(
+                    (b.get("ml_arbitration_invocations") or 0) for b in overview_docs
+                ),
+                "ml_critical_bypass_count": sum(
+                    (b.get("ml_critical_bypass_count") or 0) for b in overview_docs
+                ),
             },
-            summary="Arbitrates high-level regime posture and resolves exit conflicts."
+            summary="Arbitrates high-level regime posture and resolves exit conflicts. "
+                    "ML exit arbitration metrics reflect Pillar 1 dynamic learned precedence."
         )
 
         # 3. Agent 2: AdaptiveEntryAgent
