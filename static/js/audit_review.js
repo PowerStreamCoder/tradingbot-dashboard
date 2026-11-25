@@ -240,8 +240,16 @@ function updateKpiCards() {
         } else {
             const exec = lastRun.checks_executed ?? 14;
             const skipMap = lastRun.skipped_checks || {};
-            const skipped = typeof skipMap === 'object' ? Object.keys(skipMap).length : 0;
-            statCoverage.innerHTML = `<span style="color: #38bdf8;">${exec}</span> / ${exec + skipped} <span style="font-size: 0.7em; color: #94a3b8;">(${skipped} skipped)</span>`;
+            let skipped = typeof skipMap === 'object' ? Object.keys(skipMap).length : 0;
+            const outcomes = lastRun.check_outcomes || {};
+            const outcomeIds = Object.keys(outcomes);
+            if (outcomeIds.length) {
+                const ran = outcomeIds.filter(id => (outcomes[id] || {}).outcome === 'ran').length;
+                skipped = outcomeIds.length - ran;
+                statCoverage.innerHTML = `<span style="color: #38bdf8;">${ran}</span> / ${outcomeIds.length} <span style="font-size: 0.7em; color: #94a3b8;">(${skipped} not run)</span>`;
+            } else {
+                statCoverage.innerHTML = `<span style="color: #38bdf8;">${exec}</span> / ${exec + skipped} <span style="font-size: 0.7em; color: #94a3b8;">(${skipped} skipped)</span>`;
+            }
         }
     }
 
@@ -428,6 +436,51 @@ async function viewRunReport(runId) {
     }
 }
 
+function renderCheckOutcomes(outcomes) {
+    const container = document.getElementById('latest-run-outcomes');
+    if (!container) return;
+    if (!outcomes || typeof outcomes !== 'object' || Object.keys(outcomes).length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+
+    const badgeClass = {
+        'ran': 'badge-low',
+        'skipped': 'badge-medium',
+        'insufficient_sample': 'badge-medium',
+        'source_unavailable': 'badge-high',
+        'error': 'badge-high',
+    };
+    let rows = '';
+    Object.keys(outcomes).sort().forEach(checkId => {
+        const info = outcomes[checkId] || {};
+        const outcome = String(info.outcome || 'unknown');
+        const cls = badgeClass[outcome] || 'badge-medium';
+        rows += `
+            <tr>
+                <td><code>${escapeHtml(checkId)}</code></td>
+                <td><span class="badge-pill ${cls}">${escapeHtml(outcome)}</span></td>
+                <td>${escapeHtml(String(info.mode || '-'))}</td>
+                <td style="color: #94a3b8;">${escapeHtml(String(info.reason || ''))}</td>
+            </tr>
+        `;
+    });
+    container.innerHTML = `
+        <div style="background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px; padding: 16px 20px;">
+            <h3 style="margin-top: 0; color: #f8fafc; font-size: 1.1em;">Check Outcomes</h3>
+            <p style="color: #94a3b8; font-size: 0.85em; margin-top: 0;">
+                Every registered check reports an outcome — a check that did not run is never a clean pass.
+            </p>
+            <div style="overflow-x: auto;">
+                <table class="runs-table">
+                    <thead><tr><th>Check</th><th>Outcome</th><th>Mode</th><th>Reason</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+        </div>
+    `;
+}
+
 function renderLatestReport(run) {
     if (!run) return;
     currentReportRunId = run.run_id;
@@ -437,6 +490,10 @@ function renderLatestReport(run) {
         const exec = run.checks_executed ?? 14;
         const skipMap = run.skipped_checks || {};
         const skipped = typeof skipMap === 'object' ? Object.keys(skipMap).length : 0;
+        const outcomes = run.check_outcomes || {};
+        const notRun = Object.keys(outcomes).filter(
+            id => (outcomes[id] || {}).outcome && outcomes[id].outcome !== 'ran'
+        ).length;
         meta.innerHTML = `
             <div style="font-size: 1.1em; font-weight: 600; color: #f8fafc;">
                 Report for Run: <code>${escapeHtml(run.run_id || 'unknown')}</code>
@@ -447,8 +504,11 @@ function renderLatestReport(run) {
             <span class="badge-pill badge-symbol">Date: ${escapeHtml(run.trade_date || 'latest')}</span>
             <span class="badge-pill badge-category">Executed: ${exec}</span>
             <span class="badge-pill ${skipped > 0 ? 'badge-high' : 'badge-low'}">Skipped: ${skipped}</span>
+            <span class="badge-pill ${notRun > 0 ? 'badge-high' : 'badge-low'}">Not run: ${notRun}</span>
         `;
     }
+
+    renderCheckOutcomes(run.check_outcomes);
 
     const reportCont = document.getElementById('latest-run-report-container');
     if (reportCont) {
