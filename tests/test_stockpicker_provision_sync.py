@@ -469,6 +469,8 @@ def test_load_bot_parameters_falls_back_to_firestore(tmp_path):
     mock_db.collection.return_value = mock_coll
 
     with patch("os.path.exists", return_value=False), \
+         patch("os.makedirs"), \
+         patch("builtins.open", mock_open()), \
          patch.object(dashboard_data, "db", mock_db):
         params = load_bot_parameters("AFRM")
         assert params is not None
