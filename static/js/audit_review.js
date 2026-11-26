@@ -4,8 +4,9 @@
  */
 
 let allFindings = [];
+let allFindingCounts = null; // Server-side totals; unaffected by the page-size limit.
 let allRuns = [];
-let activeStatus = 'active'; // 'active' | 'resolved' | 'all'
+let activeStatus = 'active'; // 'active' | 'resolved' | 'dismissed' | 'all'
 let selectedCategory = 'all';
 let selectedSymbol = 'all';
 let searchQuery = '';
@@ -190,6 +191,7 @@ async function loadAllAuditData() {
 
         allRuns = runsData.runs || [];
         allFindings = findingsData.findings || [];
+        allFindingCounts = findingsData.counts || null;
 
         updateKpiCards();
         renderFindings();
@@ -240,19 +242,34 @@ function updateKpiCards() {
         } else {
             const exec = lastRun.checks_executed ?? 14;
             const skipMap = lastRun.skipped_checks || {};
-            const skipped = typeof skipMap === 'object' ? Object.keys(skipMap).length : 0;
-            statCoverage.innerHTML = `<span style="color: #38bdf8;">${exec}</span> / ${exec + skipped} <span style="font-size: 0.7em; color: #94a3b8;">(${skipped} skipped)</span>`;
+            let skipped = typeof skipMap === 'object' ? Object.keys(skipMap).length : 0;
+            const outcomes = lastRun.check_outcomes || {};
+            const outcomeIds = Object.keys(outcomes);
+            if (outcomeIds.length) {
+                const ran = outcomeIds.filter(id => (outcomes[id] || {}).outcome === 'ran').length;
+                skipped = outcomeIds.length - ran;
+                statCoverage.innerHTML = `<span style="color: #38bdf8;">${ran}</span> / ${outcomeIds.length} <span style="font-size: 0.7em; color: #94a3b8;">(${skipped} not run)</span>`;
+            } else {
+                statCoverage.innerHTML = `<span style="color: #38bdf8;">${exec}</span> / ${exec + skipped} <span style="font-size: 0.7em; color: #94a3b8;">(${skipped} skipped)</span>`;
+            }
         }
     }
 
-    // Stat 3 & 4: Active vs Resolved Findings
+    // Stat 3 & 4: Active vs Resolved Findings. Prefer server-side counts: the
+    // findings API is paginated, so counting the loaded page understates totals.
     let activeCount = 0;
     let resolvedCount = 0;
-    allFindings.forEach(f => {
-        const s = String(f.status || '').toLowerCase();
-        if (s === 'open' || s === 'recurring') activeCount++;
-        else if (s === 'resolved') resolvedCount++;
-    });
+    if (allFindingCounts && typeof allFindingCounts === 'object') {
+        activeCount = Number(allFindingCounts.active) || 0;
+        resolvedCount = Number(allFindingCounts.resolved) || 0;
+    } else {
+        allFindings.forEach(f => {
+            const s = String(f.status || '').toLowerCase();
+            if (s === 'open' || s === 'recurring') activeCount++;
+            else if (s === 'resolved') resolvedCount++;
+        });
+    }
+    const totalCount = (allFindingCounts && Number(allFindingCounts.total)) || allFindings.length;
 
     const statActive = document.getElementById('stat-active-findings');
     if (statActive) statActive.textContent = activeCount;
@@ -262,7 +279,7 @@ function updateKpiCards() {
 
     // Badges in toolbar
     const bFindings = document.getElementById('badge-findings-count');
-    if (bFindings) bFindings.textContent = allFindings.length;
+    if (bFindings) bFindings.textContent = totalCount;
 
     const bRuns = document.getElementById('badge-runs-count');
     if (bRuns) bRuns.textContent = allRuns.length;
@@ -273,8 +290,16 @@ function updateKpiCards() {
     const bResolved = document.getElementById('badge-status-resolved');
     if (bResolved) bResolved.textContent = resolvedCount;
 
+    // Dismissed findings are counted server-side like every other status (#155 AUD-016).
+    const bDismissed = document.getElementById('badge-status-dismissed');
+    if (bDismissed) {
+        bDismissed.textContent = allFindingCounts
+            ? (Number(allFindingCounts.dismissed) || 0)
+            : allFindings.filter(f => String(f.status || '').toLowerCase() === 'dismissed').length;
+    }
+
     const bAll = document.getElementById('badge-status-all');
-    if (bAll) bAll.textContent = allFindings.length;
+    if (bAll) bAll.textContent = totalCount;
 }
 
 /* ------------------------------- FINDINGS VIEW ------------------------------- */
@@ -320,6 +345,7 @@ function renderFindings() {
         const s = String(f.status || '').toLowerCase();
         if (activeStatus === 'active' && !(s === 'open' || s === 'recurring')) return false;
         if (activeStatus === 'resolved' && s !== 'resolved') return false;
+        if (activeStatus === 'dismissed' && s !== 'dismissed') return false;
 
         if (selectedCategory !== 'all') {
             const cat = String(f.category || '').toUpperCase();
@@ -403,12 +429,74 @@ function renderFindings() {
                     ${f.first_seen ? `<span><strong>First Seen:</strong> ${escapeHtml(f.first_seen)}</span>` : ''}
                     ${f.last_seen ? `<span><strong>Last Seen:</strong> ${escapeHtml(f.last_seen)}</span>` : ''}
                     ${f.resolved_at ? `<span><strong>Resolved:</strong> ${escapeHtml(f.resolved_at)}</span>` : ''}
+                    ${f.resolution_reason ? `<span><strong>Reason:</strong> ${escapeHtml(f.resolution_reason)}</span>` : ''}
+                    ${f.actor ? `<span><strong>Actor:</strong> ${escapeHtml(f.actor)}</span>` : ''}
+                </div>
+                <div class="finding-actions" style="display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap;">
+                    ${status === 'open' || status === 'recurring' ? `
+                        <button class="btn btn-action" onclick="decideAuditFinding(this)" data-key="${escapeHtml(f.key || f.finding_id || '')}" data-decision="resolve">Mark Resolved</button>
+                        <button class="btn btn-action" onclick="decideAuditFinding(this)" data-key="${escapeHtml(f.key || f.finding_id || '')}" data-decision="dismiss">Dismiss</button>
+                    ` : ''}
+                    ${status === 'resolved' || status === 'dismissed' ? `
+                        <button class="btn btn-action" onclick="decideAuditFinding(this)" data-key="${escapeHtml(f.key || f.finding_id || '')}" data-decision="reopen">Reopen</button>
+                    ` : ''}
                 </div>
             </div>
         `;
     });
 
     container.innerHTML = html;
+}
+
+/* ---------------------------- HUMAN DECISIONS ------------------------------ */
+
+/**
+ * Apply a resolve/dismiss/reopen decision (#155 AUD-016). Terminal decisions
+ * require a reason so the Firestore audit trail is meaningful; the button is
+ * disabled until the request completes to prevent duplicate writes.
+ */
+async function decideAuditFinding(button) {
+    const key = button.dataset.key;
+    const decision = button.dataset.decision;
+    if (!key || !decision) return;
+
+    let reason = '';
+    if (decision === 'dismiss' || decision === 'reopen') {
+        reason = window.prompt(
+            `${decision === 'dismiss' ? 'Dismiss' : 'Reopen'} finding ${key} — reason (required):`,
+            ''
+        );
+        if (reason === null) return;
+        reason = reason.trim();
+        if (!reason) {
+            showToast('A reason is required for this decision', 'error');
+            return;
+        }
+    } else {
+        reason = window.prompt(`Mark finding ${key} resolved — reason (optional):`, '') || '';
+        reason = reason.trim();
+    }
+
+    const originalText = button.textContent;
+    button.disabled = true;
+    button.textContent = 'Saving...';
+    try {
+        const res = await fetch(`/api/audit/findings/${encodeURIComponent(key)}/status`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ decision, reason }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
+        showToast(`Finding ${decision}d`, 'success');
+        await loadAllAuditData();
+    } catch (err) {
+        console.error('Audit decision failed:', err);
+        showToast(`Failed to ${decision} finding: ${err.message}`, 'error');
+        button.disabled = false;
+        button.textContent = originalText;
+    }
 }
 
 /* ------------------------------- REPORT VIEW ------------------------------- */
@@ -428,6 +516,51 @@ async function viewRunReport(runId) {
     }
 }
 
+function renderCheckOutcomes(outcomes) {
+    const container = document.getElementById('latest-run-outcomes');
+    if (!container) return;
+    if (!outcomes || typeof outcomes !== 'object' || Object.keys(outcomes).length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+
+    const badgeClass = {
+        'ran': 'badge-low',
+        'skipped': 'badge-medium',
+        'insufficient_sample': 'badge-medium',
+        'source_unavailable': 'badge-high',
+        'error': 'badge-high',
+    };
+    let rows = '';
+    Object.keys(outcomes).sort().forEach(checkId => {
+        const info = outcomes[checkId] || {};
+        const outcome = String(info.outcome || 'unknown');
+        const cls = badgeClass[outcome] || 'badge-medium';
+        rows += `
+            <tr>
+                <td><code>${escapeHtml(checkId)}</code></td>
+                <td><span class="badge-pill ${cls}">${escapeHtml(outcome)}</span></td>
+                <td>${escapeHtml(String(info.mode || '-'))}</td>
+                <td style="color: #94a3b8;">${escapeHtml(String(info.reason || ''))}</td>
+            </tr>
+        `;
+    });
+    container.innerHTML = `
+        <div style="background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px; padding: 16px 20px;">
+            <h3 style="margin-top: 0; color: #f8fafc; font-size: 1.1em;">Check Outcomes</h3>
+            <p style="color: #94a3b8; font-size: 0.85em; margin-top: 0;">
+                Every registered check reports an outcome — a check that did not run is never a clean pass.
+            </p>
+            <div style="overflow-x: auto;">
+                <table class="runs-table">
+                    <thead><tr><th>Check</th><th>Outcome</th><th>Mode</th><th>Reason</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+        </div>
+    `;
+}
+
 function renderLatestReport(run) {
     if (!run) return;
     currentReportRunId = run.run_id;
@@ -437,6 +570,10 @@ function renderLatestReport(run) {
         const exec = run.checks_executed ?? 14;
         const skipMap = run.skipped_checks || {};
         const skipped = typeof skipMap === 'object' ? Object.keys(skipMap).length : 0;
+        const outcomes = run.check_outcomes || {};
+        const notRun = Object.keys(outcomes).filter(
+            id => (outcomes[id] || {}).outcome && outcomes[id].outcome !== 'ran'
+        ).length;
         meta.innerHTML = `
             <div style="font-size: 1.1em; font-weight: 600; color: #f8fafc;">
                 Report for Run: <code>${escapeHtml(run.run_id || 'unknown')}</code>
@@ -447,8 +584,11 @@ function renderLatestReport(run) {
             <span class="badge-pill badge-symbol">Date: ${escapeHtml(run.trade_date || 'latest')}</span>
             <span class="badge-pill badge-category">Executed: ${exec}</span>
             <span class="badge-pill ${skipped > 0 ? 'badge-high' : 'badge-low'}">Skipped: ${skipped}</span>
+            <span class="badge-pill ${notRun > 0 ? 'badge-high' : 'badge-low'}">Not run: ${notRun}</span>
         `;
     }
+
+    renderCheckOutcomes(run.check_outcomes);
 
     const reportCont = document.getElementById('latest-run-report-container');
     if (reportCont) {

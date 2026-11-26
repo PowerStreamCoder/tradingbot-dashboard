@@ -42,6 +42,9 @@ class _FakeDocRef:
     def get(self):
         return _FakeDoc(self.id, self._data, exists=self.exists)
 
+    def update(self, fields):
+        self._data.update(fields)
+
 
 class _FakeQuery:
     def __init__(self, docs):
@@ -301,6 +304,37 @@ class TestAuditAPI(unittest.TestCase):
         severities = [f["severity"] for f in findings]
         assert severities == ["critical", "high", "low", "opportunity"]
 
+    def test_get_audit_findings_server_side_counts_and_newest_first(self):
+        """#155 AUD-011: KPI totals cover all 500 rows, not the 200-row page."""
+        base = datetime.datetime(2026, 11, 1, 0, 0, 0)
+        docs = {}
+        for i in range(500):
+            status = "open" if i < 250 else ("resolved" if i < 400 else "dismissed")
+            key = f"f_{i:03d}"
+            docs[key] = {
+                "key": key,
+                "status": status,
+                "severity": "high",
+                "category": "INTEGRITY",
+                "symbol": "NVDA",
+                "last_seen": (base + datetime.timedelta(minutes=i)).isoformat(),
+            }
+        self.fake_db.collections["audit_findings"] = docs
+
+        res = self.client.get("/api/audit/findings?limit=200&status=all", headers=self.headers)
+        assert res.status_code == 200
+        data = res.json()
+        assert data["counts"] == {
+            "total": 500, "active": 250, "resolved": 150, "dismissed": 100,
+        }
+        assert (data["total"], data["active"], data["resolved"], data["dismissed"]) == (
+            500, 250, 150, 100,
+        )
+        assert len(data["findings"]) == 200
+        keys = [f["key"] for f in data["findings"]]
+        assert keys[0] == "f_499"
+        assert keys[-1] == "f_300"
+
     def test_get_audit_findings_filter_status(self):
         # Active status returns open and recurring
         res = self.client.get("/api/audit/findings?status=active", headers=self.headers)
@@ -450,6 +484,91 @@ class TestAuditAPI(unittest.TestCase):
                 assert res.status_code == 200
 
 
+
+
+class TestAuditFindingDecisions(unittest.TestCase):
+    """#155 AUD-016: human resolve/dismiss/reopen via the audit review API."""
+
+    # Reuse the fixture above without re-running every inherited GET test.
+    setUp = TestAuditAPI.setUp
+    tearDown = TestAuditAPI.tearDown
+
+    def test_dismiss_stores_actor_reason_and_timestamp(self):
+        res = self.client.post(
+            "/api/audit/findings/f_pnl_1/status",
+            json={"decision": "dismiss", "reason": "false positive", "actor": "alice"},
+            headers=self.headers,
+        )
+        assert res.status_code == 200, res.text
+        finding = res.json()["finding"]
+        assert finding["status"] == "dismissed"
+        assert finding["decision"] == "dismiss"
+        assert finding["actor"] == "alice"
+        assert finding["resolution_reason"] == "false positive"
+        assert finding["decision_at"].endswith("+00:00")
+        assert self.sample_findings["f_pnl_1"]["status"] == "dismissed"
+
+        listed = self.client.get(
+            "/api/audit/findings?status=dismissed", headers=self.headers
+        ).json()
+        assert any(f["key"] == "f_pnl_1" for f in listed["findings"])
+
+    def test_reopen_turns_dismissed_finding_recurring(self):
+        res = self.client.post(
+            "/api/audit/findings/f_win_4/status",
+            json={"decision": "reopen", "reason": "recurred", "actor": "bob"},
+            headers=self.headers,
+        )
+        assert res.status_code == 200, res.text
+        finding = res.json()["finding"]
+        assert finding["status"] == "recurring"
+        assert finding["decision"] == "reopen"
+        assert finding["resolved_at"] == ""
+        assert finding["actor"] == "bob"
+        assert finding["reopened_at"]
+
+    def test_resolve_is_distinct_from_dismiss(self):
+        res = self.client.post(
+            "/api/audit/findings/f_stop_2/status",
+            json={"decision": "resolve", "reason": "verified fixed"},
+            headers=self.headers,
+        )
+        assert res.status_code == 200, res.text
+        finding = res.json()["finding"]
+        assert finding["status"] == "resolved"
+        assert finding["actor"] == "operator"
+        assert finding["resolution_reason"] == "verified fixed"
+
+    def test_terminal_decision_requires_reason(self):
+        res = self.client.post(
+            "/api/audit/findings/f_pnl_1/status",
+            json={"decision": "dismiss"},
+            headers=self.headers,
+        )
+        assert res.status_code == 400
+        assert "reason" in res.json()["detail"]
+
+    def test_unknown_decision_and_missing_finding(self):
+        bad = self.client.post(
+            "/api/audit/findings/f_pnl_1/status",
+            json={"decision": "archive", "reason": "x"},
+            headers=self.headers,
+        )
+        assert bad.status_code == 400
+
+        missing = self.client.post(
+            "/api/audit/findings/does-not-exist/status",
+            json={"decision": "resolve"},
+            headers=self.headers,
+        )
+        assert missing.status_code == 404
+
+    def test_decision_requires_authenticated_session(self):
+        res = self.client.post(
+            "/api/audit/findings/f_pnl_1/status",
+            json={"decision": "dismiss", "reason": "x"},
+        )
+        assert res.status_code == 401
 
 
 if __name__ == "__main__":

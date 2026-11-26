@@ -4045,14 +4045,16 @@ async def get_audit_findings(
         limit: max findings returned (1..500)
 
     Returns:
-        {"findings": [...]}
+        {"findings": [...], "counts": {"total", "active", "resolved", "dismissed"}}
+        Counts describe the whole collection, not the truncated page, so dashboard
+        KPI badges stay correct when more than `limit` findings exist (#155 AUD-011).
     """
     try:
         limit = max(1, min(limit, 500))
         db = getattr(dashboard_data, "db", None) or firestore.Client()
         docs = db.collection("audit_findings").stream()
 
-        findings = []
+        all_findings = []
         status_norm = (status or "").strip().lower()
         cat_norm = (category or "").strip().upper()
         sym_norm = (symbol or "").strip().upper()
@@ -4060,7 +4062,26 @@ async def get_audit_findings(
         for doc in docs:
             data = doc.to_dict() or {}
             data.setdefault("key", doc.id)
+            all_findings.append(data)
 
+        counts = {
+            "total": len(all_findings),
+            "active": sum(
+                1 for f in all_findings
+                if str(f.get("status") or "").lower() in ("open", "recurring")
+            ),
+            "resolved": sum(
+                1 for f in all_findings
+                if str(f.get("status") or "").lower() == "resolved"
+            ),
+            "dismissed": sum(
+                1 for f in all_findings
+                if str(f.get("status") or "").lower() == "dismissed"
+            ),
+        }
+
+        findings = []
+        for data in all_findings:
             f_status = str(data.get("status") or "").lower()
             if status_norm and status_norm != "all":
                 if status_norm == "active" and f_status not in ("open", "recurring"):
@@ -4078,19 +4099,101 @@ async def get_audit_findings(
 
             findings.append(data)
 
-        # Sort: severity first (critical -> high -> medium -> low -> opportunity), then newest
+        # Sort: severity first (critical -> high -> medium -> low -> opportunity),
+        # newest first within each severity. Two stable sorts avoid inverting the
+        # timestamp key while keeping severity primary (#155 AUD-011).
         sev_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "opportunity": 4}
-        findings.sort(key=lambda x: (
-            sev_rank.get(str(x.get("severity", "low")).lower(), 5),
-            str(x.get("last_seen") or x.get("created_at") or "")
-        ), reverse=False)
+        findings.sort(
+            key=lambda x: str(x.get("last_seen") or x.get("created_at") or ""),
+            reverse=True,
+        )
+        findings.sort(key=lambda x: sev_rank.get(str(x.get("severity", "low")).lower(), 5))
 
         if response:
             response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
 
-        return {"findings": findings[:limit]}
+        return {
+            "findings": findings[:limit],
+            "counts": counts,
+            "total": counts["total"],
+            "active": counts["active"],
+            "resolved": counts["resolved"],
+            "dismissed": counts["dismissed"],
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch audit findings: {str(e)}")
+
+
+class AuditFindingDecision(BaseModel):
+    """Human lifecycle decision for one audit finding (#155 AUD-016)."""
+
+    decision: str  # "resolve" | "dismiss" | "reopen"
+    reason: str = ""
+    actor: str = "operator"
+
+
+@app.post("/api/audit/findings/{key}/status")
+async def update_audit_finding_status(key: str, decision: AuditFindingDecision,
+                                      request: Request):
+    """Apply a human resolve/dismiss/reopen decision to an audit finding.
+
+    The write lands on ``audit_findings/{key}`` with actor, reason and a UTC
+    timestamp. ``audit_review.js`` offers the matching buttons. The auditor's
+    memory consumes these fields: dismissed findings are suppressed from alerts
+    and proposals, and a reopened finding becomes ``recurring`` so it pages once.
+    """
+    session_id = request.cookies.get("dashboard_session")
+    if not is_valid_session(session_id):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    decision_name = (decision.decision or "").strip().lower()
+    target = {
+        "resolve": "resolved",
+        "dismiss": "dismissed",
+        "reopen": "recurring",
+    }.get(decision_name)
+    if not target:
+        raise HTTPException(
+            status_code=400,
+            detail="decision must be one of: resolve, dismiss, reopen",
+        )
+
+    reason = (decision.reason or "").strip()
+    if not reason:
+        reason = f"{decision_name}d by operator"
+    if decision_name in ("dismiss", "reopen") and not (decision.reason or "").strip():
+        # A terminal decision without a stated reason is not auditable.
+        raise HTTPException(status_code=400, detail="reason is required to dismiss or reopen")
+
+    actor = (decision.actor or "").strip() or "operator"
+    now = datetime.now(timezone.utc).isoformat()
+    update = {
+        "status": target,
+        "decision": decision_name,
+        "resolution_reason": reason,
+        "resolved_at": now if decision_name != "reopen" else "",
+        "decision_at": now,
+        "actor": actor,
+        "last_seen": now,
+    }
+    if decision_name == "reopen":
+        update["reopened_at"] = now
+
+    try:
+        db = getattr(dashboard_data, "db", None) or firestore.Client()
+        doc_ref = db.collection("audit_findings").document(key)
+        doc = doc_ref.get()
+        if not doc.exists:
+            raise HTTPException(status_code=404, detail=f"Audit finding '{key}' not found")
+        doc_ref.update(update)
+        updated = doc_ref.get().to_dict() or {}
+        updated.setdefault("key", key)
+        updated.update(update)
+        return {"status": "success", "finding": updated}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update audit finding: {str(e)}")
 
 
 @app.get("/api/historical-bars/{symbol}")

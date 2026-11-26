@@ -300,6 +300,11 @@
                         <span>Resolved</span>
                         <span class="dash-tab-badge green" id="badge-status-resolved">0</span>
                     </button>
+                    <button class="dash-tab-btn" data-status="dismissed" onclick="selectAuditStatusTab(this, 'dismissed')">
+                        <span class="dash-tab-icon">🙈</span>
+                        <span>Dismissed</span>
+                        <span class="dash-tab-badge" id="badge-status-dismissed">0</span>
+                    </button>
                     <button class="dash-tab-btn" data-status="all" onclick="selectAuditStatusTab(this, 'all')">
                         <span class="dash-tab-icon">🌐</span>
                         <span>All Findings</span>
@@ -348,6 +353,9 @@
             </div>
             <div id="latest-run-report-container" class="audit-markdown-report">
                 <div class="loading">Loading latest run report...</div>
+            </div>
+            <div id="latest-run-outcomes" style="margin-top: 16px;">
+                <!-- Per-check outcome telemetry populated dynamically (#155 AUD-008) -->
             </div>
         </div>
 
