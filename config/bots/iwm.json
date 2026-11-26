@@ -27,7 +27,6 @@
     "use_atr_stop": true,
     "atr_stop_multiplier": 2.0,
     "atr_stop_replaces_hard_stop": true,
-    "use_sma_slope_exit": true,
     "sma_slope_threshold": -0.001,
     "_comment_backstop": "atr_stop_replaces_hard_stop=true: the ~k*ATR stop is the real risk floor; stop_loss_threshold (-5%) is a catastrophe backstop that effectively never fires behind the fast-exit stack. Behavior-neutral flag that makes the intent explicit and silences the inert-stop warning (bots #231)."
   },
@@ -67,9 +66,7 @@
   },
   "threshold_coordination": {
     "take_profit_without_call_atr": 6.0,
-    "take_profit_absolute_pct": 0.005,
-    "max_hold_hours": 144.0,
-    "_comment_cc_horizon": "max_hold_hours 144h = 42.9% of the 14-DTE (336h) term, above the 25% (84h) monetization floor, so the load-time check judges the CAP and passes: max(144,24)=144h >= 84h. cc_expected_position_hold_hours is 24h - the MEASURED median hold, not the cap - so the declaration describes real behaviour instead of the best case. Both facts are reported deliberately: the cap says how long the position MAY be held, the expected value says how long it actually is."
+    "take_profit_absolute_pct": 0.005
   },
   "adaptive_pnl": {
     "enable_adaptive_pnl": true,

@@ -23,7 +23,6 @@
   },
   "exit_logic": {
     "use_atr_targets": true,
-    "use_sma_slope_exit": true,
     "sma_slope_threshold": -0.001,
     "use_atr_stop": true,
     "atr_stop_multiplier": 2.0,
@@ -63,8 +62,7 @@
   },
   "threshold_coordination": {
     "take_profit_without_call_atr": 6.0,
-    "take_profit_absolute_pct": 0.005,
-    "max_hold_hours": 144.0
+    "take_profit_absolute_pct": 0.005
   },
   "adaptive_pnl": {
     "enable_adaptive_pnl": true,
