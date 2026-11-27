@@ -174,6 +174,55 @@ class TestGovernanceApi(unittest.TestCase):
         r2 = self._get("/api/exit-telemetry/snapshots", params={"limit": 1})
         assert len(r2.json()["sessions"]) == 1
 
+    def test_label_only_survivals_are_not_filtered_as_empty(self):
+        """#495/D3 + #493/B6: re-attributions and guard outcomes have no branch
+        counters, so they must keep a session in the archive view. Legacy docs
+        carry the section in `snapshot` rather than `inventory`."""
+        self.db.collections["exit_telemetry_snapshots"] = {
+            "NVDA_overlap": {
+                "symbol": "NVDA", "archived_at": "2026-11-27T22:00:00Z",
+                "inventory": {"branches": {}, "_shield_overlap": {
+                    "reattributed": 1,
+                    "events": [{"shield_floor": 132.0, "trailing_floor": 134.0,
+                                "tick_price": 130.0}],
+                }},
+            },
+            "NVDA_guard": {
+                "symbol": "NVDA", "archived_at": "2026-11-27T21:00:00Z",
+                "inventory": {"branches": {}, "_weekend_guard": {
+                    "exits": 0, "carried": 1, "deferred": 0,
+                }},
+            },
+            "NVDA_legacy": {
+                "symbol": "NVDA", "archived_at": "2026-11-27T20:00:00Z",
+                "inventory": {"branches": {}},
+                "snapshot": {"_shield_overlap": {"reattributed": 1, "events": []}},
+            },
+            "NVDA_empty": {
+                "symbol": "NVDA", "archived_at": "2026-11-27T19:00:00Z",
+                "inventory": {"branches": {}},
+            },
+        }
+        r = self._get("/api/exit-telemetry/snapshots")
+        assert r.status_code == 200
+        sessions = r.json()["sessions"]
+        assert [s["archived_at"] for s in sessions] == [
+            "2026-11-27T22:00:00Z", "2026-11-27T21:00:00Z", "2026-11-27T20:00:00Z",
+        ]
+
+    def test_telemetry_js_surfaces_shield_attribution(self):
+        """Run the Node regression for the governance telemetry renderer."""
+        import shutil
+        import subprocess
+        from pathlib import Path
+
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node not available")
+        script = Path(__file__).parent / "js" / "test_telemetry_shield_overlap.js"
+        result = subprocess.run([node, str(script)], capture_output=True, text=True)
+        assert result.returncode == 0, result.stdout + result.stderr
+
     def test_governance_review_page_served(self):
         r = self._get("/governance-review")
         assert r.status_code == 200

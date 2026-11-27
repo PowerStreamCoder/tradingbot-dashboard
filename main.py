@@ -3896,6 +3896,15 @@ async def get_adaptive_actions(limit: int = 100):
         raise HTTPException(status_code=500, detail=f"Failed to fetch adaptive actions: {str(e)}")
 
 
+def _telemetry_section(data: dict, key: str) -> dict:
+    """Read a diagnostic section from the inventory, falling back to the raw
+    snapshot for sessions archived before the inventory carried that section."""
+    section = (data.get("inventory") or {}).get(key)
+    if section is None:
+        section = (data.get("snapshot") or {}).get(key)
+    return section or {}
+
+
 def _has_telemetry_analytical_value(data: dict) -> bool:
     inv = data.get("inventory") or {}
     branches = inv.get("branches") or {}
@@ -3906,7 +3915,17 @@ def _has_telemetry_analytical_value(data: dict) -> bool:
     total_fired += int(adaptive.get("fired", 0) or 0)
     stream = inv.get("_verdict_stream") or {}
     total_contended = sum(int(v or 0) for v in (stream.get("shadowed_satisfied") or {}).values())
-    return (total_eval + total_fired + total_contended) > 0
+
+    # #495/D3: a shield→trailing max-floor re-attribution changes only the exit
+    # label, so it has no evaluated/fired branch counter. #493/B6 guard outcomes
+    # are the same kind of label-only surface. Neither may be filtered out as an
+    # "empty" session.
+    overlap = _telemetry_section(data, "_shield_overlap")
+    guard = _telemetry_section(data, "_weekend_guard")
+    attribution_events = int(overlap.get("reattributed", 0) or 0)
+    attribution_events += sum(int(guard.get(k, 0) or 0) for k in ("exits", "carried", "deferred"))
+
+    return (total_eval + total_fired + total_contended + attribution_events) > 0
 
 
 @app.get("/api/exit-telemetry/snapshots")

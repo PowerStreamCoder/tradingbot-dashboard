@@ -1063,6 +1063,38 @@ def _summarize_execution_metrics(
             description=_desc,
         ))
 
+    # #495/D2 (F5): direct strategy-lock hold. `cascade_ns` is only the
+    # cascade nested inside the lock, so a healthy cascade p99 cannot prove the
+    # F5 criterion "lock hold <= 2 s". This row appears only once bots emit the
+    # probe, so older/pre-fix sessions render exactly as before.
+    _lock_info = _get_series("strategy_lock_hold_ns")
+    if _lock_info and _lock_info.get("count"):
+        _lock_max_ms = _lock_info["max"] / 1e6 if _lock_info.get("max") is not None else None
+        _lock_p99_ms = _lock_info["p99"] / 1e6 if _lock_info.get("p99") is not None else None
+        _lock_val_str = (
+            f"{_lock_max_ms:,.1f} ms max"
+            + (f" | {_lock_p99_ms:,.1f} ms p99" if _lock_p99_ms is not None else "")
+        ) if _lock_max_ms is not None else "--"
+        _lock_status = "UNMEASURED"
+        if _lock_max_ms is not None:
+            _lock_status = "LAGGING" if _lock_max_ms > 2_000.0 else "BEATING"
+        metrics_list.append(BenchmarkComparisonMetric(
+            name="Strategy Lock Hold (F5)",
+            category="DECISION_COST",
+            engine_value=_lock_max_ms,
+            engine_formatted=_lock_val_str,
+            benchmark_name="Lock hold within budget (F5)",
+            benchmark_value=2_000.0,
+            benchmark_formatted="<= 2,000 ms max",
+            status=_lock_status,
+            data_basis="measured",
+            description=(
+                "Full _strategy_lock hold around the tick-path cascade "
+                "(#495/D2). The gate also requires cascade p50 <= 50 ms / "
+                "p99 <= 500 ms / max <= 2,000 ms; see scripts/cascade_f5_gate.py."
+            ),
+        ))
+
     has_measured = any(m.data_basis == "measured" for m in metrics_list)
     machinery_report = EngineMachineryReport(
         is_available=has_measured,

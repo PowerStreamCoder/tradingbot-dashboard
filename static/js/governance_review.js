@@ -1460,39 +1460,46 @@ const EXIT_BRANCH_METADATA = {
         priority: 4,
         desc: 'Volatility-adjusted stop boundary derived from Average True Range multiples'
     },
+    'peak_giveback_shield': {
+        name: 'Peak Giveback Shield',
+        category: 'Profit Lock',
+        icon: '🛡️',
+        priority: 5,
+        desc: 'Locks a fraction of peak gain; first-class cascade branch since #84 and a telemetry branch since #495/D3'
+    },
     'trailing_stop': {
         name: 'Profit Trailing Stop',
         category: 'Profit Lock',
         icon: '📈',
-        priority: 5,
+        priority: 6,
         desc: 'Dynamic trailing stop ratcheting upward with price to lock in accrued gains'
     },
     'regime_flip': {
         name: 'Macro Regime Shift',
         category: 'Trend & Macro',
         icon: '🔄',
-        priority: 6,
+        priority: 7,
         desc: 'Exits trade when macro regime classification flips unfavorable'
     },
     'sma_slope': {
         name: 'SMA Slope Reversal',
         category: 'Trend Filter',
         icon: '📉',
-        priority: 7,
+        priority: 8,
         desc: 'Exits trade when 200 SMA slope reverses against position direction'
     },
     'profit_target': {
         name: 'Take Profit Target',
         category: 'Profit Targets',
         icon: '🎯',
-        priority: 8,
+        priority: 9,
         desc: 'Target profit milestone reached (percentage or ATR-coordinated target)'
     },
     'max_hold': {
         name: 'Max Holding Duration',
         category: 'Time Exit',
         icon: '⏳',
-        priority: 9,
+        priority: 10,
         desc: 'Opportunity-cost time exit when trade reaches maximum allowed hours'
     },
     'time_decay': {
@@ -1521,7 +1528,7 @@ const EXIT_BRANCH_METADATA = {
         category: 'Profit Lock',
         icon: '📉',
         priority: 5,
-        desc: 'Protects unrealized peak profit against sudden reversal from highs'
+        desc: 'Legacy AdaptivePnL reason label; the canonical cascade branch is peak_giveback_shield (#495/D3)'
     },
     'break_even': {
         name: 'Break-Even Stop Lock',
@@ -1534,7 +1541,7 @@ const EXIT_BRANCH_METADATA = {
         name: 'Position Holding State',
         category: 'Hold State',
         icon: '⏸️',
-        priority: 10,
+        priority: 11,
         desc: 'Default cascade state maintained while position remains within target bounds'
     }
 };
@@ -1601,6 +1608,33 @@ function formatCountPill(count, isFired = false) {
     return `<span class="count-pill count-zero">0</span>`;
 }
 
+function fmtFloor(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n.toFixed(2) : '—';
+}
+
+function renderShieldOverlapPanel(overlap) {
+    const events = Array.isArray(overlap.events) ? overlap.events : [];
+    if (!events.length) return '';
+
+    const rows = events.map(e => `
+        <div class="overlap-event">
+            <span class="overlap-pair" title="Shield floor that would own the label">shield $${escapeHtml(fmtFloor(e.shield_floor))}</span>
+            <span class="overlap-arrow">→</span>
+            <span class="overlap-pair overlap-winner" title="Higher floor that actually owns the label">trailing $${escapeHtml(fmtFloor(e.trailing_floor))}</span>
+            <span class="overlap-tick" title="Tick price at which both floors were satisfied">@ $${escapeHtml(fmtFloor(e.tick_price))}</span>
+        </div>`).join('');
+
+    return `
+        <div class="shield-overlap-panel">
+            <div class="overlap-title">🧭 Shield → trailing max-floor re-attributions
+                <span class="overlap-count">${events.length}</span>
+            </div>
+            <div class="overlap-events">${rows}</div>
+            <div class="overlap-note">Label-only change: both floors were satisfied on the same tick. The fill price and exit behavior are unchanged.</div>
+        </div>`;
+}
+
 function formatProximityMeter(proximity) {
     const proxNum = Math.max(0, Math.min(1, Number(proximity || 0)));
     const proxPct = Math.round(proxNum * 100);
@@ -1664,7 +1698,17 @@ function renderTelemetrySessions(sessions) {
             }
         }
 
-        const branches = (s.inventory || {}).branches || {};
+        const inventory = s.inventory || {};
+        const snapshot = s.snapshot || {};
+        // #495/D3 + #493/B6: label-only surfaces have no branch counters. Older
+        // archives carry them only in the raw snapshot, newer ones in inventory.
+        const overlap = inventory._shield_overlap || snapshot._shield_overlap || {};
+        const weekendGuard = inventory._weekend_guard || snapshot._weekend_guard || {};
+        const reattributed = Number(overlap.reattributed || 0);
+        const guardOutcomes = ['exits', 'carried', 'deferred']
+            .reduce((n, k) => n + Number(weekendGuard[k] || 0), 0);
+
+        const branches = inventory.branches || {};
         let branchKeys = Object.keys(branches);
 
         // Sort by cascade priority
@@ -1729,6 +1773,14 @@ function renderTelemetrySessions(sessions) {
                             <span class="session-badge badge-contended" title="Arbitration Contention: condition met but preempted by upstream rule">
                                 ⚡ ${totalContended} Contended (${contendedBranches.join(', ')})
                             </span>` : ''}
+                            ${reattributed > 0 ? `
+                            <span class="session-badge badge-reattributed" title="Max-floor attribution: shield label was moved to trailing_stop; fill price unchanged">
+                                🧭 ${reattributed} Re-attributed
+                            </span>` : ''}
+                            ${guardOutcomes > 0 ? `
+                            <span class="session-badge badge-weekend-guard" title="Weekend guard: ${Number(weekendGuard.exits || 0)} exits, ${Number(weekendGuard.carried || 0)} carried, ${Number(weekendGuard.deferred || 0)} deferred">
+                                🌙 ${guardOutcomes} Guard outcomes
+                            </span>` : ''}
                             <span class="session-badge ${totalEvaluated > 0 ? 'badge-active' : 'badge-neutral'}">
                                 ⚡ ${totalEvaluated} Total Evaluations
                             </span>
@@ -1760,6 +1812,7 @@ function renderTelemetrySessions(sessions) {
                         </tbody>
                     </table>
                 </div>
+                ${renderShieldOverlapPanel(overlap)}
             </div>`;
     }).join('');
 }
@@ -1774,12 +1827,18 @@ function filterTelemetrySessions() {
         }
         if (search) {
             const symMatch = String(s.symbol || '').toLowerCase().includes(search);
-            const branches = (s.inventory || {}).branches || {};
+            const inventory = s.inventory || {};
+            const branches = inventory.branches || {};
             const branchMatch = Object.keys(branches).some(b => {
                 const meta = EXIT_BRANCH_METADATA[b];
                 return b.toLowerCase().includes(search) || (meta && meta.name.toLowerCase().includes(search));
             });
-            if (!symMatch && !branchMatch) {
+            // Searching for "shield" or "reattrib" must find sessions whose only
+            // activity was a max-floor label change (#495/D3).
+            const overlap = inventory._shield_overlap || (s.snapshot || {})._shield_overlap || {};
+            const overlapHit = Number(overlap.reattributed || 0) > 0 &&
+                (/shield|reattrib/.test(search));
+            if (!symMatch && !branchMatch && !overlapHit) {
                 return false;
             }
         }
