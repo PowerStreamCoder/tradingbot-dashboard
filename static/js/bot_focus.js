@@ -1590,6 +1590,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     startPeriodicTimers();
     attachEventListeners();
 
+    // Reflect an already-active fleet halt on the compact header icon at load time.
+    refreshFleetStatus();
+
     // Start config update polling
     startConfigUpdatePolling();
 });
@@ -1640,6 +1643,12 @@ function attachEventListeners() {
     const pauseBotBtn = document.getElementById('pauseBotBtn');
     if (pauseBotBtn) {
         pauseBotBtn.addEventListener('click', handlePauseResumeBot);
+    }
+
+    // Fleet Emergency Controls (Issue #493) - compact icon-only header trigger
+    const fleetControlBtn = document.getElementById('fleetControlBtn');
+    if (fleetControlBtn) {
+        fleetControlBtn.addEventListener('click', openFleetControlModal);
     }
 
     // Per-bot toggle enable/disable (Phase 5)
@@ -2509,6 +2518,253 @@ async function executeEmergencyFlatten() {
             confirmBtn.disabled = false;
             confirmBtn.textContent = '🚨 Liquidate & Demote Now';
         }
+    }
+}
+
+/**
+ * Fleet Emergency Controls (Issue #493).
+ * The authoritative state is the VM fleet ledger from GET /fleet/status -
+ * deliberately not fleetPaused or is_trading, which describe other mechanisms.
+ */
+const FLEET_ACTION_CONFIG = {
+    cancel_all: {
+        endpoint: API_ENDPOINTS.BOT_CONTROL.FLEET_CANCEL_ALL,
+        checkboxId: 'fleetCancelAllCheck',
+        tokenId: null,
+        token: null,
+        buttonId: 'fleetCancelAllBtn',
+        bodyToken: 'confirm_fleet_cancel_all',
+        label: 'cancel-all'
+    },
+    flatten_all: {
+        endpoint: API_ENDPOINTS.BOT_CONTROL.FLEET_FLATTEN_ALL,
+        checkboxId: 'fleetFlattenAllCheck',
+        tokenId: 'fleetFlattenAllTokenInput',
+        token: 'FLATTEN ALL',
+        buttonId: 'fleetFlattenAllBtn',
+        bodyToken: 'confirm_fleet_flatten_all',
+        label: 'flatten-all'
+    },
+    clear: {
+        endpoint: API_ENDPOINTS.BOT_CONTROL.FLEET_CLEAR,
+        checkboxId: 'fleetClearCheck',
+        tokenId: 'fleetClearTokenInput',
+        token: 'CLEAR',
+        buttonId: 'fleetClearBtn',
+        bodyToken: 'confirm_fleet_clear',
+        label: 'clear'
+    }
+};
+
+function openFleetControlModal() {
+    const modal = document.getElementById('fleetControlModal');
+    if (!modal) return;
+
+    Object.keys(FLEET_ACTION_CONFIG).forEach(key => {
+        const cfg = FLEET_ACTION_CONFIG[key];
+        const checkEl = document.getElementById(cfg.checkboxId);
+        if (checkEl) checkEl.checked = false;
+        const tokenEl = cfg.tokenId ? document.getElementById(cfg.tokenId) : null;
+        if (tokenEl) tokenEl.value = '';
+        validateFleetActionConfirmation(key);
+    });
+
+    const errorEl = document.getElementById('fleetStatusError');
+    if (errorEl) {
+        errorEl.textContent = '';
+        errorEl.style.display = 'none';
+    }
+    const statusEl = document.getElementById('fleetStatusDisplay');
+    if (statusEl) statusEl.textContent = 'Loading fleet status...';
+
+    modal.style.display = 'flex';
+    refreshFleetStatus();
+}
+
+function closeFleetControlModal() {
+    const modal = document.getElementById('fleetControlModal');
+    if (modal) modal.style.display = 'none';
+}
+
+window.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    const modal = document.getElementById('fleetControlModal');
+    if (modal && modal.style.display && modal.style.display !== 'none') {
+        closeFleetControlModal();
+    }
+});
+
+function validateFleetActionConfirmation(action) {
+    const cfg = FLEET_ACTION_CONFIG[action];
+    if (!cfg) return false;
+
+    const checkEl = document.getElementById(cfg.checkboxId);
+    const tokenEl = cfg.tokenId ? document.getElementById(cfg.tokenId) : null;
+    const btn = document.getElementById(cfg.buttonId);
+    const confirmed = !!(checkEl && checkEl.checked) &&
+        (!cfg.token || !!(tokenEl && tokenEl.value.trim() === cfg.token));
+
+    if (btn) btn.disabled = !confirmed;
+    return confirmed;
+}
+
+function updateFleetControlTrigger(status) {
+    const btn = document.getElementById('fleetControlBtn');
+    if (!btn) return;
+    const dot = document.getElementById('fleetHaltDot');
+    const halted = !!(status && status.halt_entries === true);
+    const error = !!(status && status.status === 'error');
+    const title = error
+        ? 'Fleet control status error - open Fleet Emergency Controls'
+        : halted
+            ? 'Fleet entries halted - open Fleet Emergency Controls'
+            : 'Fleet Emergency Controls';
+    btn.title = title;
+    btn.setAttribute('aria-label', title);
+    if (dot) {
+        dot.style.display = (halted || error) ? 'inline-block' : 'none';
+        dot.style.background = error ? '#ef4444' : '#f59e0b';
+    }
+}
+
+function renderFleetStatus(status) {
+    const display = document.getElementById('fleetStatusDisplay');
+    if (!display) return;
+
+    display.innerHTML = '';
+    const addLine = (label, value) => {
+        const line = document.createElement('div');
+        const key = document.createElement('span');
+        key.textContent = `${label}: `;
+        const val = document.createElement('strong');
+        val.textContent = (value === undefined || value === null || value === '') ? '—' : String(value);
+        line.appendChild(key);
+        line.appendChild(val);
+        display.appendChild(line);
+    };
+
+    if (!status || typeof status !== 'object') {
+        addLine('fleet_status', 'unavailable');
+        return;
+    }
+
+    if (status.status && status.status !== 'ok') {
+        addLine('fleet_status', status.status);
+    }
+    if (status.error) {
+        addLine('status_error', status.error);
+    }
+    addLine('halt_entries', status.halt_entries);
+    addLine('generation', status.generation);
+    addLine('action', status.action);
+    addLine('command_id', status.command_id);
+    addLine('issued_at_utc', status.issued_at_utc);
+    addLine('expires_at_utc', status.expires_at_utc);
+    addLine('command_executable', status.command_executable);
+    addLine('server_time_utc', status.server_time_utc);
+
+    const rawAcks = status.acks || status.per_bot_acks || status.bot_acks || {};
+    const entries = Array.isArray(rawAcks)
+        ? rawAcks.map(ack => [ack && (ack.bot_name || ack.bot || ack.name) || 'bot', ack || {}])
+        : Object.entries(rawAcks);
+    if (!entries.length) {
+        addLine('per_bot_acks', 'none reported');
+        return;
+    }
+    addLine('per_bot_acks', `${entries.length} reported`);
+    entries.forEach(([bot, ack]) => {
+        let detail = ack.status || 'unknown';
+        if (ack.error) detail += ` - error: ${ack.error}`;
+        if (ack.cancelled_count !== undefined && ack.cancelled_count !== null) {
+            detail += ` (cancelled: ${ack.cancelled_count})`;
+        }
+        addLine(String(bot), detail);
+    });
+}
+
+async function refreshFleetStatus() {
+    const errorEl = document.getElementById('fleetStatusError');
+    const display = document.getElementById('fleetStatusDisplay');
+    try {
+        const response = await fetch(API_ENDPOINTS.BOT_CONTROL.FLEET_STATUS, {
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        let data = null;
+        try {
+            data = await response.json();
+        } catch (parseErr) {
+            data = null;
+        }
+        if (!response.ok) {
+            const detail = data && (data.detail || data.message);
+            throw new Error(detail ? String(detail) : `HTTP ${response.status}`);
+        }
+        if (errorEl) {
+            errorEl.textContent = '';
+            errorEl.style.display = 'none';
+        }
+        renderFleetStatus(data);
+        updateFleetControlTrigger(data);
+        return data;
+    } catch (err) {
+        const message = err && err.message ? err.message : 'unknown error';
+        if (errorEl) {
+            errorEl.textContent = `⚠️ Unable to load fleet status: ${message}`;
+            errorEl.style.display = 'block';
+        }
+        if (display) display.textContent = 'Fleet status unavailable.';
+        return null;
+    }
+}
+
+async function executeFleetAction(action) {
+    const cfg = FLEET_ACTION_CONFIG[action];
+    if (!cfg) return;
+    if (!validateFleetActionConfirmation(action)) {
+        showNotification(`❌ Confirm ${cfg.label} before running it.`, 'warning');
+        return;
+    }
+
+    const body = { scope: 'ALL', requested_by: 'dashboard' };
+    body[cfg.bodyToken] = true;
+
+    Object.keys(FLEET_ACTION_CONFIG).forEach(key => {
+        const btn = document.getElementById(FLEET_ACTION_CONFIG[key].buttonId);
+        if (btn) btn.disabled = true;
+    });
+    const refreshBtn = document.getElementById('fleetStatusRefreshBtn');
+    if (refreshBtn) refreshBtn.disabled = true;
+
+    try {
+        const response = await fetch(cfg.endpoint, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        let data = null;
+        try {
+            data = await response.json();
+        } catch (parseErr) {
+            data = null;
+        }
+        if (!response.ok) {
+            const detail = data && (data.detail || data.message);
+            throw new Error(detail ? String(detail) : `HTTP ${response.status}`);
+        }
+        showNotification(`✓ Fleet ${cfg.label} issued (scope ALL).`, 'success');
+        const checkEl = document.getElementById(cfg.checkboxId);
+        if (checkEl) checkEl.checked = false;
+        const tokenEl = cfg.tokenId ? document.getElementById(cfg.tokenId) : null;
+        if (tokenEl) tokenEl.value = '';
+    } catch (err) {
+        const message = err && err.message ? err.message : 'unknown error';
+        showNotification(`❌ Fleet ${cfg.label} failed: ${message}`, 'error');
+    } finally {
+        Object.keys(FLEET_ACTION_CONFIG).forEach(key => validateFleetActionConfirmation(key));
+        if (refreshBtn) refreshBtn.disabled = false;
+        await refreshFleetStatus();
     }
 }
 

@@ -30,6 +30,8 @@ def test_bot_focus_header_markup():
     assert 'id="modeBadge"' in header_right_content, "modeBadge must be preserved inside header-right"
     assert 'id="pauseBotBtn"' in header_right_content
     assert 'id="switchProfileBtn"' in header_right_content
+    assert 'id="fleetControlBtn"' in header_right_content, "compact fleet trigger must stay inside header-right"
+    assert 'aria-label="Fleet Emergency Controls"' in header_right_content
 
 
 def test_navigation_bar_consistency_across_templates():
@@ -97,6 +99,13 @@ def test_header_css_dimensions_and_alignment():
     # Bot metadata and header-right must not wrap to prevent port or buttons wrapping to second row
     assert re.search(r'\.bot-metadata\s*\{[^}]*flex-wrap:\s*nowrap;', css_content) is not None
     assert re.search(r'\.header-right\s*\{[^}]*flex-wrap:\s*nowrap;', css_content) is not None
+
+    # Fleet icon-only trigger stays within the same 32px/no-wrap header budget
+    icon_rule = re.search(r'\.header-right\s+\.btn-icon-only\s*\{([^}]+)\}', css_content)
+    assert icon_rule is not None, "compact .header-right .btn-icon-only rule must exist"
+    assert re.search(r'width:\s*32px;', icon_rule.group(1)) is not None
+    assert re.search(r'padding:\s*0;', icon_rule.group(1)) is not None
+    assert '.fleet-halt-dot' in css_content
 
 
 def test_custom_bot_dropdown_visibility_and_stacking():
