@@ -1491,6 +1491,60 @@ def test_markout_status_unmeasured_without_30s():
     assert "+30s: N/A" in row.engine_formatted
 
 
+@pytest.mark.parametrize("max_ns,expected_status", [
+    (1_500_000_000, "BEATING"),   # 1.5 s <= 2 s F5 lock budget
+    (2_500_000_000, "LAGGING"),   # 2.5 s > 2 s
+])
+def test_strategy_lock_hold_surfaced_when_probe_present(max_ns, expected_status):
+    """#495/D2: surface the direct lock-hold probe (not a cascade proxy)."""
+    metrics = {"intervals": [{
+        "ts": "2026-10-20T14:00:00Z",
+        "snapshot": {
+            "symbol": "NVDA",
+            "counters": {"cascade_evaluations": 10},
+            "latency": {
+                "cascade_ns": {"count": 10, "mean": 20_000_000.0, "p99": 50_000_000.0},
+                "strategy_lock_hold_ns": {
+                    "count": 10, "mean": 30_000_000.0,
+                    "p99": 80_000_000.0, "max": max_ns,
+                },
+            },
+        },
+    }]}
+    pe.clear_performance_cache()
+    res = calculate_engine_performance(
+        trades=[], bot_overview_data={}, bot_configs=[],
+        period="1M", bot_scope="ALL", mode="all", now=FIXED_NOW,
+        execution_metrics_data=metrics,
+    )
+    row = next(m for m in res.machinery.metrics
+               if m.name == "Strategy Lock Hold (F5)")
+    assert row.data_basis == "measured"
+    assert row.status == expected_status
+    assert row.engine_value == max_ns / 1e6
+    assert "ms max" in row.engine_formatted
+    assert "ms p99" in row.engine_formatted
+
+
+def test_strategy_lock_hold_absent_without_probe():
+    """Pre-#495-f5 sessions must render unchanged (no fabricated row)."""
+    metrics = {"intervals": [{
+        "ts": "2026-10-20T14:00:00Z",
+        "snapshot": {
+            "symbol": "NVDA",
+            "latency": {"cascade_ns": {"count": 10, "p99": 50_000_000.0}},
+        },
+    }]}
+    pe.clear_performance_cache()
+    res = calculate_engine_performance(
+        trades=[], bot_overview_data={}, bot_configs=[],
+        period="1M", bot_scope="ALL", mode="all", now=FIXED_NOW,
+        execution_metrics_data=metrics,
+    )
+    assert len(res.machinery.metrics) == 7
+    assert not any(m.name == "Strategy Lock Hold (F5)" for m in res.machinery.metrics)
+
+
 def test_calculate_engine_performance_symbol_scope_filters_execution_metrics():
     trades = _make_adequate_trades(n=10, days=8)
 
