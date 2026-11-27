@@ -28,7 +28,6 @@
     "atr_stop_replaces_hard_stop": true,
     "atr_stop_use_hourly_atr": true,
     "atr_stop_min_pct": 0.015,
-    "use_sma_slope_exit": false,
     "sma_slope_threshold": -0.001,
     "_comment_backstop": "atr_stop_replaces_hard_stop=true: the ~k*ATR stop is the real risk floor; stop_loss_threshold (-10%) is a catastrophe backstop that effectively never fires behind the fast-exit stack. Behavior-neutral flag that makes the intent explicit and silences the inert-stop warning (bots #231).",
     "_comment_283": "#283: atr_stop_use_hourly_atr sizes the stop from the 1-hour ATR (14 bars ~ 3.5 trading days) instead of the 5-min ATR (~70 min). The old sizing produced a 0.77% stop on NVDA that intraday noise fired and the 2026-09-14 Monday gap walked through for -$902. atr_stop_min_pct floors the stop width at 1.5% as a backstop against implausibly small ATR readings."
@@ -67,8 +66,7 @@
   },
   "threshold_coordination": {
     "take_profit_without_call_atr": 4.0,
-    "take_profit_absolute_pct": 0.012,
-    "max_hold_hours": 0.0
+    "take_profit_absolute_pct": 0.012
   },
   "adaptive_pnl": {
     "enable_adaptive_pnl": true,

@@ -211,10 +211,12 @@ class TestDashboardAPI(unittest.TestCase):
             os.path.join(os.path.dirname(__file__), "..", "..", "tradingbot-config", "bots", "nvda.adaptive.json"),
             os.path.join(os.path.dirname(__file__), "..", "config", "bots", "nvda.adaptive.json"),
         ])
+        # #493/B8: use_sma_slope_exit is core-derived, no longer in bot JSON.
+        # Verify the overlay/baseline merge with a still-tunable exit field.
         if has_adaptive:
-            self.assertTrue(nvda_params.get("exit_logic", {}).get("use_sma_slope_exit"))
+            self.assertIsNotNone(nvda_params.get("exit_logic", {}).get("use_atr_targets"))
         else:
-            self.assertIn("use_sma_slope_exit", nvda_params.get("exit_logic", {}))
+            self.assertIn("use_atr_targets", nvda_params.get("exit_logic", {}))
 
         # Test non-existent symbol returns None
         bad_params = load_bot_parameters("NONEXISTENT")

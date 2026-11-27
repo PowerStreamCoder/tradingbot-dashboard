@@ -265,7 +265,7 @@ const FIELD_METADATA = {
     'threshold_coordination.max_hold_hours': {
         name: 'Max Holding Duration',
         category: 'Time Exit',
-        desc: 'Forced liquidation ceiling to free up capital if trade stagnates',
+        desc: 'Core policy derived from cc_mode (INCOME: 144h cap, TOTAL_RETURN: unlimited) - no longer operator-tunable',
         unit: 'hours',
         formatVal: (v) => {
             const n = Number(v);
@@ -284,7 +284,7 @@ const FIELD_METADATA = {
     'use_sma_slope_exit': {
         name: 'SMA Slope Trend Exit',
         category: 'Trend Exit',
-        desc: 'Triggers early exit when the 200 SMA slope reverses against position direction',
+        desc: 'Core policy derived from cc_mode (INCOME only) - no longer operator-tunable',
         isBool: true
     },
     'threshold_coordination.take_profit_without_call_atr': {

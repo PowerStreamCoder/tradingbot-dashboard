@@ -1430,8 +1430,13 @@ function renderBotParameters(params) {
                 { key: 'Min Move for Call', val: `<span class="param-val number">${params.threshold_coordination?.min_move_for_call_atr ?? 1.0}x ATR / ${fmtParamPercent(params.threshold_coordination?.min_move_for_call_absolute_pct ?? 0.001)}</span>` },
                 { key: 'Take Profit (With Call)', val: `<span class="param-val number highlight-green">${params.threshold_coordination?.take_profit_with_call_atr ?? 3.0}x ATR / ${fmtParamPercent(params.threshold_coordination?.take_profit_absolute_pct ?? 0.005)}</span>` },
                 { key: 'Take Profit (No Call)', val: `<span class="param-val number highlight-green">${params.threshold_coordination?.take_profit_without_call_atr ?? 6.0}x ATR</span>` },
-                { key: 'Max Holding Hours', val: `<span class="param-val number">${params.threshold_coordination?.max_hold_hours ? params.threshold_coordination.max_hold_hours + ' hrs' : 'Indefinite (0.0)'}</span>` },
-                { key: 'SMA Slope Exit', val: fmtParamPill(params.exit_logic?.use_sma_slope_exit, `THRESH ${params.exit_logic?.sma_slope_threshold ?? -0.001}`, 'DISABLED') },
+                // #493/B8: hold cap and slope exit are core policy derived from cc_mode.
+                { key: 'Max Holding Hours', val: (() => {
+                    const derived = params.covered_calls?.cc_mode === 'INCOME' ? 144 : 0;
+                    const hours = params.threshold_coordination?.max_hold_hours ?? derived;
+                    return `<span class="param-val number">${hours > 0 ? hours + ' hrs' : 'Indefinite (0.0)'} <span class="param-pill tag">core policy</span></span>`;
+                })() },
+                { key: 'SMA Slope Exit', val: fmtParamPill(params.exit_logic?.use_sma_slope_exit ?? (params.covered_calls?.cc_mode === 'INCOME'), `THRESH ${params.exit_logic?.sma_slope_threshold ?? -0.001}`, 'DISABLED') },
                 { key: 'Use ATR Targets', val: fmtParamPill(params.exit_logic?.use_atr_targets) }
             ]
         },
