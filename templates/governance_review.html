@@ -342,7 +342,7 @@
             <div class="section-header-flex">
                 <div>
                     <h2>Exit Telemetry Session Archive</h2>
-                    <p>Per-session reachability inventory (dead / shadowed / fired) feeds the nightly re-analysis.</p>
+                    <p>Per-session reachability inventory (dead / shadowed / fired) across the 11-level cascade, plus shield→trailing label attribution, feeds the nightly re-analysis.</p>
                 </div>
                 <div class="ledger-header-badges">
                     <span class="badge-count" id="telemetry-count-badge">0 sessions</span>
@@ -362,9 +362,11 @@
                 <span class="legend-item"><span class="chip chip-shadowed">🟡 Shadowed</span> Downstream rule not reached (preempted by higher-priority rule)</span>
                 <span class="legend-item"><span class="chip chip-idle">⚪ Idle</span> Unexercised (session had no active evaluations)</span>
                 <span class="legend-item"><span class="chip chip-ineligible">🚫 Ineligible</span> Disabled in bot config</span>
+                <span class="legend-item"><span class="session-badge badge-reattributed">🧭 Re-attributed</span> Shield→trailing max-floor label change; fill price unchanged (#495/D3)</span>
             </div>
             <div class="hint-subtext">
                 <strong>Peak Proximity Saturation:</strong> Measures how close the position's price came to triggering each exit threshold (0–100%). Detects near-misses (&gt;80%) before a rule ever fires.
+                <strong>Label attribution:</strong> When both the shield and trailing floors were satisfied on one tick, the higher floor owns the reason label; the measured floors are listed in the session card.
             </div>
         </div>
 
