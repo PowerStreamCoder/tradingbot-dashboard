@@ -3576,6 +3576,48 @@ async def proxy_verify_flatness(symbol: str):
 
 
 # ============================================================================
+#  Fleet Emergency Controls (Issue #493) - dashboard proxies only.
+#  The confirmation contract is enforced by the VM bot control API; these
+#  routes only forward the operator's explicit payload and never weaken it.
+# ============================================================================
+
+@app.post("/api/bot-control/fleet/cancel-all")
+async def proxy_fleet_cancel_all(request: Request):
+    """Proxy fleet cancel-all (stage 1 kill switch) to the VM bot control API."""
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Missing JSON body for fleet cancel-all")
+    return await _proxy_to_bot_control("POST", "/api/bot-control/fleet/cancel-all", json_data=data, timeout=30.0)
+
+
+@app.post("/api/bot-control/fleet/flatten-all")
+async def proxy_fleet_flatten_all(request: Request):
+    """Proxy fleet flatten-all (stage 2 escalation) to the VM bot control API."""
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Missing JSON body for fleet flatten-all")
+    return await _proxy_to_bot_control("POST", "/api/bot-control/fleet/flatten-all", json_data=data, timeout=60.0)
+
+
+@app.post("/api/bot-control/fleet/clear")
+async def proxy_fleet_clear(request: Request):
+    """Proxy explicit fleet clear (re-enable entries) to the VM bot control API."""
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Missing JSON body for fleet clear")
+    return await _proxy_to_bot_control("POST", "/api/bot-control/fleet/clear", json_data=data, timeout=30.0)
+
+
+@app.get("/api/bot-control/fleet/status")
+async def proxy_fleet_status():
+    """Proxy the fleet kill-switch ledger status to the VM bot control API."""
+    return await _proxy_to_bot_control("GET", "/api/bot-control/fleet/status", timeout=15.0)
+
+
+# ============================================================================
 #  Learning Candidates API Routes (Adaptive Learning System)
 # ============================================================================
 

@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/css/bot_focus.css?v=2.9.3">
+    <link rel="stylesheet" href="/static/css/bot_focus.css?v=2.9.4">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -81,6 +81,11 @@
                 </button>
                 <button id="switchProfileBtn" class="btn btn-profile-switch" style="display: none;" title="Legacy fleet switch">
                     <span>🔄</span> Switch to LIVE
+                </button>
+                <!-- Compact icon-only trigger: opens the single fleet emergency controls modal (Issue #493) -->
+                <button id="fleetControlBtn" class="btn btn-danger btn-icon-only" title="Fleet Emergency Controls" aria-label="Fleet Emergency Controls">
+                    <span aria-hidden="true">🛑</span>
+                    <span id="fleetHaltDot" class="fleet-halt-dot" style="display: none;" aria-hidden="true"></span>
                 </button>
             </div>
         </header>
@@ -1080,13 +1085,106 @@
         </div>
     </div>
 
+    <!-- Fleet Emergency Controls Modal (Issue #493): one compact header trigger, three separately confirmed stages -->
+    <div id="fleetControlModal" class="sp-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="fleet-control-title" style="display: none;">
+        <div class="sp-modal-container sp-modal-reject-container">
+            <div class="sp-modal-header">
+                <div>
+                    <h3 class="sp-modal-title danger" id="fleet-control-title">🛑 Fleet Emergency Controls</h3>
+                    <p class="sp-modal-subtitle">All actions apply to <strong>scope ALL</strong> bots and are audited by the fleet ledger.</p>
+                </div>
+                <button type="button" class="sp-modal-close-btn" onclick="closeFleetControlModal()" aria-label="Close fleet emergency controls" title="Close (Esc)">✕</button>
+            </div>
+
+            <div class="sp-modal-alert" style="background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.4); color: #fca5a5; line-height: 1.45;">
+                <strong>Stage 1 (default):</strong> cancel all resting entry orders and halt all new entries fleet-wide.
+                <strong>Exits and protective stops keep running throughout</strong> — no position is left unprotected.
+                <strong>Stage 2 (flatten all) is a deliberate escalation that comes only after cancel-all</strong>; it places broker-facing liquidation orders and is irreversible.
+                Entries stay halted until an operator explicitly clears the switch.
+            </div>
+
+            <!-- Fleet ledger status -->
+            <div style="border: 1px solid rgba(148, 163, 184, 0.25); border-radius: 8px; padding: 10px 12px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px;">
+                    <strong style="font-size: 0.88rem; color: #f8fafc;">Fleet ledger status</strong>
+                    <button type="button" id="fleetStatusRefreshBtn" class="sp-btn-modal-cancel" style="padding: 5px 10px; font-size: 0.78rem;" onclick="refreshFleetStatus()">↻ Refresh status</button>
+                </div>
+                <div id="fleetStatusError" class="sp-modal-alert" role="alert" style="display: none; margin-bottom: 8px; background: rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.4); color: #fca5a5;"></div>
+                <div id="fleetStatusDisplay" role="status" aria-live="polite" style="font-size: 0.8rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #cbd5e1; line-height: 1.5;">Loading fleet status...</div>
+            </div>
+
+            <!-- Stage 1: default kill switch -->
+            <div style="border: 1px solid rgba(245, 158, 11, 0.45); background: rgba(245, 158, 11, 0.06); border-radius: 8px; padding: 12px; margin-top: 14px;">
+                <h4 style="margin: 0 0 6px 0; font-size: 0.92rem; color: #fbbf24;">Stage 1 · Cancel all + halt entries (default)</h4>
+                <p style="margin: 0 0 10px 0; font-size: 0.8rem; color: #94a3b8; line-height: 1.45;">
+                    Cancels every resting entry order across the fleet and blocks new entries until cleared. Protective stops and exits continue to run.
+                </p>
+                <div class="sp-form-group">
+                    <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer; color: #f8fafc; font-size: 0.84rem;">
+                        <input type="checkbox" id="fleetCancelAllCheck" onchange="validateFleetActionConfirmation('cancel_all')" style="margin-top: 3px;" />
+                        <span>I authorize a fleet-wide cancel-all and entry halt (scope ALL).</span>
+                    </label>
+                </div>
+                <button type="button" id="fleetCancelAllBtn" class="sp-btn-modal-danger" style="width: 100%; margin-top: 10px;" disabled onclick="executeFleetAction('cancel_all')">
+                    🛑 Cancel all &amp; halt entries
+                </button>
+            </div>
+
+            <!-- Stage 2: deliberate escalation -->
+            <div style="border: 1px solid rgba(239, 68, 68, 0.55); background: rgba(239, 68, 68, 0.08); border-radius: 8px; padding: 12px; margin-top: 12px;">
+                <h4 style="margin: 0 0 6px 0; font-size: 0.92rem; color: #fca5a5;">Stage 2 · Flatten all positions (escalation after cancel-all)</h4>
+                <p style="margin: 0 0 10px 0; font-size: 0.8rem; color: #cbd5e1; line-height: 1.45;">
+                    Liquidates positions on every bot after cancels. Requires a separate checkbox <em>and</em> the typed token <strong>FLATTEN ALL</strong>.
+                </p>
+                <div class="sp-form-group">
+                    <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer; color: #f8fafc; font-size: 0.84rem;">
+                        <input type="checkbox" id="fleetFlattenAllCheck" onchange="validateFleetActionConfirmation('flatten_all')" style="margin-top: 3px;" />
+                        <span>I understand this places market liquidation orders on every bot (scope ALL).</span>
+                    </label>
+                </div>
+                <div class="sp-form-group" style="margin-top: 10px;">
+                    <label class="sp-form-label" for="fleetFlattenAllTokenInput">Type <strong style="color: #fca5a5;">FLATTEN ALL</strong> to confirm:</label>
+                    <input type="text" id="fleetFlattenAllTokenInput" class="sp-input" placeholder="FLATTEN ALL" oninput="validateFleetActionConfirmation('flatten_all')" autocomplete="off" />
+                </div>
+                <button type="button" id="fleetFlattenAllBtn" class="sp-btn-modal-danger" style="width: 100%; margin-top: 10px;" disabled onclick="executeFleetAction('flatten_all')">
+                    🚨 Flatten all positions
+                </button>
+            </div>
+
+            <!-- Clear: explicit re-arm -->
+            <div style="border: 1px solid rgba(16, 185, 129, 0.45); background: rgba(16, 185, 129, 0.06); border-radius: 8px; padding: 12px; margin-top: 12px;">
+                <h4 style="margin: 0 0 6px 0; font-size: 0.92rem; color: #34d399;">Clear · Re-enable entries</h4>
+                <p style="margin: 0 0 10px 0; font-size: 0.8rem; color: #94a3b8; line-height: 1.45;">
+                    Explicitly clears the sticky fleet halt. Requires a checkbox and the typed token <strong>CLEAR</strong>.
+                </p>
+                <div class="sp-form-group">
+                    <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer; color: #f8fafc; font-size: 0.84rem;">
+                        <input type="checkbox" id="fleetClearCheck" onchange="validateFleetActionConfirmation('clear')" style="margin-top: 3px;" />
+                        <span>I authorize re-enabling entries across the fleet (scope ALL).</span>
+                    </label>
+                </div>
+                <div class="sp-form-group" style="margin-top: 10px;">
+                    <label class="sp-form-label" for="fleetClearTokenInput">Type <strong style="color: #34d399;">CLEAR</strong> to confirm:</label>
+                    <input type="text" id="fleetClearTokenInput" class="sp-input" placeholder="CLEAR" oninput="validateFleetActionConfirmation('clear')" autocomplete="off" />
+                </div>
+                <button type="button" id="fleetClearBtn" class="sp-btn-modal-confirm" style="width: 100%; margin-top: 10px;" disabled onclick="executeFleetAction('clear')">
+                    ✓ Clear fleet halt &amp; re-enable entries
+                </button>
+            </div>
+
+            <div class="sp-modal-footer">
+                <button type="button" class="sp-btn-modal-cancel" onclick="closeFleetControlModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Shared Utilities -->
     <script src="/static/js/utils.js"></script>
 
     <!-- Configuration (must load before other scripts) -->
-    <script src="/static/js/config.js?v=2.7.0"></script>
+    <script src="/static/js/config.js?v=2.8.0"></script>
 
-    <script src="/static/js/bot_focus.js?v=2.9.6"></script>
+    <script src="/static/js/bot_focus.js?v=2.9.8"></script>
     <script src="/static/js/stock_picker.js?v=3.0.3"></script>
 
     <script>

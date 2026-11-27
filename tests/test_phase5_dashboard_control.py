@@ -16,6 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 import httpx
 
+import main
 from main import app, authenticated_sessions
 
 
@@ -312,6 +313,237 @@ def test_graduate_and_flatten_modals_outside_stock_picker_section():
     stock_picker_block = content[sp_start:sp_end]
     assert 'id="graduateLiveModal"' not in stock_picker_block
     assert 'id="emergencyFlattenModal"' not in stock_picker_block
+    assert 'id="fleetControlModal"' not in stock_picker_block
 
     assert 'id="graduateLiveModal"' in content
     assert 'id="emergencyFlattenModal"' in content
+    assert 'id="fleetControlModal"' in content
+    assert content.index('id="emergencyFlattenModal"') < content.index('id="fleetControlModal"')
+
+
+# ============================================================================
+#  Fleet Emergency Controls proxies and UI contract (Issue #493)
+# ============================================================================
+
+FLEET_POST_ACTIONS = (
+    ("cancel-all", "confirm_fleet_cancel_all"),
+    ("flatten-all", "confirm_fleet_flatten_all"),
+    ("clear", "confirm_fleet_clear"),
+)
+
+
+@pytest.mark.parametrize("action,token", FLEET_POST_ACTIONS)
+def test_proxy_fleet_post_success_passthrough(auth_client, monkeypatch, action, token):
+    """POST bodies reach the exact VM path with the operator's tokens unchanged."""
+    proxy_token = "fleet-key"
+    monkeypatch.setattr(main, "BOT_CONTROL_API_KEY", proxy_token)
+    upstream_path = f"/api/bot-control/fleet/{action}"
+    payload = {token: True, "scope": "ALL", "requested_by": "dashboard"}
+
+    mock_resp = MagicMock()
+    mock_resp.is_error = False
+    mock_resp.json.return_value = {"status": "success", "action": action}
+    request_mock = AsyncMock(return_value=mock_resp)
+
+    with patch("httpx.AsyncClient.request", new=request_mock):
+        res = auth_client.post(upstream_path, json=payload)
+
+    assert res.status_code == 200
+    assert res.json() == {"status": "success", "action": action}
+    assert request_mock.await_count == 1
+    call_kwargs = request_mock.await_args.kwargs
+    assert call_kwargs["method"] == "POST"
+    assert call_kwargs["url"].endswith(upstream_path)
+    assert call_kwargs["json"] == payload
+    assert call_kwargs["headers"]["X-API-Key"] == proxy_token
+
+
+@pytest.mark.parametrize("action,token", FLEET_POST_ACTIONS)
+def test_proxy_fleet_post_requires_body(auth_client, action, token):
+    res = auth_client.post(f"/api/bot-control/fleet/{action}")
+    assert res.status_code == 400
+    assert "Missing JSON body" in res.json()["detail"]
+
+
+@pytest.mark.parametrize("action,token", FLEET_POST_ACTIONS)
+def test_proxy_fleet_post_preserves_upstream_error(auth_client, action, token):
+    mock_resp = MagicMock()
+    mock_resp.is_error = True
+    mock_resp.status_code = 409
+    mock_resp.json.return_value = {"status": "blocked", "detail": "halt already active"}
+    with patch("httpx.AsyncClient.request", new_callable=AsyncMock, return_value=mock_resp):
+        res = auth_client.post(
+            f"/api/bot-control/fleet/{action}",
+            json={token: True, "scope": "ALL", "requested_by": "dashboard"},
+        )
+    assert res.status_code == 409
+    assert res.json() == {"status": "blocked", "detail": "halt already active"}
+
+
+@pytest.mark.parametrize("action,token", FLEET_POST_ACTIONS)
+def test_proxy_fleet_post_502_on_timeout(auth_client, action, token):
+    with patch(
+        "httpx.AsyncClient.request",
+        new_callable=AsyncMock,
+        side_effect=httpx.TimeoutException("VM timed out"),
+    ):
+        res = auth_client.post(
+            f"/api/bot-control/fleet/{action}",
+            json={token: True, "scope": "ALL", "requested_by": "dashboard"},
+        )
+    assert res.status_code == 502
+    assert "VM Bot Control API unreachable" in res.json()["detail"]
+
+
+def test_proxy_fleet_status_success_and_exact_path(auth_client):
+    mock_resp = MagicMock()
+    mock_resp.is_error = False
+    mock_resp.json.return_value = {
+        "halt_entries": True,
+        "generation": 7,
+        "action": "cancel_all",
+        "command_id": "cmd-7",
+        "acks": {"afrm_sma": {"status": "ok", "cancelled_count": 2}},
+    }
+    request_mock = AsyncMock(return_value=mock_resp)
+    with patch("httpx.AsyncClient.request", new=request_mock):
+        res = auth_client.get("/api/bot-control/fleet/status")
+    assert res.status_code == 200
+    assert res.json()["halt_entries"] is True
+    call_kwargs = request_mock.await_args.kwargs
+    assert call_kwargs["method"] == "GET"
+    assert call_kwargs["url"].endswith("/api/bot-control/fleet/status")
+
+
+def test_proxy_fleet_status_error_passthrough_and_timeout(auth_client):
+    mock_resp = MagicMock()
+    mock_resp.is_error = True
+    mock_resp.status_code = 503
+    mock_resp.json.return_value = {"detail": "ledger unavailable"}
+    with patch("httpx.AsyncClient.request", new_callable=AsyncMock, return_value=mock_resp):
+        res = auth_client.get("/api/bot-control/fleet/status")
+    assert res.status_code == 503
+    assert res.json() == {"detail": "ledger unavailable"}
+
+    with patch(
+        "httpx.AsyncClient.request",
+        new_callable=AsyncMock,
+        side_effect=httpx.ConnectError("refused"),
+    ):
+        res = auth_client.get("/api/bot-control/fleet/status")
+    assert res.status_code == 502
+
+
+def test_fleet_proxies_use_dedicated_timeouts(auth_client):
+    """Flatten gets a longer VM timeout; status stays short and non-blocking."""
+    cases = (
+        ("post", "/api/bot-control/fleet/cancel-all", 30.0),
+        ("post", "/api/bot-control/fleet/flatten-all", 60.0),
+        ("post", "/api/bot-control/fleet/clear", 30.0),
+        ("get", "/api/bot-control/fleet/status", 15.0),
+    )
+    mock_resp = MagicMock()
+    mock_resp.is_error = False
+    mock_resp.json.return_value = {"status": "ok"}
+
+    for method_name, path, expected_timeout in cases:
+        client_mock = MagicMock()
+        client_mock.__aenter__ = AsyncMock(return_value=client_mock)
+        client_mock.__aexit__ = AsyncMock(return_value=None)
+        client_mock.request = AsyncMock(return_value=mock_resp)
+        with patch("main.httpx.AsyncClient", return_value=client_mock) as ctor:
+            res = getattr(auth_client, method_name)(
+                path,
+                **({"json": {"confirm_fleet_clear": True, "scope": "ALL"}} if method_name == "post" else {}),
+            )
+        assert res.status_code == 200, path
+        assert ctor.call_args.kwargs["timeout"] == expected_timeout
+
+
+def test_fleet_proxies_require_auth(api_key_client):
+    """Machine API key is accepted; a bare client gets 401 for these paths."""
+    mock_resp = MagicMock()
+    mock_resp.is_error = False
+    mock_resp.json.return_value = {"status": "success"}
+    with patch("httpx.AsyncClient.request", new_callable=AsyncMock, return_value=mock_resp):
+        res = api_key_client.post(
+            "/api/bot-control/fleet/cancel-all",
+            json={"confirm_fleet_cancel_all": True, "scope": "ALL", "requested_by": "dashboard"},
+        )
+    assert res.status_code == 200
+
+    unauthenticated = TestClient(app)
+    assert unauthenticated.get("/api/bot-control/fleet/status").status_code == 401
+    assert unauthenticated.post("/api/bot-control/fleet/flatten-all", json={}).status_code == 401
+
+
+def test_fleet_control_js_confirmation_contract():
+    """Static contract check: distinct tokens, session cookies, no native dialogs."""
+    from pathlib import Path
+
+    root = Path(__file__).parent.parent
+    js = (root / "static" / "js" / "bot_focus.js").read_text(encoding="utf-8")
+    config_js = (root / "static" / "js" / "config.js").read_text(encoding="utf-8")
+
+    for endpoint in ("FLEET_CANCEL_ALL", "FLEET_FLATTEN_ALL", "FLEET_CLEAR", "FLEET_STATUS"):
+        assert f"{endpoint}: '/api/bot-control/fleet/" in config_js
+
+    start = js.index("const FLEET_ACTION_CONFIG")
+    end = js.index("Reset bot runtime override to config baseline")
+    fleet_js = js[start:end]
+
+    for token in ("confirm_fleet_cancel_all", "confirm_fleet_flatten_all", "confirm_fleet_clear"):
+        assert token in fleet_js
+    assert "'FLATTEN ALL'" in fleet_js
+    assert "'CLEAR'" in fleet_js
+    assert "scope: 'ALL'" in fleet_js
+    assert "requested_by: 'dashboard'" in fleet_js
+    assert fleet_js.count("credentials: 'include'") >= 2
+    assert "function refreshFleetStatus" in fleet_js
+    assert "function renderFleetStatus" in fleet_js
+    assert "function executeFleetAction" in fleet_js
+    assert "function validateFleetActionConfirmation" in fleet_js
+    assert "alert(" not in fleet_js
+    assert "confirm(" not in fleet_js
+
+    # Distinct per-action gating: cancel needs only its checkbox; flatten/clear
+    # additionally require a typed token and a distinct server-side body token.
+    assert "bodyToken: 'confirm_fleet_cancel_all'" in fleet_js
+    assert "bodyToken: 'confirm_fleet_flatten_all'" in fleet_js
+    assert "token: 'FLATTEN ALL'" in fleet_js
+    assert "bodyToken: 'confirm_fleet_clear'" in fleet_js
+    assert "token: 'CLEAR'" in fleet_js
+    assert "btn.disabled = !confirmed" in fleet_js
+    assert "finally {" in fleet_js
+    assert "validateFleetActionConfirmation(key));" in fleet_js
+    assert "refreshBtn.disabled = false" in fleet_js
+
+    # Fail-closed diagnostics must be visible to the operator, not swallowed.
+    assert "addLine('status_error', status.error)" in fleet_js
+    assert "addLine('command_executable', status.command_executable)" in fleet_js
+    assert "e.key !== 'Escape'" in fleet_js
+
+
+def test_fleet_control_assets_are_cache_busted():
+    """config.js changes must bump its query string or browsers keep stale endpoints."""
+    from pathlib import Path
+
+    template = (Path(__file__).parent.parent / "templates" / "bot_focus.html").read_text(
+        encoding="utf-8"
+    )
+    config_js = (Path(__file__).parent.parent / "static" / "js" / "config.js").read_text(
+        encoding="utf-8"
+    )
+    assert all(
+        f"FLEET_{name}: '/api/bot-control/fleet/" in config_js
+        for name in ("CANCEL_ALL", "FLATTEN_ALL", "CLEAR", "STATUS")
+    )
+
+    def version_of(asset):
+        marker = f"/static/js/{asset}.js?v="
+        start = template.index(marker) + len(marker)
+        end = template.index('"', start)
+        return tuple(int(part) for part in template[start:end].split("."))
+
+    assert version_of("config") >= (2, 8, 0)
+    assert version_of("bot_focus") >= (2, 9, 8)

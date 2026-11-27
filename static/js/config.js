@@ -27,7 +27,11 @@ const API_ENDPOINTS = {
         CURRENT_PROFILE: '/api/bot-control/current-profile',
         SWITCH_PROFILE: '/api/bot-control/switch-profile',
         START: '/api/bot-control/restart',
-        STOP: '/api/bot-control/stop'
+        STOP: '/api/bot-control/stop',
+        FLEET_CANCEL_ALL: '/api/bot-control/fleet/cancel-all',
+        FLEET_FLATTEN_ALL: '/api/bot-control/fleet/flatten-all',
+        FLEET_CLEAR: '/api/bot-control/fleet/clear',
+        FLEET_STATUS: '/api/bot-control/fleet/status'
     },
     POSITION: {
         CREATE: '/api/create-position',
